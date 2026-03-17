@@ -1,12 +1,7 @@
-/**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
- */
-
 import { Platform } from 'react-native';
 
 const tintColorLight = '#0a7ea4';
-const tintColorDark = '#fff';
+const tintColorDark = '#5DADE2';
 
 export const Colors = {
   light: {
@@ -16,6 +11,18 @@ export const Colors = {
     icon: '#687076',
     tabIconDefault: '#687076',
     tabIconSelected: tintColorLight,
+    // Habit grid
+    gridBackground: '#F0F2F5',
+    tileBackground: '#FFFFFF',
+    tileBorder: '#E1E4E8',
+    tileRecorded: '#2ECC71',
+    tileUnrecorded: '#D5D8DC',
+    tileDouble: '#F1C40F',
+    // Notes
+    noteBackground: '#FFFFFF',
+    noteBorder: '#E1E4E8',
+    tagBackground: '#E8F4FD',
+    tagText: '#0a7ea4',
   },
   dark: {
     text: '#ECEDEE',
@@ -24,18 +31,26 @@ export const Colors = {
     icon: '#9BA1A6',
     tabIconDefault: '#9BA1A6',
     tabIconSelected: tintColorDark,
+    // Habit grid
+    gridBackground: '#1C1E21',
+    tileBackground: '#2C2F33',
+    tileBorder: '#3A3D42',
+    tileRecorded: '#27AE60',
+    tileUnrecorded: '#4A4D52',
+    tileDouble: '#D4AC0D',
+    // Notes
+    noteBackground: '#2C2F33',
+    noteBorder: '#3A3D42',
+    tagBackground: '#1A3A4A',
+    tagText: '#5DADE2',
   },
 };
 
 export const Fonts = Platform.select({
   ios: {
-    /** iOS `UIFontDescriptorSystemDesignDefault` */
     sans: 'system-ui',
-    /** iOS `UIFontDescriptorSystemDesignSerif` */
     serif: 'ui-serif',
-    /** iOS `UIFontDescriptorSystemDesignRounded` */
     rounded: 'ui-rounded',
-    /** iOS `UIFontDescriptorSystemDesignMonospaced` */
     mono: 'ui-monospace',
   },
   default: {
