@@ -148,9 +148,6 @@ export default function StatsScreen() {
   return (
     <ThemedView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        <ThemedText type="title" style={styles.title}>
-          Statistics
-        </ThemedText>
         <ThemedText style={styles.subtitle}>18-month rolling view</ThemedText>
 
         {habitStats.length === 0 ? (
@@ -199,9 +196,6 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 40,
     gap: 24,
-  },
-  title: {
-    fontSize: 28,
   },
   subtitle: {
     opacity: 0.5,

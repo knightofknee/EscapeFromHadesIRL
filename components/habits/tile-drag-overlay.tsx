@@ -49,7 +49,7 @@ export function TileDragOverlay({
         },
       ]}
     >
-      <TileContent habit={habit} record={record} cellSize={cellSize} />
+      <TileContent habit={habit} record={record} tileWidth={width} tileHeight={height} />
     </Animated.View>
   );
 }

@@ -127,9 +127,14 @@ export default function TileSettingsModal() {
           <ThemedText type="title" style={styles.sectionTitle}>
             {isCreating ? 'New Habit' : 'Edit Habit'}
           </ThemedText>
-          <Pressable onPress={() => router.back()} style={styles.cancelLink}>
-            <ThemedText style={[styles.cancelText, { color: colors.tint }]}>Cancel</ThemedText>
-          </Pressable>
+          <View style={styles.headerActions}>
+            <Pressable style={[styles.headerSave, { backgroundColor: colors.tint }]} onPress={handleSave}>
+              <ThemedText style={styles.headerSaveText}>Save</ThemedText>
+            </Pressable>
+            <Pressable onPress={() => router.back()} style={styles.cancelLink}>
+              <ThemedText style={[styles.cancelText, { color: colors.tint }]}>Cancel</ThemedText>
+            </Pressable>
+          </View>
         </View>
 
         {/* Name */}
@@ -339,9 +344,24 @@ const styles = StyleSheet.create({
   sectionTitle: {
     marginBottom: 16,
   },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 16,
+  },
+  headerSave: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  headerSaveText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 14,
+  },
   cancelLink: {
     padding: 8,
-    marginBottom: 16,
   },
   cancelText: {
     fontSize: 16,

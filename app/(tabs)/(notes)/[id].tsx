@@ -1,17 +1,21 @@
 import { useCallback } from 'react';
-import { StyleSheet, ScrollView } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { StyleSheet, ScrollView, View, Pressable } from 'react-native';
+import { useLocalSearchParams, router } from 'expo-router';
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
 import { NoteEditor } from '@/components/notes/note-editor';
 import { useNotes } from '@/hooks/use-notes';
 import { useTags } from '@/hooks/use-tags';
+import { Colors } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { InlineTag } from '@/types/note';
 
 export default function NoteEditorScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { notes, updateNote } = useNotes();
+  const { notes, updateNote, deleteNote } = useNotes();
   const { tags, createTag } = useTags();
+  const colorScheme = useColorScheme();
+  const colors = Colors[colorScheme ?? 'light'];
 
   const note = notes.find((n) => n.id === id);
 
@@ -53,6 +57,22 @@ export default function NoteEditorScreen() {
 
   return (
     <ThemedView style={styles.container}>
+      <View style={styles.header}>
+        <View />
+        <Pressable
+          onPress={() => {
+            // Delete the note if it's completely empty
+            if (note && !note.title.trim() && !note.content.trim()) {
+              deleteNote(note.id);
+            }
+            router.back();
+          }}
+          style={styles.headerButton}
+        >
+          <ThemedText style={[styles.headerButtonText, { color: colors.tint }]}>Done</ThemedText>
+        </Pressable>
+      </View>
+
       <ScrollView style={styles.scrollView} keyboardDismissMode="interactive">
         <NoteEditor
           note={note}
@@ -70,6 +90,22 @@ export default function NoteEditorScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(128,128,128,0.2)',
+  },
+  headerButton: {
+    padding: 8,
+  },
+  headerButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
   },
   scrollView: {
     flex: 1,

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { deleteField } from 'firebase/firestore';
+import { stripUndefined } from '@/lib/firebase/clean';
 import {
   db,
   collection,
@@ -55,7 +56,7 @@ export function useHabits() {
         createdAt: now,
         updatedAt: now,
       };
-      await setDoc(ref, newHabit);
+      await setDoc(ref, stripUndefined(newHabit));
       return newHabit;
     },
     [user],

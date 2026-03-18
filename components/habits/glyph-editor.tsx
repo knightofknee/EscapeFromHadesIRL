@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
-import { StyleSheet, View, Pressable, useWindowDimensions } from 'react-native';
+import { StyleSheet, View, Pressable, ScrollView, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
@@ -20,10 +21,11 @@ type GlyphEditorProps = {
   onCancel: () => void;
 };
 
-const STROKE_WIDTHS = [2, 4, 6, 8];
+const STROKE_WIDTHS = [4, 8, 14, 22, 32, 44];
 
 export function GlyphEditor({ initialGlyph, habitColor, onSave, onCancel }: GlyphEditorProps) {
   const { width: windowWidth } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
@@ -33,7 +35,8 @@ export function GlyphEditor({ initialGlyph, habitColor, onSave, onCancel }: Glyp
     initialGlyph ? deserializePaths(initialGlyph.paths) : [],
   );
   const [strokeColor, setStrokeColor] = useState(habitColor);
-  const [strokeWidth, setStrokeWidth] = useState(4);
+  const [strokeWidth, setStrokeWidth] = useState(14);
+  const [isEraser, setIsEraser] = useState(false);
   const [showColorPicker, setShowColorPicker] = useState(false);
 
   const handleUndo = useCallback(() => {
@@ -46,10 +49,12 @@ export function GlyphEditor({ initialGlyph, habitColor, onSave, onCancel }: Glyp
 
   const handleSave = useCallback(() => {
     if (paths.length === 0) {
-      // Save empty glyph = clear the glyph
       onSave({ paths: [], viewBox: { width: canvasSize, height: canvasSize } });
       return;
     }
+    // Save all paths in order (draw + erase). The rendering order handles
+    // the visual correctly: eraser strokes use blendMode="dstOut" to punch
+    // holes, and any strokes drawn after erasing appear on top naturally.
     onSave({
       paths: serializePaths(paths),
       viewBox: { width: canvasSize, height: canvasSize },
@@ -57,8 +62,8 @@ export function GlyphEditor({ initialGlyph, habitColor, onSave, onCancel }: Glyp
   }, [paths, canvasSize, onSave]);
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <GestureHandlerRootView style={[styles.root, { backgroundColor: colors.background, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <Pressable onPress={onCancel} style={styles.headerButton}>
@@ -93,13 +98,14 @@ export function GlyphEditor({ initialGlyph, habitColor, onSave, onCancel }: Glyp
           height={canvasSize}
           strokeColor={strokeColor}
           strokeWidth={strokeWidth}
+          eraser={isEraser}
           paths={paths}
           onPathsChange={setPaths}
         />
       </View>
 
-      {/* Toolbar */}
-      <View style={styles.toolbar}>
+      {/* Toolbar — scrollable for smaller screens */}
+      <ScrollView style={styles.toolbarScroll} contentContainerStyle={styles.toolbar}>
         {/* Stroke width */}
         <View style={styles.toolSection}>
           <ThemedText style={styles.toolLabel}>Size</ThemedText>
@@ -120,10 +126,10 @@ export function GlyphEditor({ initialGlyph, habitColor, onSave, onCancel }: Glyp
                   style={[
                     styles.strokePreview,
                     {
-                      width: sw * 3,
-                      height: sw * 3,
-                      borderRadius: (sw * 3) / 2,
-                      backgroundColor: strokeColor,
+                      width: sw,
+                      height: sw,
+                      borderRadius: sw / 2,
+                      backgroundColor: isEraser ? colors.icon : strokeColor,
                     },
                   ]}
                 />
@@ -132,13 +138,43 @@ export function GlyphEditor({ initialGlyph, habitColor, onSave, onCancel }: Glyp
           </View>
         </View>
 
-        {/* Color */}
-        <View style={styles.toolSection}>
-          <ThemedText style={styles.toolLabel}>Color</ThemedText>
-          <Pressable
-            style={[styles.colorToggle, { backgroundColor: strokeColor }]}
-            onPress={() => setShowColorPicker(!showColorPicker)}
-          />
+        {/* Color & Eraser — same row */}
+        <View style={styles.colorEraserRow}>
+          <View style={styles.toolSection}>
+            <ThemedText style={styles.toolLabel}>Color</ThemedText>
+            <Pressable
+              style={[
+                styles.colorToggle,
+                { backgroundColor: strokeColor, opacity: isEraser ? 0.4 : 1 },
+              ]}
+              onPress={() => {
+                setIsEraser(false);
+                setShowColorPicker(!showColorPicker);
+              }}
+            />
+          </View>
+
+          <View style={styles.toolSection}>
+            <ThemedText style={styles.toolLabel}>Eraser</ThemedText>
+            <Pressable
+              style={[
+                styles.eraserButton,
+                {
+                  borderColor: isEraser ? colors.tint : colors.tileBorder,
+                  backgroundColor: isEraser ? `${colors.tint}20` : 'transparent',
+                },
+              ]}
+              onPress={() => {
+                setIsEraser(!isEraser);
+                setShowColorPicker(false);
+              }}
+            >
+              <View style={styles.eraserIcon}>
+                <View style={[styles.eraserTop, { backgroundColor: colors.text }]} />
+                <View style={[styles.eraserBottom, { backgroundColor: isEraser ? colors.tint : colors.icon }]} />
+              </View>
+            </Pressable>
+          </View>
         </View>
 
         {/* Actions */}
@@ -164,67 +200,69 @@ export function GlyphEditor({ initialGlyph, habitColor, onSave, onCancel }: Glyp
             </Pressable>
           </View>
         </View>
-      </View>
 
-      {/* Color picker popover */}
-      {showColorPicker && (
-        <View style={[styles.colorPicker, { backgroundColor: colors.background, borderColor: colors.tileBorder }]}>
-          <View style={styles.colorGrid}>
-            {TILE_COLORS.map((c) => (
+        {/* Color picker inline */}
+        {showColorPicker && (
+          <View style={[styles.colorPickerInline, { borderColor: colors.tileBorder }]}>
+            <View style={styles.colorGrid}>
+              {TILE_COLORS.map((c) => (
+                <Pressable
+                  key={c}
+                  style={[
+                    styles.colorSwatch,
+                    {
+                      backgroundColor: c,
+                      borderWidth: strokeColor === c ? 3 : 0,
+                      borderColor: colors.text,
+                    },
+                  ]}
+                  onPress={() => {
+                    setStrokeColor(c);
+                    setShowColorPicker(false);
+                  }}
+                />
+              ))}
               <Pressable
-                key={c}
                 style={[
                   styles.colorSwatch,
                   {
-                    backgroundColor: c,
-                    borderWidth: strokeColor === c ? 3 : 0,
+                    backgroundColor: '#FFFFFF',
+                    borderWidth: strokeColor === '#FFFFFF' ? 3 : 1,
+                    borderColor: strokeColor === '#FFFFFF' ? colors.text : colors.tileBorder,
+                  },
+                ]}
+                onPress={() => {
+                  setStrokeColor('#FFFFFF');
+                  setShowColorPicker(false);
+                }}
+              />
+              <Pressable
+                style={[
+                  styles.colorSwatch,
+                  {
+                    backgroundColor: '#000000',
+                    borderWidth: strokeColor === '#000000' ? 3 : 0,
                     borderColor: colors.text,
                   },
                 ]}
                 onPress={() => {
-                  setStrokeColor(c);
+                  setStrokeColor('#000000');
                   setShowColorPicker(false);
                 }}
               />
-            ))}
-            {/* White and black options */}
-            <Pressable
-              style={[
-                styles.colorSwatch,
-                {
-                  backgroundColor: '#FFFFFF',
-                  borderWidth: strokeColor === '#FFFFFF' ? 3 : 1,
-                  borderColor: strokeColor === '#FFFFFF' ? colors.text : colors.tileBorder,
-                },
-              ]}
-              onPress={() => {
-                setStrokeColor('#FFFFFF');
-                setShowColorPicker(false);
-              }}
-            />
-            <Pressable
-              style={[
-                styles.colorSwatch,
-                {
-                  backgroundColor: '#000000',
-                  borderWidth: strokeColor === '#000000' ? 3 : 0,
-                  borderColor: colors.text,
-                },
-              ]}
-              onPress={() => {
-                setStrokeColor('#000000');
-                setShowColorPicker(false);
-              }}
-            />
+            </View>
           </View>
-        </View>
-      )}
+        )}
+      </ScrollView>
     </View>
     </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
   container: {
     flex: 1,
     alignItems: 'center',
@@ -259,10 +297,14 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: 'hidden',
   },
-  toolbar: {
+  toolbarScroll: {
+    flex: 1,
     width: '100%',
+  },
+  toolbar: {
     paddingHorizontal: 24,
     paddingTop: 20,
+    paddingBottom: 40,
     gap: 16,
   },
   toolSection: {
@@ -287,10 +329,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   strokePreview: {},
+  colorEraserRow: {
+    flexDirection: 'row',
+    gap: 24,
+  },
   colorToggle: {
     width: 36,
     height: 36,
     borderRadius: 18,
+  },
+  eraserButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  eraserIcon: {
+    alignItems: 'center',
+  },
+  eraserTop: {
+    width: 12,
+    height: 8,
+    borderTopLeftRadius: 2,
+    borderTopRightRadius: 2,
+  },
+  eraserBottom: {
+    width: 16,
+    height: 6,
+    borderBottomLeftRadius: 2,
+    borderBottomRightRadius: 2,
   },
   actionButton: {
     paddingHorizontal: 16,
@@ -302,19 +371,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  colorPicker: {
-    position: 'absolute',
-    bottom: 100,
-    left: 24,
-    right: 24,
+  colorPickerInline: {
     padding: 16,
     borderRadius: 12,
     borderWidth: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 8,
   },
   colorGrid: {
     flexDirection: 'row',

@@ -10,6 +10,7 @@ import {
   setDoc,
   deleteDoc,
 } from '@/lib/firebase/firestore';
+import { stripUndefined } from '@/lib/firebase/clean';
 import type { Tag } from '@/types/note';
 
 export function useTags() {
@@ -43,7 +44,7 @@ export function useTags() {
         color,
         createdAt: Date.now(),
       };
-      await setDoc(ref, newTag);
+      await setDoc(ref, stripUndefined(newTag));
       return newTag;
     },
     [user],

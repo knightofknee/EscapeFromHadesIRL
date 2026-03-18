@@ -8,7 +8,8 @@ import type { Habit, HabitRecord, TripleValue } from '@/types/habit';
 type TileContentProps = {
   habit: Habit;
   record?: HabitRecord;
-  cellSize: number;
+  tileWidth: number;
+  tileHeight: number;
 };
 
 function getBooleanState(record?: HabitRecord): boolean {
@@ -27,62 +28,43 @@ function getStringValue(record?: HabitRecord): string {
   return (record?.value as string) ?? '';
 }
 
-export function TileContent({ habit, record, cellSize }: TileContentProps) {
+export function TileContent({ habit, record, tileWidth, tileHeight }: TileContentProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
-  const isCompact = cellSize < 72;
-  const fontSize = isCompact ? 14 : 18;
+
+  const smallerDim = Math.min(tileWidth, tileHeight);
+  const isCompact = smallerDim < 72;
+  const fontSize = isCompact ? 14 : Math.min(smallerDim * 0.12, 24);
 
   const hasGlyph = habit.glyph && habit.glyph.paths.length > 0;
 
-  // Glyph display size — fit inside the tile with padding, minimum 24px
-  const glyphSize = Math.max(cellSize - 16, 24);
+  // Glyph fills the tile with some padding
+  const pad = Math.max(smallerDim * 0.08, 6);
+  const glyphW = tileWidth - pad * 2;
+  const glyphH = tileHeight - pad * 2;
 
-  function renderGlyphContent() {
-    if (!hasGlyph || !habit.glyph) return null;
+  if (hasGlyph && habit.glyph) {
+    const glyph = habit.glyph;
 
     switch (habit.recordingMode) {
       case 'boolean': {
         const done = getBooleanState(record);
-        if (!done) {
-          // Not recorded — show glyph faded
-          return (
-            <View style={styles.glyphContainer}>
-              <GlyphRenderer glyph={habit.glyph} width={glyphSize} height={glyphSize} opacity={0.15} />
-            </View>
-          );
-        }
-        // Recorded — show glyph full
         return (
-          <View style={styles.glyphContainer}>
-            <GlyphRenderer glyph={habit.glyph} width={glyphSize} height={glyphSize} opacity={1} />
+          <View style={styles.container}>
+            <GlyphRenderer glyph={glyph} width={glyphW} height={glyphH} opacity={done ? 1 : 0.15} />
           </View>
         );
       }
 
       case 'triple': {
         const state = getTripleState(record);
-        if (state === 'no') {
-          // Not recorded — faded glyph
-          return (
-            <View style={styles.glyphContainer}>
-              <GlyphRenderer glyph={habit.glyph} width={glyphSize} height={glyphSize} opacity={0.15} />
-            </View>
-          );
-        }
-        if (state === 'yes') {
-          // Single tap — show glyph
-          return (
-            <View style={styles.glyphContainer}>
-              <GlyphRenderer glyph={habit.glyph} width={glyphSize} height={glyphSize} opacity={1} />
-            </View>
-          );
-        }
-        // Double — show glyph with underline
+        const opacity = state === 'no' ? 0.15 : 1;
         return (
-          <View style={styles.glyphContainer}>
-            <GlyphRenderer glyph={habit.glyph} width={glyphSize} height={glyphSize} opacity={1} />
-            <View style={[styles.underline, { backgroundColor: habit.color, width: glyphSize * 0.7 }]} />
+          <View style={styles.container}>
+            <GlyphRenderer glyph={glyph} width={glyphW} height={glyphH} opacity={opacity} />
+            {state === 'double' && (
+              <View style={[styles.underline, { backgroundColor: habit.color, width: glyphW * 0.6 }]} />
+            )}
           </View>
         );
       }
@@ -91,23 +73,15 @@ export function TileContent({ habit, record, cellSize }: TileContentProps) {
         const count = getCounterValue(record);
         if (count === 0) {
           return (
-            <View style={styles.glyphContainer}>
-              <GlyphRenderer glyph={habit.glyph} width={glyphSize} height={glyphSize} opacity={0.15} />
+            <View style={styles.container}>
+              <GlyphRenderer glyph={glyph} width={glyphW} height={glyphH} opacity={0.15} />
             </View>
           );
         }
-        // Show glyph + count
         return (
-          <View style={styles.glyphContainer}>
-            <GlyphRenderer
-              glyph={habit.glyph}
-              width={glyphSize * 0.7}
-              height={glyphSize * 0.7}
-              opacity={1}
-            />
-            <ThemedText style={[styles.counterOverlay, { fontSize: fontSize + 2 }]}>
-              {count}
-            </ThemedText>
+          <View style={styles.container}>
+            <GlyphRenderer glyph={glyph} width={glyphW * 0.6} height={glyphH * 0.6} opacity={1} />
+            <ThemedText style={[styles.counterOverlay, { fontSize: fontSize + 4 }]}>{count}</ThemedText>
           </View>
         );
       }
@@ -116,65 +90,39 @@ export function TileContent({ habit, record, cellSize }: TileContentProps) {
         const val = getStringValue(record);
         if (!val) {
           return (
-            <View style={styles.glyphContainer}>
-              <GlyphRenderer glyph={habit.glyph} width={glyphSize} height={glyphSize} opacity={0.15} />
+            <View style={styles.container}>
+              <GlyphRenderer glyph={glyph} width={glyphW} height={glyphH} opacity={0.15} />
             </View>
           );
         }
-        // Show glyph + value text
         return (
-          <View style={styles.glyphContainer}>
-            <GlyphRenderer
-              glyph={habit.glyph}
-              width={glyphSize * 0.7}
-              height={glyphSize * 0.6}
-              opacity={1}
-            />
-            <ThemedText style={[styles.valueOverlay, { fontSize }]} numberOfLines={1}>
-              {val}
-            </ThemedText>
+          <View style={styles.container}>
+            <GlyphRenderer glyph={glyph} width={glyphW * 0.6} height={glyphH * 0.5} opacity={1} />
+            <ThemedText style={[styles.valueOverlay, { fontSize }]} numberOfLines={1}>{val}</ThemedText>
           </View>
         );
       }
     }
   }
 
-  // If habit has a glyph, use glyph-based rendering
-  if (hasGlyph) {
-    return <View style={styles.container}>{renderGlyphContent()}</View>;
-  }
-
-  // Fallback: original abbreviation + indicator rendering
+  // Fallback: abbreviation + indicator
   function renderStateIndicator() {
     switch (habit.recordingMode) {
       case 'boolean': {
         const done = getBooleanState(record);
         return (
-          <View
-            style={[styles.indicator, { backgroundColor: done ? colors.tileRecorded : colors.tileUnrecorded }]}
-          >
-            {done && (
-              <ThemedText style={[styles.checkmark, { fontSize: fontSize + 2 }]}>✓</ThemedText>
-            )}
+          <View style={[styles.indicator, { backgroundColor: done ? colors.tileRecorded : colors.tileUnrecorded }]}>
+            {done && <ThemedText style={[styles.checkmark, { fontSize: fontSize + 2 }]}>✓</ThemedText>}
           </View>
         );
       }
       case 'triple': {
         const state = getTripleState(record);
-        const bg =
-          state === 'double'
-            ? colors.tileDouble
-            : state === 'yes'
-              ? colors.tileRecorded
-              : colors.tileUnrecorded;
+        const bg = state === 'double' ? colors.tileDouble : state === 'yes' ? colors.tileRecorded : colors.tileUnrecorded;
         return (
           <View style={[styles.indicator, { backgroundColor: bg }]}>
-            {state === 'yes' && (
-              <ThemedText style={[styles.checkmark, { fontSize: fontSize + 2 }]}>✓</ThemedText>
-            )}
-            {state === 'double' && (
-              <ThemedText style={[styles.checkmark, { fontSize: fontSize + 2 }]}>✓✓</ThemedText>
-            )}
+            {state === 'yes' && <ThemedText style={[styles.checkmark, { fontSize: fontSize + 2 }]}>✓</ThemedText>}
+            {state === 'double' && <ThemedText style={[styles.checkmark, { fontSize: fontSize + 2 }]}>✓✓</ThemedText>}
           </View>
         );
       }
@@ -200,7 +148,7 @@ export function TileContent({ habit, record, cellSize }: TileContentProps) {
   return (
     <View style={styles.container}>
       <ThemedText
-        style={[styles.abbreviation, { fontSize: fontSize + 2, color: habit.color }]}
+        style={[styles.abbreviation, { fontSize: fontSize + 4, color: habit.color }]}
         numberOfLines={1}
       >
         {habit.icon ?? habit.abbreviation}
@@ -238,12 +186,6 @@ const styles = StyleSheet.create({
   },
   valueText: {
     opacity: 0.7,
-  },
-  // Glyph-specific styles
-  glyphContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   underline: {
     height: 3,

@@ -9,13 +9,9 @@ type GlyphRendererProps = {
   opacity?: number;
 };
 
-/**
- * Renders a saved glyph at any size by scaling from the original viewBox.
- * Used inside tiles to show the custom hand-drawn symbol.
- */
 export function GlyphRenderer({ glyph, width, height, opacity = 1 }: GlyphRendererProps) {
-  const scaledPaths = useMemo(() => {
-    if (!glyph.paths.length) return [];
+  const { drawPaths, erasePaths } = useMemo(() => {
+    if (!glyph.paths.length) return { drawPaths: [], erasePaths: [] };
 
     const sx = width / glyph.viewBox.width;
     const sy = height / glyph.viewBox.height;
@@ -23,39 +19,55 @@ export function GlyphRenderer({ glyph, width, height, opacity = 1 }: GlyphRender
     const offsetX = (width - glyph.viewBox.width * scale) / 2;
     const offsetY = (height - glyph.viewBox.height * scale) / 2;
 
-    return glyph.paths
-      .map((sp) => {
-        const path = Skia.Path.MakeFromSVGString(sp.points);
-        if (!path) return null;
+    const draw: { path: any; color: string; strokeWidth: number }[] = [];
+    const erase: { path: any; strokeWidth: number }[] = [];
 
-        const matrix = Skia.Matrix();
-        matrix.translate(offsetX, offsetY);
-        matrix.scale(scale, scale);
-        path.transform(matrix);
+    for (const sp of glyph.paths) {
+      const path = Skia.Path.MakeFromSVGString(sp.points);
+      if (!path) continue;
 
-        return {
-          path,
-          color: sp.color,
-          strokeWidth: sp.strokeWidth * scale,
-        };
-      })
-      .filter((p): p is NonNullable<typeof p> => p != null);
+      const matrix = Skia.Matrix();
+      matrix.translate(offsetX, offsetY);
+      matrix.scale(scale, scale);
+      path.transform(matrix);
+
+      const isEraser = sp.color === '__eraser__';
+      if (isEraser) {
+        erase.push({ path, strokeWidth: sp.strokeWidth * scale });
+      } else {
+        draw.push({ path, color: sp.color, strokeWidth: sp.strokeWidth * scale });
+      }
+    }
+
+    return { drawPaths: draw, erasePaths: erase };
   }, [glyph, width, height]);
 
-  if (scaledPaths.length === 0) return null;
+  if (drawPaths.length === 0 && erasePaths.length === 0) return null;
 
   return (
-    <Canvas style={{ width, height }}>
-      <Group opacity={opacity}>
-        {scaledPaths.map((p, i) => (
+    <Canvas style={{ width, height }} pointerEvents="none">
+      <Group opacity={opacity} layer>
+        {drawPaths.map((p, i) => (
           <Path
-            key={`glyph-${i}-${p.color}`}
+            key={`draw-${i}`}
             path={p.path}
             color={p.color}
             style="stroke"
             strokeWidth={p.strokeWidth}
             strokeCap="round"
             strokeJoin="round"
+          />
+        ))}
+        {erasePaths.map((p, i) => (
+          <Path
+            key={`erase-${i}`}
+            path={p.path}
+            color="black"
+            style="stroke"
+            strokeWidth={p.strokeWidth}
+            strokeCap="round"
+            strokeJoin="round"
+            blendMode="dstOut"
           />
         ))}
       </Group>

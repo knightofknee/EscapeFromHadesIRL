@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import { StyleSheet, Pressable, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WeekGrid } from '@/components/habits/week-grid';
@@ -8,11 +9,15 @@ import { useHabits } from '@/hooks/use-habits';
 import { useHabitRecords, getWeekDates } from '@/hooks/use-habit-records';
 import { useAuth } from '@/contexts/auth-context';
 import { db, doc, setDoc } from '@/lib/firebase/firestore';
+import { Colors } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { HabitRecord, TripleValue } from '@/types/habit';
 
 export default function WeekViewScreen() {
   const { user } = useAuth();
   const { habits } = useHabits();
+  const colorScheme = useColorScheme();
+  const colors = Colors[colorScheme ?? 'light'];
   const [weekOffset, setWeekOffset] = useState(0);
 
   const refDate = useMemo(() => {
@@ -90,6 +95,11 @@ export default function WeekViewScreen() {
             <ThemedText style={styles.navText}>›</ThemedText>
           </Pressable>
         </View>
+
+        <Pressable style={styles.backLink} onPress={() => router.back()}>
+          <ThemedText style={[styles.backText, { color: colors.tint }]}>← Day View</ThemedText>
+        </Pressable>
+
         <WeekGrid
           dates={dates}
           habits={habits}
@@ -127,5 +137,13 @@ const styles = StyleSheet.create({
   },
   weekLabel: {
     fontSize: 16,
+  },
+  backLink: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  backText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

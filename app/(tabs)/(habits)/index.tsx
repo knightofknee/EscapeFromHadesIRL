@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { StyleSheet, ScrollView, Pressable, View } from 'react-native';
+import { StyleSheet, Pressable, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
@@ -105,20 +105,23 @@ export default function HabitsDayScreen() {
             </Pressable>
           </View>
         ) : (
-          <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+          <>
+            {/* Grid fills all available space */}
             <TileGrid
               habits={habits}
               records={records}
               onTapHabit={handleTap}
               onLongPressHabit={handleLongPress}
             />
+
+            {/* Add button hugs bottom */}
             <Pressable
               style={[styles.addTileButton, { borderColor: colors.tint, backgroundColor: `${colors.tint}15` }]}
               onPress={() => router.push({ pathname: '/tile-settings', params: { mode: 'create' } })}
             >
               <ThemedText style={[styles.addTileText, { color: colors.tint }]}>+ Add Habit</ThemedText>
             </Pressable>
-          </ScrollView>
+          </>
         )}
 
         <QuickInputModal
@@ -177,12 +180,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingBottom: 24,
-  },
   emptyState: {
     flex: 1,
     justifyContent: 'center',
@@ -205,8 +202,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   addTileButton: {
-    margin: 16,
-    padding: 16,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    padding: 12,
     borderRadius: 8,
     borderWidth: 2,
     borderStyle: 'dashed',

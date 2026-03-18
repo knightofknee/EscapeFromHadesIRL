@@ -1,6 +1,5 @@
 import { StyleSheet, Pressable, Platform } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import Animated, { useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import { Colors } from '@/constants/theme';
 import { GRID } from '@/constants/grid';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -19,8 +18,6 @@ type TileProps = {
   onLongPress: (habitId: string) => void;
 };
 
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
-
 export function Tile({ habit, record, x, y, width, height, cellSize, onTap, onLongPress }: TileProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
@@ -31,10 +28,6 @@ export function Tile({ habit, record, x, y, width, height, cellSize, onTap, onLo
     record.value !== 'no' &&
     record.value !== 0 &&
     record.value !== '';
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: withSpring(1, GRID.spring) }],
-  }));
 
   function handleTap() {
     if (Platform.OS === 'ios') {
@@ -51,10 +44,9 @@ export function Tile({ habit, record, x, y, width, height, cellSize, onTap, onLo
   }
 
   return (
-    <AnimatedPressable
+    <Pressable
       style={[
         styles.tile,
-        animatedStyle,
         {
           position: 'absolute',
           left: x,
@@ -70,8 +62,8 @@ export function Tile({ habit, record, x, y, width, height, cellSize, onTap, onLo
       onLongPress={handleLongPress}
       delayLongPress={GRID.dragActivationDelay}
     >
-      <TileContent habit={habit} record={record} cellSize={cellSize} />
-    </AnimatedPressable>
+      <TileContent habit={habit} record={record} tileWidth={width} tileHeight={height} />
+    </Pressable>
   );
 }
 
