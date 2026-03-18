@@ -34,6 +34,7 @@ export function NoteEditor({
   useEffect(() => {
     setTitle(note.title);
     setContent(note.content);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-sync when switching notes, not on every content change
   }, [note.id]);
 
   function handleTitleChange(text: string) {

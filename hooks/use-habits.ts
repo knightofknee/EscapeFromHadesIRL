@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/auth-context';
+import { deleteField } from 'firebase/firestore';
 import {
   db,
   collection,
@@ -64,7 +65,12 @@ export function useHabits() {
     async (habitId: string, updates: Partial<Habit>) => {
       if (!user) return;
       const ref = doc(db, 'habits', habitId);
-      await setDoc(ref, { ...updates, updatedAt: Date.now() }, { merge: true });
+      // Replace undefined values with deleteField() so merge: true actually removes them
+      const firestoreUpdates: Record<string, any> = { updatedAt: Date.now() };
+      for (const [key, value] of Object.entries(updates)) {
+        firestoreUpdates[key] = value === undefined ? deleteField() : value;
+      }
+      await setDoc(ref, firestoreUpdates, { merge: true });
     },
     [user],
   );

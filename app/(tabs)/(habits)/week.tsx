@@ -8,15 +8,11 @@ import { useHabits } from '@/hooks/use-habits';
 import { useHabitRecords, getWeekDates } from '@/hooks/use-habit-records';
 import { useAuth } from '@/contexts/auth-context';
 import { db, doc, setDoc } from '@/lib/firebase/firestore';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { HabitRecord, TripleValue } from '@/types/habit';
 
 export default function WeekViewScreen() {
   const { user } = useAuth();
   const { habits } = useHabits();
-  const colorScheme = useColorScheme();
-  const colors = Colors[colorScheme ?? 'light'];
   const [weekOffset, setWeekOffset] = useState(0);
 
   const refDate = useMemo(() => {

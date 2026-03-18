@@ -9,12 +9,24 @@ export type RecordingMode = 'boolean' | 'triple' | 'counter' | 'value';
 
 export type TripleValue = 'no' | 'yes' | 'double';
 
+export type SerializedPath = {
+  points: string; // SVG path string (e.g. "M 10 20 L 30 40 ...")
+  color: string;
+  strokeWidth: number;
+};
+
+export type GlyphData = {
+  paths: SerializedPath[];
+  viewBox: { width: number; height: number }; // canvas size when drawn, for scaling
+};
+
 export type Habit = {
   id: string;
   userId: string;
   name: string;
   abbreviation: string;
   icon?: string;
+  glyph?: GlyphData; // custom hand-drawn symbol
   recordingMode: RecordingMode;
   tileSize: TileSize;
   position: GridPosition;
@@ -39,9 +51,3 @@ export type GridConfig = {
   statsButtonPosition: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 };
 
-export type DrawingData = {
-  userId: string;
-  date: string;
-  paths: string;
-  updatedAt: number;
-};

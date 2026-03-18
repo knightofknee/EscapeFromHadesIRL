@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { db, collection, query, where, onSnapshot } from '@/lib/firebase/firestore';
 import { formatDate } from '@/lib/date-utils';
@@ -34,14 +34,18 @@ export function useHabitRecords(startDate: string, endDate: string) {
     return unsubscribe;
   }, [user, startDate, endDate]);
 
-  // Group by date
-  const recordsByDate = records.reduce(
-    (acc, record) => {
-      if (!acc[record.date]) acc[record.date] = new Map();
-      acc[record.date].set(record.habitId, record);
-      return acc;
-    },
-    {} as Record<string, Map<string, HabitRecord>>,
+  // Group by date (memoized to avoid new object on every render)
+  const recordsByDate = useMemo(
+    () =>
+      records.reduce(
+        (acc, record) => {
+          if (!acc[record.date]) acc[record.date] = new Map();
+          acc[record.date].set(record.habitId, record);
+          return acc;
+        },
+        {} as Record<string, Map<string, HabitRecord>>,
+      ),
+    [records],
   );
 
   return { records, recordsByDate, isLoading };

@@ -7,15 +7,22 @@ import {
   signInWithCredential,
   GoogleAuthProvider,
   OAuthProvider,
-  browserLocalPersistence,
   type User,
+  type Persistence,
 } from 'firebase/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { app } from './app';
 
-// Use browserLocalPersistence which works in React Native via AsyncStorage polyfill.
-// Firebase v12 removed getReactNativePersistence from public exports.
+// Metro resolves @firebase/auth with the "react-native" condition, which exports
+// getReactNativePersistence. TypeScript can't see it because TSC uses the default
+// condition. We import it at runtime where Metro resolves correctly.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { getReactNativePersistence } = require('@firebase/auth') as {
+  getReactNativePersistence: (storage: typeof AsyncStorage) => Persistence;
+};
+
 export const auth = initializeAuth(app, {
-  persistence: browserLocalPersistence,
+  persistence: getReactNativePersistence(AsyncStorage),
 });
 
 export function signIn(email: string, password: string) {

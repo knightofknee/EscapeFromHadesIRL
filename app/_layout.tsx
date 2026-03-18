@@ -23,6 +23,7 @@ function RootNavigator() {
     } else if (user && inAuthGroup) {
       router.replace('/(tabs)/(habits)');
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- router is stable, including it causes infinite loops
   }, [user, isLoading, segments]);
 
   return (

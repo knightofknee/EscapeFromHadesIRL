@@ -1,4 +1,4 @@
-import { StyleSheet, ScrollView, View, Pressable, Switch, Alert } from 'react-native';
+import { StyleSheet, ScrollView, View, Pressable, Alert } from 'react-native';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';

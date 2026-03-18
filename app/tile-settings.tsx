@@ -1,13 +1,15 @@
 import { useState, useEffect } from 'react';
-import { StyleSheet, ScrollView, TextInput, Pressable, View, Alert } from 'react-native';
+import { StyleSheet, ScrollView, TextInput, Pressable, View, Alert, Modal } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { GlyphEditor } from '@/components/habits/glyph-editor';
+import { GlyphRenderer } from '@/components/habits/glyph-renderer';
 import { Colors } from '@/constants/theme';
 import { TILE_COLORS, DEFAULT_TILE_COLOR } from '@/constants/grid';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useHabits } from '@/hooks/use-habits';
-import type { RecordingMode, TileSize } from '@/types/habit';
+import type { RecordingMode, TileSize, GlyphData } from '@/types/habit';
 
 const RECORDING_MODES: { value: RecordingMode; label: string; description: string }[] = [
   { value: 'boolean', label: 'Yes / No', description: 'Tap to toggle' },
@@ -40,6 +42,8 @@ export default function TileSettingsModal() {
   );
   const [tileSize, setTileSize] = useState<TileSize>(existingHabit?.tileSize ?? '1x1');
   const [color, setColor] = useState(existingHabit?.color ?? DEFAULT_TILE_COLOR);
+  const [glyph, setGlyph] = useState<GlyphData | undefined>(existingHabit?.glyph);
+  const [showGlyphEditor, setShowGlyphEditor] = useState(false);
 
   useEffect(() => {
     if (existingHabit) {
@@ -49,6 +53,7 @@ export default function TileSettingsModal() {
       setRecordingMode(existingHabit.recordingMode);
       setTileSize(existingHabit.tileSize);
       setColor(existingHabit.color);
+      setGlyph(existingHabit.glyph);
     }
   }, [existingHabit]);
 
@@ -67,6 +72,7 @@ export default function TileSettingsModal() {
         name: name.trim(),
         abbreviation: abbr,
         icon: icon.trim() || undefined,
+        glyph: glyph && glyph.paths.length > 0 ? glyph : undefined,
         recordingMode,
         tileSize,
         position: { row: maxRow + 1, col: 0 },
@@ -78,6 +84,7 @@ export default function TileSettingsModal() {
         name: name.trim(),
         abbreviation: abbr,
         icon: icon.trim() || undefined,
+        glyph: glyph && glyph.paths.length > 0 ? glyph : undefined,
         recordingMode,
         tileSize,
         color,
@@ -105,6 +112,13 @@ export default function TileSettingsModal() {
       ],
     );
   }
+
+  function handleGlyphSave(newGlyph: GlyphData) {
+    setGlyph(newGlyph.paths.length > 0 ? newGlyph : undefined);
+    setShowGlyphEditor(false);
+  }
+
+  const hasGlyph = glyph && glyph.paths.length > 0;
 
   return (
     <ThemedView style={styles.container}>
@@ -154,6 +168,50 @@ export default function TileSettingsModal() {
           placeholder="🏃"
           placeholderTextColor={colors.icon}
         />
+
+        {/* Custom Drawn Symbol */}
+        <ThemedText type="defaultSemiBold" style={styles.label}>
+          Custom Symbol (draw your own — overrides icon & abbreviation)
+        </ThemedText>
+        <View style={styles.glyphRow}>
+          {hasGlyph ? (
+            <View
+              style={[
+                styles.glyphPreview,
+                { backgroundColor: colors.tileBackground, borderColor: color },
+              ]}
+            >
+              <GlyphRenderer glyph={glyph!} width={60} height={60} />
+            </View>
+          ) : (
+            <View
+              style={[
+                styles.glyphPreview,
+                { backgroundColor: colors.tileBackground, borderColor: colors.tileBorder },
+              ]}
+            >
+              <ThemedText style={{ opacity: 0.3, fontSize: 12 }}>None</ThemedText>
+            </View>
+          )}
+          <View style={styles.glyphActions}>
+            <Pressable
+              style={[styles.glyphButton, { backgroundColor: colors.tint }]}
+              onPress={() => setShowGlyphEditor(true)}
+            >
+              <ThemedText style={styles.glyphButtonText}>
+                {hasGlyph ? 'Redraw' : 'Draw Symbol'}
+              </ThemedText>
+            </Pressable>
+            {hasGlyph && (
+              <Pressable
+                style={[styles.glyphButton, { backgroundColor: '#E74C3C' }]}
+                onPress={() => setGlyph(undefined)}
+              >
+                <ThemedText style={styles.glyphButtonText}>Remove</ThemedText>
+              </Pressable>
+            )}
+          </View>
+        </View>
 
         {/* Recording Mode */}
         <ThemedText type="defaultSemiBold" style={styles.label}>
@@ -230,9 +288,13 @@ export default function TileSettingsModal() {
           Preview
         </ThemedText>
         <View style={[styles.preview, { backgroundColor: colors.tileBackground, borderColor: color }]}>
-          <ThemedText style={{ color, fontWeight: '700', fontSize: 20 }}>
-            {icon || abbreviation || name.slice(0, 2).toUpperCase() || '??'}
-          </ThemedText>
+          {hasGlyph ? (
+            <GlyphRenderer glyph={glyph!} width={60} height={60} />
+          ) : (
+            <ThemedText style={{ color, fontWeight: '700', fontSize: 20 }}>
+              {icon || abbreviation || name.slice(0, 2).toUpperCase() || '??'}
+            </ThemedText>
+          )}
         </View>
 
         {/* Actions */}
@@ -246,6 +308,16 @@ export default function TileSettingsModal() {
           </Pressable>
         )}
       </ScrollView>
+
+      {/* Glyph Editor Modal */}
+      <Modal visible={showGlyphEditor} animationType="slide" presentationStyle="fullScreen">
+        <GlyphEditor
+          initialGlyph={glyph}
+          habitColor={color}
+          onSave={handleGlyphSave}
+          onCancel={() => setShowGlyphEditor(false)}
+        />
+      </Modal>
     </ThemedView>
   );
 }
@@ -349,5 +421,34 @@ const styles = StyleSheet.create({
     color: '#E74C3C',
     fontWeight: '600',
     fontSize: 16,
+  },
+  // Glyph section
+  glyphRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  glyphPreview: {
+    width: 72,
+    height: 72,
+    borderRadius: 8,
+    borderWidth: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  glyphActions: {
+    gap: 8,
+    flex: 1,
+  },
+  glyphButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  glyphButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 14,
   },
 });

@@ -81,6 +81,7 @@ export default function SignInScreen() {
       mode="sign-in"
       onSubmit={handleSignIn}
       onGoogleSignIn={handleGoogleSignIn}
+      googleReady={!!googleRequest}
       onAppleSignIn={Platform.OS === 'ios' ? handleAppleSignIn : undefined}
       onToggleMode={() => router.push('/(auth)/sign-up')}
       error={error}

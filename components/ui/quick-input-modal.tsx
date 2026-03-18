@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { StyleSheet, Modal, TextInput, Pressable, View, KeyboardAvoidingView, Platform } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
@@ -23,6 +23,11 @@ export function QuickInputModal({
 }: QuickInputModalProps) {
   const [value, setValue] = useState(initialValue);
   const colorScheme = useColorScheme();
+
+  // Reset value when modal opens or initialValue changes
+  useEffect(() => {
+    if (visible) setValue(initialValue);
+  }, [visible, initialValue]);
   const colors = Colors[colorScheme ?? 'light'];
 
   function handleSubmit() {

@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WeekColumn } from './week-column';
 import { Colors } from '@/constants/theme';
@@ -16,6 +17,7 @@ export function WeekGrid({ dates, habits, recordsByDate, onTapHabit }: WeekGridP
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const today = formatDate(new Date());
+  const emptyMap = useRef(new Map<string, HabitRecord>()).current;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.gridBackground }]}>
@@ -27,7 +29,7 @@ export function WeekGrid({ dates, habits, recordsByDate, onTapHabit }: WeekGridP
             date={date}
             isToday={dateStr === today}
             habits={habits}
-            records={recordsByDate[dateStr] ?? new Map()}
+            records={recordsByDate[dateStr] ?? emptyMap}
             onTapHabit={onTapHabit}
           />
         );

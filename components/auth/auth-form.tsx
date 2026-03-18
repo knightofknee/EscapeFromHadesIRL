@@ -9,12 +9,13 @@ type AuthFormProps = {
   mode: 'sign-in' | 'sign-up';
   onSubmit: (email: string, password: string) => Promise<void>;
   onGoogleSignIn?: () => Promise<void>;
+  googleReady?: boolean;
   onAppleSignIn?: () => Promise<void>;
   onToggleMode: () => void;
   error?: string;
 };
 
-export function AuthForm({ mode, onSubmit, onGoogleSignIn, onAppleSignIn, onToggleMode, error }: AuthFormProps) {
+export function AuthForm({ mode, onSubmit, onGoogleSignIn, googleReady = true, onAppleSignIn, onToggleMode, error }: AuthFormProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -74,7 +75,7 @@ export function AuthForm({ mode, onSubmit, onGoogleSignIn, onAppleSignIn, onTogg
             <Pressable
               style={[styles.ssoButton, { borderColor: colors.icon }]}
               onPress={handleGoogle}
-              disabled={isDisabled}
+              disabled={isDisabled || !googleReady}
             >
               {ssoLoading === 'google' ? (
                 <ActivityIndicator size="small" />

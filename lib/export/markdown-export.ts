@@ -29,8 +29,18 @@ export function noteToFilename(note: Note): string {
 }
 
 export function allNotesToMarkdown(notes: Note[], tags: Tag[]): { filename: string; content: string }[] {
-  return notes.map((note) => ({
-    filename: noteToFilename(note),
-    content: noteToMarkdown(note, tags),
-  }));
+  const usedNames = new Map<string, number>();
+  return notes.map((note) => {
+    let filename = noteToFilename(note);
+    const base = filename.replace(/\.md$/, '');
+    const count = usedNames.get(base) ?? 0;
+    usedNames.set(base, count + 1);
+    if (count > 0) {
+      filename = `${base}-${count}.md`;
+    }
+    return {
+      filename,
+      content: noteToMarkdown(note, tags),
+    };
+  });
 }

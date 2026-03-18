@@ -1,25 +1,6 @@
-import { Stack, usePathname, useRouter } from 'expo-router';
-import { View, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { SegmentedControl } from '@/components/ui/segmented-control';
-
-const VIEW_SEGMENTS = [
-  { value: '/(tabs)/(habits)' as const, label: 'Day' },
-  { value: '/(tabs)/(habits)/week' as const, label: 'Week' },
-  { value: '/(tabs)/(habits)/month' as const, label: 'Month' },
-];
+import { Stack } from 'expo-router';
 
 export default function HabitsLayout() {
-  const pathname = usePathname();
-  const router = useRouter();
-
-  // Determine active view from pathname
-  const activeView = pathname.includes('/week')
-    ? '/(tabs)/(habits)/week'
-    : pathname.includes('/month')
-      ? '/(tabs)/(habits)/month'
-      : '/(tabs)/(habits)';
-
   return (
     <Stack
       screenOptions={{

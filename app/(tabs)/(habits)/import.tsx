@@ -8,7 +8,7 @@ import { useAuth } from '@/contexts/auth-context';
 import { db, doc, setDoc } from '@/lib/firebase/firestore';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { parseCalendarBlocks, type ParsedCalendar, type OCRBlock } from '@/lib/ocr/calendar-parser';
+import { parseCalendarBlocks, type ParsedCalendar } from '@/lib/ocr/calendar-parser';
 import { extractTextFromImage } from '@/lib/ocr/vision-api';
 import type { HabitRecord } from '@/types/habit';
 

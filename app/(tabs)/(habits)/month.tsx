@@ -53,6 +53,15 @@ export default function MonthViewScreen() {
 
   const { records } = useHabitRecords(startDate, endDate);
 
+  // Index records by habitId_date for O(1) lookups
+  const recordIndex = useMemo(() => {
+    const map = new Map<string, HabitRecord>();
+    for (const r of records) {
+      map.set(`${r.habitId}_${r.date}`, r);
+    }
+    return map;
+  }, [records]);
+
   // Build calendar grid
   const calendarWeeks = useMemo(() => {
     const firstDayOfWeek = (new Date(year, month, 1).getDay() + 6) % 7; // Monday=0
@@ -79,13 +88,13 @@ export default function MonthViewScreen() {
       let completed = 0;
       for (let d = 1; d <= daysInMonth; d++) {
         const dateStr = formatDate(new Date(year, month, d));
-        const record = records.find((r) => r.habitId === habit.id && r.date === dateStr);
+        const record = recordIndex.get(`${habit.id}_${dateStr}`);
         if (isCompleted(habit, record)) completed++;
       }
       const rate = daysInMonth > 0 ? Math.round((completed / daysInMonth) * 100) : 0;
       return { habit, completed, rate };
     });
-  }, [habits, records, year, month, daysInMonth]);
+  }, [habits, recordIndex, year, month, daysInMonth]);
 
   // Heatmap data: for each day, what percentage of habits are completed
   const dayCompletionMap = useMemo(() => {
@@ -95,13 +104,13 @@ export default function MonthViewScreen() {
       const dateStr = formatDate(new Date(year, month, d));
       let completed = 0;
       for (const habit of habits) {
-        const record = records.find((r) => r.habitId === habit.id && r.date === dateStr);
+        const record = recordIndex.get(`${habit.id}_${dateStr}`);
         if (isCompleted(habit, record)) completed++;
       }
       map[d] = completed / habits.length;
     }
     return map;
-  }, [habits, records, year, month, daysInMonth]);
+  }, [habits, recordIndex, year, month, daysInMonth]);
 
   function heatmapColor(ratio: number): string {
     if (ratio === 0) return colors.tileUnrecorded;

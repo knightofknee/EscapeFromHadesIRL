@@ -8,7 +8,7 @@ import { useHabits } from '@/hooks/use-habits';
 import { useHabitRecords, formatDate } from '@/hooks/use-habit-records';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import type { Habit, HabitRecord, TripleValue } from '@/types/habit';
+import type { Habit, HabitRecord } from '@/types/habit';
 
 function isRecordCompleted(habit: Habit, record?: HabitRecord): boolean {
   if (!record) return false;
@@ -24,11 +24,7 @@ function isRecordCompleted(habit: Habit, record?: HabitRecord): boolean {
   }
 }
 
-function computeStreak(habit: Habit, records: HabitRecord[]): { current: number; longest: number } {
-  const habitRecords = records
-    .filter((r) => r.habitId === habit.id)
-    .sort((a, b) => b.date.localeCompare(a.date));
-
+function computeStreak(habit: Habit, recordIndex: Map<string, HabitRecord>): { current: number; longest: number } {
   let current = 0;
   let longest = 0;
   let streak = 0;
@@ -41,7 +37,7 @@ function computeStreak(habit: Habit, records: HabitRecord[]): { current: number;
   for (let i = 0; i < 548; i++) {
     // 18 months
     const dateStr = formatDate(checkDate);
-    const record = habitRecords.find((r) => r.date === dateStr);
+    const record = recordIndex.get(`${habit.id}_${dateStr}`);
     const completed = isRecordCompleted(habit, record);
 
     if (completed) {
@@ -62,7 +58,7 @@ function computeStreak(habit: Habit, records: HabitRecord[]): { current: number;
 
 function computeMonthlyRates(
   habit: Habit,
-  records: HabitRecord[],
+  recordIndex: Map<string, HabitRecord>,
   months: number,
 ): { date: string; value: number }[] {
   const result: { date: string; value: number }[] = [];
@@ -77,7 +73,7 @@ function computeMonthlyRates(
     let completed = 0;
     for (let d = 1; d <= daysInMonth; d++) {
       const dateStr = formatDate(new Date(year, month, d));
-      const record = records.find((r) => r.habitId === habit.id && r.date === dateStr);
+      const record = recordIndex.get(`${habit.id}_${dateStr}`);
       if (isRecordCompleted(habit, record)) completed++;
     }
 
@@ -104,9 +100,18 @@ export default function StatsScreen() {
 
   const { records } = useHabitRecords(dateRange.startDate, dateRange.endDate);
 
+  // Index records by habitId_date for O(1) lookups
+  const recordIndex = useMemo(() => {
+    const map = new Map<string, HabitRecord>();
+    for (const r of records) {
+      map.set(`${r.habitId}_${r.date}`, r);
+    }
+    return map;
+  }, [records]);
+
   const habitStats = useMemo(() => {
     return habits.map((habit) => {
-      const { current, longest } = computeStreak(habit, records);
+      const { current, longest } = computeStreak(habit, recordIndex);
 
       // Completion rate for different periods
       const now = new Date();
@@ -128,17 +133,17 @@ export default function StatsScreen() {
           const checkDate = new Date(now);
           checkDate.setDate(now.getDate() - d);
           const dateStr = formatDate(checkDate);
-          const record = records.find((r) => r.habitId === habit.id && r.date === dateStr);
+          const record = recordIndex.get(`${habit.id}_${dateStr}`);
           if (isRecordCompleted(habit, record)) completed++;
         }
         rates[period] = Math.round((completed / days) * 100);
       }
 
-      const monthlyData = computeMonthlyRates(habit, records, 18);
+      const monthlyData = computeMonthlyRates(habit, recordIndex, 18);
 
       return { habit, current, longest, rates, monthlyData };
     });
-  }, [habits, records]);
+  }, [habits, recordIndex]);
 
   return (
     <ThemedView style={styles.container}>

@@ -1,4 +1,5 @@
 import { StyleSheet, View } from 'react-native';
+import { CartesianChart, Bar } from 'victory-native';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -22,39 +23,52 @@ export function StatsChart({ data, title, color, height = 200 }: StatsChartProps
 
   if (data.length === 0) {
     return (
-      <View style={[styles.container, { height, backgroundColor: colors.tileBackground }]}>
+      <View style={[styles.container, { height: height + 50, backgroundColor: colors.tileBackground, borderColor: colors.tileBorder }]}>
         <ThemedText style={styles.emptyText}>No data yet</ThemedText>
       </View>
     );
   }
 
-  const maxValue = Math.max(...data.map((d) => d.value), 1);
+  const chartData = data.map((d, i) => ({
+    x: i,
+    y: d.value,
+    label: d.date.slice(5),
+  }));
 
   return (
     <View style={[styles.container, { backgroundColor: colors.tileBackground, borderColor: colors.tileBorder }]}>
       <ThemedText type="defaultSemiBold" style={styles.title}>{title}</ThemedText>
-      <View style={[styles.chartArea, { height }]}>
-        {data.map((point, i) => {
-          const barHeight = (point.value / maxValue) * (height - 30);
-          return (
-            <View key={point.date} style={styles.barContainer}>
-              <View
-                style={[
-                  styles.bar,
-                  {
-                    height: Math.max(barHeight, 2),
-                    backgroundColor: chartColor,
-                  },
-                ]}
-              />
-              {data.length <= 12 && (
-                <ThemedText style={styles.barLabel} numberOfLines={1}>
-                  {point.date.slice(5)}
-                </ThemedText>
-              )}
-            </View>
-          );
-        })}
+      <View style={{ height }}>
+        <CartesianChart
+          data={chartData}
+          xKey="x"
+          yKeys={['y']}
+          domainPadding={{ left: 10, right: 10, top: 10 }}
+          xAxis={{
+            font: null,
+            tickCount: 0,
+            lineColor: `${colors.text}20`,
+          }}
+          yAxis={[{
+            font: null,
+            tickCount: 4,
+            formatYLabel: (v) => `${Math.round(v as number)}%`,
+            labelColor: colors.text,
+            lineColor: `${colors.text}20`,
+          }]}
+          frame={{
+            lineColor: `${colors.text}10`,
+          }}
+        >
+          {({ points, chartBounds }) => (
+            <Bar
+              points={points.y}
+              chartBounds={chartBounds}
+              color={chartColor}
+              roundedCorners={{ topLeft: 3, topRight: 3 }}
+            />
+          )}
+        </CartesianChart>
       </View>
     </View>
   );
@@ -69,26 +83,6 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 14,
-  },
-  chartArea: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 2,
-  },
-  barContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-  },
-  bar: {
-    width: '80%',
-    borderRadius: 2,
-    minWidth: 4,
-  },
-  barLabel: {
-    fontSize: 8,
-    marginTop: 2,
-    opacity: 0.5,
   },
   emptyText: {
     textAlign: 'center',
