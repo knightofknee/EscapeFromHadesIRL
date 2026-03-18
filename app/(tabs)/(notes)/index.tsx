@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
-import { StyleSheet, FlatList, TextInput, View, Pressable, Alert } from 'react-native';
+import { StyleSheet, FlatList, TextInput, View, Pressable } from 'react-native';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -9,7 +9,6 @@ import { useNotes } from '@/hooks/use-notes';
 import { useTags } from '@/hooks/use-tags';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import type { Note } from '@/types/note';
 
 export default function NotesListScreen() {
   const { notes, isLoading, createNote, deleteNote } = useNotes();
@@ -47,19 +46,6 @@ export default function NotesListScreen() {
     }
   }, [createNote]);
 
-  const handleDeleteNote = useCallback(
-    (note: Note) => {
-      Alert.alert('Delete Note', `Delete "${note.title || 'Untitled'}"?`, [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => deleteNote(note.id),
-        },
-      ]);
-    },
-    [deleteNote],
-  );
 
   return (
     <ThemedView style={styles.container}>
@@ -107,7 +93,7 @@ export default function NotesListScreen() {
             note={item}
             tags={tags}
             onPress={() => router.push(`/(tabs)/(notes)/${item.id}`)}
-            onLongPress={() => handleDeleteNote(item)}
+            onDelete={(noteId) => deleteNote(noteId)}
           />
         )}
         ListEmptyComponent={
@@ -130,7 +116,7 @@ export default function NotesListScreen() {
       {/* Export link */}
       <Pressable
         style={styles.exportLink}
-        onPress={() => router.push('/(tabs)/(notes)/export')}
+        onPress={() => router.push('/export-notes')}
       >
         <ThemedText style={[styles.exportText, { color: colors.tint }]}>Export Notes</ThemedText>
       </Pressable>

@@ -3,7 +3,8 @@ export type GridPosition = {
   col: number;
 };
 
-export type TileSize = '1x1' | '2x1' | '1x2' | '2x2';
+/** Relative size weight for tile layout. Default 1, max 100. Higher = bigger tile. */
+export type TileSize = number;
 
 export type RecordingMode = 'boolean' | 'triple' | 'counter' | 'value';
 

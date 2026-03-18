@@ -35,11 +35,29 @@ export function useHabits() {
       orderBy('position.col'),
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Habit);
-      setHabits(data);
-      setIsLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const data = snapshot.docs.map((d) => {
+          const raw = { id: d.id, ...d.data() } as Habit;
+          // Migrate old string-based tileSize ('1x1', '2x2', etc.) to numeric
+          if (typeof raw.tileSize === 'string') {
+            const s = raw.tileSize as string;
+            if (s === '2x2') raw.tileSize = 4;
+            else if (s === '2x1' || s === '1x2') raw.tileSize = 2;
+            else raw.tileSize = 1;
+          }
+          return raw;
+        });
+        console.log('[useHabits] loaded', data.length, 'habits');
+        setHabits(data);
+        setIsLoading(false);
+      },
+      (error) => {
+        console.error('[useHabits] snapshot error:', error);
+        setIsLoading(false);
+      },
+    );
 
     return unsubscribe;
   }, [user]);

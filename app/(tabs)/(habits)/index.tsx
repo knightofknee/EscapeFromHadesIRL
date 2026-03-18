@@ -8,6 +8,7 @@ import { TileGrid } from '@/components/habits/tile-grid';
 import { QuickInputModal } from '@/components/ui/quick-input-modal';
 import { useHabits } from '@/hooks/use-habits';
 import { useTodayRecords } from '@/hooks/use-today-records';
+import { useNotes } from '@/hooks/use-notes';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { Habit } from '@/types/habit';
@@ -18,6 +19,7 @@ export default function HabitsDayScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
+  const { createNote } = useNotes();
   const [valueInputHabit, setValueInputHabit] = useState<Habit | null>(null);
 
   const handleTap = useCallback(
@@ -114,13 +116,26 @@ export default function HabitsDayScreen() {
               onLongPressHabit={handleLongPress}
             />
 
-            {/* Add button hugs bottom */}
-            <Pressable
-              style={[styles.addTileButton, { borderColor: colors.tint, backgroundColor: `${colors.tint}15` }]}
-              onPress={() => router.push({ pathname: '/tile-settings', params: { mode: 'create' } })}
-            >
-              <ThemedText style={[styles.addTileText, { color: colors.tint }]}>+ Add Habit</ThemedText>
-            </Pressable>
+            {/* Bottom action buttons */}
+            <View style={styles.bottomButtons}>
+              <Pressable
+                style={[styles.addTileButton, { borderColor: colors.tint, backgroundColor: `${colors.tint}15` }]}
+                onPress={() => router.push({ pathname: '/tile-settings', params: { mode: 'create' } })}
+              >
+                <ThemedText style={[styles.addTileText, { color: colors.tint }]}>+ Add Habit</ThemedText>
+              </Pressable>
+              <Pressable
+                style={[styles.addTileButton, { borderColor: colors.tint, backgroundColor: `${colors.tint}15` }]}
+                onPress={async () => {
+                  const note = await createNote('');
+                  if (note) {
+                    router.push(`/(tabs)/(notes)/${note.id}`);
+                  }
+                }}
+              >
+                <ThemedText style={[styles.addTileText, { color: colors.tint }]}>+ Add Note</ThemedText>
+              </Pressable>
+            </View>
           </>
         )}
 
@@ -201,9 +216,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 16,
   },
-  addTileButton: {
+  bottomButtons: {
+    flexDirection: 'row',
     marginHorizontal: 16,
     marginBottom: 8,
+    gap: 8,
+  },
+  addTileButton: {
+    flex: 1,
     padding: 12,
     borderRadius: 8,
     borderWidth: 2,

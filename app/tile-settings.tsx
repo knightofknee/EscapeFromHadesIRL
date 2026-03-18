@@ -9,20 +9,13 @@ import { Colors } from '@/constants/theme';
 import { TILE_COLORS, DEFAULT_TILE_COLOR } from '@/constants/grid';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useHabits } from '@/hooks/use-habits';
-import type { RecordingMode, TileSize, GlyphData } from '@/types/habit';
+import type { RecordingMode, GlyphData } from '@/types/habit';
 
 const RECORDING_MODES: { value: RecordingMode; label: string; description: string }[] = [
   { value: 'boolean', label: 'Yes / No', description: 'Tap to toggle' },
   { value: 'triple', label: 'No / Yes / Double', description: 'Tap to cycle' },
   { value: 'counter', label: 'Counter', description: 'Tap to increment' },
   { value: 'value', label: 'Value', description: 'Enter a value' },
-];
-
-const TILE_SIZES: { value: TileSize; label: string }[] = [
-  { value: '1x1', label: '1×1' },
-  { value: '2x1', label: '2×1' },
-  { value: '1x2', label: '1×2' },
-  { value: '2x2', label: '2×2' },
 ];
 
 export default function TileSettingsModal() {
@@ -40,7 +33,7 @@ export default function TileSettingsModal() {
   const [recordingMode, setRecordingMode] = useState<RecordingMode>(
     existingHabit?.recordingMode ?? 'boolean',
   );
-  const [tileSize, setTileSize] = useState<TileSize>(existingHabit?.tileSize ?? '1x1');
+  const [tileSize, setTileSize] = useState<number>(existingHabit?.tileSize ?? 1);
   const [color, setColor] = useState(existingHabit?.color ?? DEFAULT_TILE_COLOR);
   const [glyph, setGlyph] = useState<GlyphData | undefined>(existingHabit?.glyph);
   const [showGlyphEditor, setShowGlyphEditor] = useState(false);
@@ -246,25 +239,32 @@ export default function TileSettingsModal() {
 
         {/* Tile Size */}
         <ThemedText type="defaultSemiBold" style={styles.label}>
-          Tile Size
+          Relative Size
         </ThemedText>
         <View style={styles.sizeRow}>
-          {TILE_SIZES.map((size) => (
-            <Pressable
-              key={size.value}
-              style={[
-                styles.sizeButton,
-                {
-                  borderColor: tileSize === size.value ? colors.tint : colors.tileBorder,
-                  backgroundColor:
-                    tileSize === size.value ? `${colors.tint}20` : 'transparent',
-                },
-              ]}
-              onPress={() => setTileSize(size.value)}
-            >
-              <ThemedText type="defaultSemiBold">{size.label}</ThemedText>
-            </Pressable>
-          ))}
+          <Pressable
+            style={[styles.stepperButton, { borderColor: colors.tileBorder }]}
+            onPress={() => setTileSize((s) => Math.max(1, s - 1))}
+          >
+            <ThemedText style={styles.stepperText}>−</ThemedText>
+          </Pressable>
+          <TextInput
+            style={[styles.sizeInput, { color: colors.text, borderColor: colors.tileBorder }]}
+            value={String(tileSize)}
+            onChangeText={(t) => {
+              const n = parseInt(t, 10);
+              if (!isNaN(n)) setTileSize(Math.max(1, Math.min(100, n)));
+              else if (t === '') setTileSize(1);
+            }}
+            keyboardType="number-pad"
+            maxLength={3}
+          />
+          <Pressable
+            style={[styles.stepperButton, { borderColor: colors.tileBorder }]}
+            onPress={() => setTileSize((s) => Math.min(100, s + 1))}
+          >
+            <ThemedText style={styles.stepperText}>+</ThemedText>
+          </Pressable>
         </View>
 
         {/* Color */}
@@ -389,15 +389,29 @@ const styles = StyleSheet.create({
   },
   sizeRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
   },
-  sizeButton: {
-    flex: 1,
+  stepperButton: {
+    width: 48,
     height: 48,
     borderRadius: 8,
     borderWidth: 1.5,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  stepperText: {
+    fontSize: 24,
+    fontWeight: '600',
+  },
+  sizeInput: {
+    width: 64,
+    height: 48,
+    borderWidth: 1,
+    borderRadius: 8,
+    textAlign: 'center',
+    fontSize: 18,
+    fontWeight: '600',
   },
   colorGrid: {
     flexDirection: 'row',

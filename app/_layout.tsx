@@ -1,4 +1,5 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
@@ -31,6 +32,7 @@ function RootNavigator() {
       <Stack.Screen name="(auth)" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="tile-settings" options={{ presentation: 'modal', title: 'Tile Settings' }} />
+      <Stack.Screen name="export-notes" options={{ presentation: 'modal', title: 'Export Notes' }} />
     </Stack>
   );
 }
@@ -43,11 +45,13 @@ export default function RootLayout() {
     appearance === 'system' ? systemColorScheme : appearance;
 
   return (
-    <AuthProvider>
-      <ThemeProvider value={effectiveScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <RootNavigator />
-        <StatusBar style={appearance === 'system' ? 'auto' : appearance === 'dark' ? 'light' : 'dark'} />
-      </ThemeProvider>
-    </AuthProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <AuthProvider>
+        <ThemeProvider value={effectiveScheme === 'dark' ? DarkTheme : DefaultTheme}>
+          <RootNavigator />
+          <StatusBar style={appearance === 'system' ? 'auto' : appearance === 'dark' ? 'light' : 'dark'} />
+        </ThemeProvider>
+      </AuthProvider>
+    </GestureHandlerRootView>
   );
 }

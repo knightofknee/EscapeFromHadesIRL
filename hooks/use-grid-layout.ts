@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { Habit, TileSize } from '@/types/habit';
+import type { Habit } from '@/types/habit';
 import { GRID } from '@/constants/grid';
 
 type TileLayout = {
@@ -10,17 +10,9 @@ type TileLayout = {
   height: number;
 };
 
-/**
- * TileSize maps to a weight: bigger size = bigger tile relative to others.
- * '1x1' = 1, '2x1' = 2, '1x2' = 2, '2x2' = 4
- */
-function sizeWeight(size: TileSize): number {
-  switch (size) {
-    case '1x1': return 1;
-    case '2x1': return 2;
-    case '1x2': return 2;
-    case '2x2': return 4;
-  }
+/** TileSize is already a number (1-100). Clamp to at least 1. */
+function sizeWeight(size: number): number {
+  return Math.max(1, Math.min(size, 100));
 }
 
 /**

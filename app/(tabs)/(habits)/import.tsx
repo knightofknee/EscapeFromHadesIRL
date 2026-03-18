@@ -12,7 +12,7 @@ import { parseCalendarBlocks, type ParsedCalendar } from '@/lib/ocr/calendar-par
 import { extractTextFromImage } from '@/lib/ocr/vision-api';
 import type { HabitRecord } from '@/types/habit';
 
-type ImportStep = 'capture' | 'processing' | 'review' | 'mapping' | 'done';
+type ImportStep = 'capture' | 'processing' | 'review' | 'done';
 
 export default function ImportScreen() {
   const { habits } = useHabits();
@@ -23,45 +23,35 @@ export default function ImportScreen() {
   const [step, setStep] = useState<ImportStep>('capture');
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [parsedCalendar, setParsedCalendar] = useState<ParsedCalendar | null>(null);
-  const [apiKey, setApiKey] = useState('');
   const [yearMonth, setYearMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
 
+  async function processImage(uri: string) {
+    setStep('processing');
+    try {
+      const blocks = await extractTextFromImage(uri);
+      const [yearStr, monthStr] = yearMonth.split('-');
+      const parsed = parseCalendarBlocks(blocks, parseInt(yearStr), parseInt(monthStr) - 1);
+      setParsedCalendar(parsed);
+      setStep('review');
+    } catch (e: any) {
+      Alert.alert('OCR Error', e.message ?? 'Failed to extract text');
+      setStep('capture');
+    }
+  }
+
   async function pickImage() {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       quality: 0.8,
-      base64: true,
     });
 
     if (!result.canceled && result.assets[0]) {
-      setImageUri(result.assets[0].uri);
-
-      if (!apiKey) {
-        Alert.alert(
-          'API Key Required',
-          'Enter your Google Cloud Vision API key to extract text from the calendar image. You can also manually map habits without OCR.',
-          [{ text: 'OK' }],
-        );
-        return;
-      }
-
-      setStep('processing');
-      try {
-        const base64 = result.assets[0].base64;
-        if (!base64) throw new Error('Failed to get base64 image data');
-
-        const blocks = await extractTextFromImage(base64, apiKey);
-        const [yearStr, monthStr] = yearMonth.split('-');
-        const parsed = parseCalendarBlocks(blocks, parseInt(yearStr), parseInt(monthStr) - 1);
-        setParsedCalendar(parsed);
-        setStep('review');
-      } catch (e: any) {
-        Alert.alert('OCR Error', e.message ?? 'Failed to extract text');
-        setStep('capture');
-      }
+      const uri = result.assets[0].uri;
+      setImageUri(uri);
+      await processImage(uri);
     }
   }
 
@@ -74,11 +64,12 @@ export default function ImportScreen() {
 
     const result = await ImagePicker.launchCameraAsync({
       quality: 0.8,
-      base64: true,
     });
 
     if (!result.canceled && result.assets[0]) {
-      setImageUri(result.assets[0].uri);
+      const uri = result.assets[0].uri;
+      setImageUri(uri);
+      await processImage(uri);
     }
   }
 
@@ -94,7 +85,6 @@ export default function ImportScreen() {
     let imported = 0;
     for (const day of daysWithMarks) {
       for (const mark of day.marks) {
-        // Try to match mark to a habit by abbreviation
         const matchedHabit = habits.find(
           (h) =>
             h.abbreviation.toLowerCase() === mark.toLowerCase() ||
@@ -126,7 +116,7 @@ export default function ImportScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <ThemedText type="title">Import Calendar</ThemedText>
         <ThemedText style={styles.description}>
-          Photograph a physical calendar to import past habit data.
+          Photograph a physical calendar to import past habit data. Uses on-device ML Kit — no internet needed.
         </ThemedText>
 
         {/* Month selector */}
@@ -139,19 +129,6 @@ export default function ImportScreen() {
           onChangeText={setYearMonth}
           placeholder="YYYY-MM"
           placeholderTextColor={colors.icon}
-        />
-
-        {/* API Key */}
-        <ThemedText type="defaultSemiBold" style={styles.label}>
-          Google Vision API Key (optional)
-        </ThemedText>
-        <TextInput
-          style={[styles.input, { color: colors.text, borderColor: colors.tileBorder }]}
-          value={apiKey}
-          onChangeText={setApiKey}
-          placeholder="Enter API key for OCR..."
-          placeholderTextColor={colors.icon}
-          secureTextEntry
         />
 
         {step === 'capture' && (
@@ -170,13 +147,13 @@ export default function ImportScreen() {
         )}
 
         {step === 'processing' && (
-          <ThemedText style={styles.statusText}>Processing image...</ThemedText>
+          <ThemedText style={styles.statusText}>Recognizing text...</ThemedText>
         )}
 
         {step === 'review' && parsedCalendar && (
           <View style={styles.reviewSection}>
             <ThemedText type="defaultSemiBold">
-              Detected {parsedCalendar.days.length} days
+              Detected {parsedCalendar.days.filter((d) => d.marks.length > 0).length} days with marks
             </ThemedText>
             <ThemedText style={styles.confidence}>
               Confidence: {Math.round(parsedCalendar.confidence * 100)}%
@@ -195,11 +172,15 @@ export default function ImportScreen() {
             <Pressable style={[styles.importButton, { backgroundColor: colors.tileRecorded }]} onPress={handleImport}>
               <ThemedText style={styles.captureText}>Import Records</ThemedText>
             </Pressable>
+
+            <Pressable style={styles.retryButton} onPress={() => { setStep('capture'); setImageUri(null); setParsedCalendar(null); }}>
+              <ThemedText style={[styles.retryText, { color: colors.tint }]}>Try Different Photo</ThemedText>
+            </Pressable>
           </View>
         )}
 
         {step === 'done' && (
-          <ThemedText style={styles.statusText}>Import complete!</ThemedText>
+          <ThemedText style={styles.statusText}>Import complete! ✅</ThemedText>
         )}
       </ScrollView>
     </ThemedView>
@@ -223,4 +204,6 @@ const styles = StyleSheet.create({
   dayDate: { fontWeight: '600', width: 80 },
   dayMarks: { flex: 1, opacity: 0.7 },
   importButton: { height: 48, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginTop: 8 },
+  retryButton: { height: 44, justifyContent: 'center', alignItems: 'center' },
+  retryText: { fontWeight: '600', fontSize: 15 },
 });

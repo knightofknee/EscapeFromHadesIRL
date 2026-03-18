@@ -1,6 +1,6 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { StyleSheet, ScrollView, View, Pressable } from 'react-native';
-import { useLocalSearchParams, router } from 'expo-router';
+import { useLocalSearchParams, router, useNavigation } from 'expo-router';
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
 import { NoteEditor } from '@/components/notes/note-editor';
@@ -18,6 +18,21 @@ export default function NoteEditorScreen() {
   const colors = Colors[colorScheme ?? 'light'];
 
   const note = notes.find((n) => n.id === id);
+  const noteRef = useRef(note);
+  noteRef.current = note;
+
+  const navigation = useNavigation();
+
+  // Auto-delete blank notes when leaving the screen (back button, swipe, etc.)
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', () => {
+      const n = noteRef.current;
+      if (n && !n.title.trim() && !n.content.trim()) {
+        deleteNote(n.id);
+      }
+    });
+    return unsubscribe;
+  }, [navigation, deleteNote]);
 
   const handleUpdateTitle = useCallback(
     (title: string) => {
@@ -60,13 +75,7 @@ export default function NoteEditorScreen() {
       <View style={styles.header}>
         <View />
         <Pressable
-          onPress={() => {
-            // Delete the note if it's completely empty
-            if (note && !note.title.trim() && !note.content.trim()) {
-              deleteNote(note.id);
-            }
-            router.back();
-          }}
+          onPress={() => router.back()}
           style={styles.headerButton}
         >
           <ThemedText style={[styles.headerButtonText, { color: colors.tint }]}>Done</ThemedText>

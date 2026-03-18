@@ -11,7 +11,8 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.briancarlisle.escapefromhadesirl",
-      "usesAppleSignIn": true
+      "usesAppleSignIn": true,
+      "deploymentTarget": "16.0"
     },
     "android": {
       "adaptiveIcon": {
@@ -34,7 +35,7 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
+          "imageWidth": 400,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",
           "dark": {
@@ -42,7 +43,8 @@
           }
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      ["./plugins/withMinDeploymentTarget", "16.0"]
     ],
     "experiments": {
       "typedRoutes": true,

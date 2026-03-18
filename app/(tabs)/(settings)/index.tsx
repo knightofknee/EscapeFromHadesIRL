@@ -94,7 +94,7 @@ export default function SettingsScreen() {
           </Pressable>
           <Pressable
             style={styles.row}
-            onPress={() => router.push('/(tabs)/(notes)/export')}
+            onPress={() => router.push('/export-notes')}
           >
             <ThemedText style={styles.label}>Export Notes</ThemedText>
             <ThemedText style={styles.chevron}>›</ThemedText>

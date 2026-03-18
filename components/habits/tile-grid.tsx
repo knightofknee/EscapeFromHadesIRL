@@ -5,7 +5,7 @@ import { Colors } from '@/constants/theme';
 import { GRID } from '@/constants/grid';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { TileContent } from './tile-content';
-import type { Habit, HabitRecord, TileSize } from '@/types/habit';
+import type { Habit, HabitRecord } from '@/types/habit';
 
 type TileGridProps = {
   habits: Habit[];
@@ -14,13 +14,8 @@ type TileGridProps = {
   onLongPressHabit: (habitId: string) => void;
 };
 
-function sizeWeight(size: TileSize): number {
-  switch (size) {
-    case '1x1': return 1;
-    case '2x1': return 2;
-    case '1x2': return 2;
-    case '2x2': return 4;
-  }
+function sizeWeight(size: number): number {
+  return Math.max(1, Math.min(size, 100));
 }
 
 function MeasuredTile({
