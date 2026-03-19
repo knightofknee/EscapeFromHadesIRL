@@ -44,7 +44,18 @@
         }
       ],
       "expo-web-browser",
-      ["./plugins/withMinDeploymentTarget", "16.0"]
+      "./plugins/ios-build-settings",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "16.0",
+            "excludedArchitectures": {
+              "iphonesimulator": ["x86_64"]
+            }
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

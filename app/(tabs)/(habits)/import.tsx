@@ -116,7 +116,7 @@ export default function ImportScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <ThemedText type="title">Import Calendar</ThemedText>
         <ThemedText style={styles.description}>
-          Photograph a physical calendar to import past habit data. Uses on-device ML Kit — no internet needed.
+          Photograph a physical calendar to import past habit data. Text recognition runs on-device.
         </ThemedText>
 
         {/* Month selector */}
