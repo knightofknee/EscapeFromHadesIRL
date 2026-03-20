@@ -1,8 +1,6 @@
 import { StyleSheet, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ThemedText } from '@/components/themed-text';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 import { GlyphRenderer } from './glyph-renderer';
 import type { Habit, HabitRecord, TripleValue, GlyphData } from '@/types/habit';
 
@@ -50,9 +48,6 @@ function getStringValue(record?: HabitRecord): string {
 }
 
 export function TileContent({ habit, record, tileWidth, tileHeight }: TileContentProps) {
-  const colorScheme = useColorScheme();
-  const colors = Colors[colorScheme ?? 'light'];
-
   const smallerDim = Math.min(tileWidth, tileHeight);
   const isCompact = smallerDim < 72;
   const fontSize = isCompact ? 14 : Math.min(smallerDim * 0.12, 24);

@@ -5,6 +5,7 @@ import {
   signOut as firebaseSignOut,
   onAuthStateChanged,
   signInWithCredential,
+  sendPasswordResetEmail as firebaseSendPasswordResetEmail,
   GoogleAuthProvider,
   OAuthProvider,
   type User,
@@ -50,4 +51,8 @@ export function signInWithApple(idToken: string, nonce: string) {
   const provider = new OAuthProvider('apple.com');
   const credential = provider.credential({ idToken, rawNonce: nonce });
   return signInWithCredential(auth, credential);
+}
+
+export function sendPasswordReset(email: string) {
+  return firebaseSendPasswordResetEmail(auth, email);
 }

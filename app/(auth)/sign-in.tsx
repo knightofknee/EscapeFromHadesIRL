@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Platform } from 'react-native';
+import { Alert, Platform } from 'react-native';
 import { router } from 'expo-router';
 import * as Crypto from 'expo-crypto';
 import * as WebBrowser from 'expo-web-browser';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { useIdTokenAuthRequest } from 'expo-auth-session/providers/google';
 import { AuthForm } from '@/components/auth/auth-form';
-import { signIn, signInWithGoogle, signInWithApple } from '@/lib/firebase/auth';
+import { signIn, signInWithGoogle, signInWithApple, sendPasswordReset } from '@/lib/firebase/auth';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -40,6 +40,30 @@ export default function SignInScreen() {
     } catch (e: any) {
       setError(e.message ?? 'Failed to sign in');
     }
+  }
+
+  function handleForgotPassword() {
+    Alert.prompt(
+      'Reset Password',
+      'Enter your email address and we\'ll send you a reset link.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Send',
+          onPress: async (emailInput: string | undefined) => {
+            if (!emailInput) return;
+            try {
+              await sendPasswordReset(emailInput);
+              Alert.alert('Check your email', 'A password reset link has been sent.');
+            } catch (e: any) {
+              Alert.alert('Error', e.message ?? 'Failed to send reset email');
+            }
+          },
+        },
+      ],
+      'plain-text',
+      '', // User enters their email
+    );
   }
 
   async function handleGoogleSignIn() {
@@ -84,6 +108,7 @@ export default function SignInScreen() {
       googleReady={!!googleRequest}
       onAppleSignIn={Platform.OS === 'ios' ? handleAppleSignIn : undefined}
       onToggleMode={() => router.push('/(auth)/sign-up')}
+      onForgotPassword={handleForgotPassword}
       error={error}
     />
   );
