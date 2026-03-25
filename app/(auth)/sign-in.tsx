@@ -74,6 +74,13 @@ export default function SignInScreen() {
   async function handleAppleSignIn() {
     try {
       setError('');
+
+      const isAvailable = await AppleAuthentication.isAvailableAsync();
+      if (!isAvailable) {
+        setError('Apple sign-in is not available on this device');
+        return;
+      }
+
       const nonce = Math.random().toString(36).substring(2, 10);
       const hashedNonce = await Crypto.digestStringAsync(
         Crypto.CryptoDigestAlgorithm.SHA256,

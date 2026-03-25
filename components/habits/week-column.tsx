@@ -62,7 +62,7 @@ export function WeekColumn({ date, isToday, habits, records, onTapHabit }: WeekC
               key={habit.id}
               style={[styles.miniTile, { backgroundColor: stateColor }]}
               onPress={() => {
-                if (Platform.OS === 'ios') {
+                if (Platform.OS === 'ios' && !Platform.isPad) {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 }
                 onTapHabit(habit.id, dateStr);

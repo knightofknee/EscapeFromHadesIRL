@@ -61,11 +61,11 @@ function MeasuredTile({
       ]}
       onLayout={handleLayout}
       onPress={() => {
-        if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        if (Platform.OS === 'ios' && !Platform.isPad) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         onTap(habit.id);
       }}
       onLongPress={() => {
-        if (Platform.OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        if (Platform.OS === 'ios' && !Platform.isPad) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         onLongPress(habit.id);
       }}
       delayLongPress={GRID.dragActivationDelay}

@@ -30,14 +30,14 @@ export function Tile({ habit, record, x, y, width, height, cellSize, onTap, onLo
     record.value !== '';
 
   function handleTap() {
-    if (Platform.OS === 'ios') {
+    if (Platform.OS === 'ios' && !Platform.isPad) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
     onTap(habit.id);
   }
 
   function handleLongPress() {
-    if (Platform.OS === 'ios') {
+    if (Platform.OS === 'ios' && !Platform.isPad) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
     onLongPress(habit.id);
