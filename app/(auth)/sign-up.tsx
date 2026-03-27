@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { router } from 'expo-router';
 import { AuthForm } from '@/components/auth/auth-form';
-import { signUp } from '@/lib/firebase/auth';
+import { signUp, getAuthErrorMessage } from '@/lib/firebase/auth';
 
 export default function SignUpScreen() {
   const [error, setError] = useState('');
@@ -12,7 +12,7 @@ export default function SignUpScreen() {
       await signUp(email, password);
       router.replace('/(tabs)/(habits)');
     } catch (e: any) {
-      setError(e.message ?? 'Failed to create account');
+      setError(getAuthErrorMessage(e));
     }
   }
 

@@ -101,6 +101,17 @@ export default function SettingsScreen() {
           </Pressable>
         </View>
 
+        {/* Additional Settings */}
+        <View style={[styles.card, { backgroundColor: colors.tileBackground, borderColor: colors.tileBorder }]}>
+          <Pressable
+            style={styles.row}
+            onPress={() => router.push('/(tabs)/(settings)/additional-settings')}
+          >
+            <ThemedText style={styles.label}>Additional Settings</ThemedText>
+            <ThemedText style={styles.chevron}>›</ThemedText>
+          </Pressable>
+        </View>
+
         {/* Sign Out */}
         <Pressable
           style={[styles.signOutButton, { borderColor: '#E74C3C' }]}

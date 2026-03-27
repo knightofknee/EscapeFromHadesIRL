@@ -6,7 +6,7 @@ import * as WebBrowser from 'expo-web-browser';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { useIdTokenAuthRequest } from 'expo-auth-session/providers/google';
 import { AuthForm } from '@/components/auth/auth-form';
-import { signIn, signInWithGoogle, signInWithApple, sendPasswordReset } from '@/lib/firebase/auth';
+import { signIn, signInWithGoogle, signInWithApple, sendPasswordReset, getAuthErrorMessage } from '@/lib/firebase/auth';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -25,10 +25,10 @@ export default function SignInScreen() {
       if (idToken) {
         signInWithGoogle(idToken)
           .then(() => router.replace('/(tabs)/(habits)'))
-          .catch((e: any) => setError(e.message ?? 'Google sign-in failed'));
+          .catch((e: any) => setError(getAuthErrorMessage(e)));
       }
     } else if (googleResponse?.type === 'error') {
-      setError(googleResponse.error?.message ?? 'Google sign-in failed');
+      setError(getAuthErrorMessage(googleResponse.error));
     }
   }, [googleResponse]);
 
@@ -38,7 +38,7 @@ export default function SignInScreen() {
       await signIn(email, password);
       router.replace('/(tabs)/(habits)');
     } catch (e: any) {
-      setError(e.message ?? 'Failed to sign in');
+      setError(getAuthErrorMessage(e));
     }
   }
 
@@ -56,7 +56,7 @@ export default function SignInScreen() {
               await sendPasswordReset(emailInput);
               Alert.alert('Check your email', 'A password reset link has been sent.');
             } catch (e: any) {
-              Alert.alert('Error', e.message ?? 'Failed to send reset email');
+              Alert.alert('Error', getAuthErrorMessage(e));
             }
           },
         },
@@ -103,7 +103,7 @@ export default function SignInScreen() {
       }
     } catch (e: any) {
       if (e.code === 'ERR_REQUEST_CANCELED') return;
-      setError(e.message ?? 'Apple sign-in failed');
+      setError(getAuthErrorMessage(e));
     }
   }
 

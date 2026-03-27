@@ -56,3 +56,24 @@ export function signInWithApple(idToken: string, nonce: string) {
 export function sendPasswordReset(email: string) {
   return firebaseSendPasswordResetEmail(auth, email);
 }
+
+const AUTH_ERROR_MESSAGES: Record<string, string> = {
+  'auth/invalid-credential': 'Incorrect email or password.',
+  'auth/invalid-email': 'Please enter a valid email address.',
+  'auth/user-disabled': 'This account has been disabled.',
+  'auth/user-not-found': 'No account found with this email.',
+  'auth/wrong-password': 'Incorrect password.',
+  'auth/email-already-in-use': 'An account with this email already exists.',
+  'auth/weak-password': 'Password must be at least 6 characters.',
+  'auth/too-many-requests': 'Too many attempts. Please try again later.',
+  'auth/network-request-failed': 'Network error. Check your connection and try again.',
+  'auth/requires-recent-login': 'Please sign out and sign back in to continue.',
+};
+
+export function getAuthErrorMessage(error: any): string {
+  const code = error?.code;
+  if (code && AUTH_ERROR_MESSAGES[code]) {
+    return AUTH_ERROR_MESSAGES[code];
+  }
+  return 'Something went wrong. Please try again.';
+}

@@ -135,6 +135,7 @@ export function AuthForm({
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const anyLoading = loading || ssoLoading != null;
+  const showOverlay = ssoLoading != null;
 
   async function handleSubmit() {
     if (!email || !password) return;
@@ -213,9 +214,9 @@ export function AuthForm({
               </View>
 
               {/* Error */}
-              {error ? (
-                <Text style={[styles.error, { color: colors.error }]}>{error}</Text>
-              ) : null}
+              <Text style={[styles.error, { color: colors.error, opacity: error ? 1 : 0 }]}>
+                {error || ' '}
+              </Text>
 
               {/* Email */}
               <View style={styles.inputGroup}>
@@ -370,7 +371,7 @@ export function AuthForm({
         </TouchableWithoutFeedback>
 
         {/* Loading overlay */}
-        {anyLoading && (
+        {showOverlay && (
           <View
             style={[
               styles.blocker,
