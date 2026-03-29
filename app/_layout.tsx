@@ -32,7 +32,7 @@ function RootNavigator() {
     return (
       <View style={loadingStyles.container}>
         <Image
-          source={require('@/assets/images/icon.png')}
+          source={require('@/assets/images/splash-icon.png')}
           style={loadingStyles.logo}
           resizeMode="contain"
         />
