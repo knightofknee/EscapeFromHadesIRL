@@ -58,13 +58,6 @@ export default function SettingsScreen() {
         </ThemedText>
         <View style={[styles.card, { backgroundColor: colors.tileBackground, borderColor: colors.tileBorder }]}>
           <Pressable
-            style={[styles.row, appearance === 'system' && styles.selectedRow]}
-            onPress={() => setAppearance('system')}
-          >
-            <ThemedText style={styles.label}>System Default</ThemedText>
-            {appearance === 'system' && <ThemedText style={{ color: colors.tint }}>✓</ThemedText>}
-          </Pressable>
-          <Pressable
             style={[styles.row, appearance === 'light' && styles.selectedRow]}
             onPress={() => setAppearance('light')}
           >

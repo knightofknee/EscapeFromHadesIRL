@@ -32,28 +32,28 @@ type AuthFormProps = {
 
 const themes = {
   light: {
-    bg: '#F0F4FF',
+    bg: '#FFF5F5',
     text: '#1A1A2E',
     subtle: '#7A8599',
     card: '#FFFFFF',
-    inputBg: '#F7F8FA',
-    border: '#E2E6EE',
-    primary: '#3B82F6',
+    inputBg: '#FFF9F9',
+    border: '#F0D0CE',
+    primary: '#E74C3C',
     error: '#E74C3C',
-    blobA: '#e2ebff',
-    blobB: '#d7e4ff',
+    blobA: '#FFE0DB',
+    blobB: '#FFD1CC',
   },
   dark: {
-    bg: '#0F1117',
+    bg: '#0A0A0A',
     text: '#ECEDEE',
-    subtle: '#6B7A99',
-    card: '#171D2E',
-    inputBg: '#1C2336',
-    border: '#2A3650',
-    primary: '#5BA8F5',
-    error: '#E74C3C',
-    blobA: '#1E2A4A',
-    blobB: '#1A2744',
+    subtle: '#8A7A7A',
+    card: '#1A1212',
+    inputBg: '#241818',
+    border: '#3A2222',
+    primary: '#EF5350',
+    error: '#EF5350',
+    blobA: '#2A1010',
+    blobB: '#1F0E0E',
   },
 };
 
@@ -186,11 +186,13 @@ export function AuthForm({
 
             {/* Header / logo */}
             <View style={styles.header}>
-              <Image
-                source={require('@/assets/images/logo-transparent.png')}
-                style={styles.logo}
-                resizeMode="contain"
-              />
+              <View style={styles.logoWrapper}>
+                <Image
+                  source={require('@/assets/images/icon.png')}
+                  style={styles.logo}
+                  resizeMode="cover"
+                />
+              </View>
               <Text style={[styles.title, { color: colors.text }]}>
                 {mode === 'sign-in' ? 'Welcome back' : 'Create account'}
               </Text>
@@ -410,10 +412,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 18,
   },
-  logo: {
-    width: 84,
-    height: 84,
+  logoWrapper: {
+    width: 120,
+    height: 120,
+    borderRadius: 26,
+    overflow: 'hidden',
     marginBottom: 12,
+  },
+  logo: {
+    width: 132,
+    height: 132,
+    marginTop: -6,
+    marginLeft: -6,
   },
   title: {
     fontSize: 28,
@@ -528,11 +538,11 @@ const styles = StyleSheet.create({
   // Decorative blobs
   blobA: {
     position: 'absolute',
-    width: 260,
-    height: 260,
+    width: 230,
+    height: 230,
     borderRadius: 999,
-    top: -60,
-    right: -50,
+    top: -70,
+    right: -55,
   },
   blobB: {
     position: 'absolute',

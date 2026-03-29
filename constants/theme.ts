@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 
-const tintColorLight = '#0a7ea4';
-const tintColorDark = '#5DADE2';
+const tintColorLight = '#E74C3C';
+const tintColorDark = '#EF5350';
 
 export const Colors = {
   light: {
@@ -21,8 +21,8 @@ export const Colors = {
     // Notes
     noteBackground: '#FFFFFF',
     noteBorder: '#E1E4E8',
-    tagBackground: '#E8F4FD',
-    tagText: '#0a7ea4',
+    tagBackground: '#FDEDEC',
+    tagText: '#E74C3C',
   },
   dark: {
     text: '#ECEDEE',
@@ -41,8 +41,8 @@ export const Colors = {
     // Notes
     noteBackground: '#2C2F33',
     noteBorder: '#3A3D42',
-    tagBackground: '#1A3A4A',
-    tagText: '#5DADE2',
+    tagBackground: '#3B1A1A',
+    tagText: '#EF5350',
   },
 };
 

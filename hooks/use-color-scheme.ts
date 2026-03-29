@@ -8,5 +8,5 @@ export function useColorScheme(): 'light' | 'dark' {
   if (appearance === 'light' || appearance === 'dark') {
     return appearance;
   }
-  return systemScheme ?? 'light';
+  return systemScheme ?? 'dark';
 }

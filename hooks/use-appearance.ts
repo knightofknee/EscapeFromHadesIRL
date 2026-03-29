@@ -5,7 +5,7 @@ export type Appearance = 'system' | 'light' | 'dark';
 
 const STORAGE_KEY = '@appearance';
 
-let globalAppearance: Appearance = 'system';
+let globalAppearance: Appearance = 'dark';
 let listeners: Array<(a: Appearance) => void> = [];
 
 function notify(appearance: Appearance) {

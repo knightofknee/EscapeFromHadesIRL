@@ -3,6 +3,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { View, Image, StyleSheet } from 'react-native';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -27,6 +28,18 @@ function RootNavigator() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- router is stable, including it causes infinite loops
   }, [user, isLoading, segments]);
 
+  if (isLoading) {
+    return (
+      <View style={loadingStyles.container}>
+        <Image
+          source={require('@/assets/images/icon.png')}
+          style={loadingStyles.logo}
+          resizeMode="contain"
+        />
+      </View>
+    );
+  }
+
   return (
     <Stack>
       <Stack.Screen name="(auth)" options={{ headerShown: false }} />
@@ -41,17 +54,29 @@ export default function RootLayout() {
   const systemColorScheme = useColorScheme();
   const { appearance } = useAppearance();
 
-  const effectiveScheme =
-    appearance === 'system' ? systemColorScheme : appearance;
+  const effectiveScheme = appearance === 'light' ? 'light' : 'dark';
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <AuthProvider>
         <ThemeProvider value={effectiveScheme === 'dark' ? DarkTheme : DefaultTheme}>
           <RootNavigator />
-          <StatusBar style={appearance === 'system' ? 'auto' : appearance === 'dark' ? 'light' : 'dark'} />
+          <StatusBar style={effectiveScheme === 'dark' ? 'light' : 'dark'} />
         </ThemeProvider>
       </AuthProvider>
     </GestureHandlerRootView>
   );
 }
+
+const loadingStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logo: {
+    width: 180,
+    height: 180,
+  },
+});
