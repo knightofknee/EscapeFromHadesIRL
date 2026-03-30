@@ -1,6 +1,8 @@
-import { useState, useMemo, useCallback } from 'react';
-import { StyleSheet, Pressable, View } from 'react-native';
+import { useState, useMemo, useCallback, useRef } from 'react';
+import { StyleSheet, Pressable, View, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS, Easing } from 'react-native-reanimated';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -71,6 +73,43 @@ export default function WeekViewScreen() {
     [user, habits, recordsByDate],
   );
 
+  const translateX = useSharedValue(0);
+  const opacity = useSharedValue(1);
+  const screenWidth = Dimensions.get('window').width;
+  const SWIPE_THRESHOLD = screenWidth * 0.2;
+
+  const changeWeek = useCallback((direction: number) => {
+    setWeekOffset((o) => o + direction);
+  }, []);
+
+  const swipeGesture = Gesture.Pan()
+    .activeOffsetX([-20, 20])
+    .failOffsetY([-10, 10])
+    .onUpdate((e) => {
+      translateX.value = e.translationX;
+      // Fade out as user drags further
+      opacity.value = 1 - Math.min(Math.abs(e.translationX) / screenWidth, 0.4);
+    })
+    .onEnd((e) => {
+      if (Math.abs(e.translationX) > SWIPE_THRESHOLD || Math.abs(e.velocityX) > 500) {
+        const direction = e.translationX > 0 ? -1 : 1;
+        // Slide off screen, change week, then reset
+        translateX.value = withTiming(direction * -screenWidth, { duration: 200, easing: Easing.out(Easing.cubic) }, () => {
+          runOnJS(changeWeek)(direction);
+          translateX.value = 0;
+          opacity.value = 1;
+        });
+      } else {
+        translateX.value = withTiming(0, { duration: 150 });
+        opacity.value = withTiming(1, { duration: 150 });
+      }
+    });
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+    opacity: opacity.value,
+  }));
+
   const weekLabel = useMemo(() => {
     const start = dates[0];
     const end = dates[6];
@@ -100,12 +139,16 @@ export default function WeekViewScreen() {
           <ThemedText style={[styles.backText, { color: colors.tint }]}>← Day View</ThemedText>
         </Pressable>
 
-        <WeekGrid
-          dates={dates}
-          habits={habits}
-          recordsByDate={recordsByDate}
-          onTapHabit={handleTapHabit}
-        />
+        <GestureDetector gesture={swipeGesture}>
+          <Animated.View style={[{ flex: 1 }, animatedStyle]}>
+            <WeekGrid
+              dates={dates}
+              habits={habits}
+              recordsByDate={recordsByDate}
+              onTapHabit={handleTapHabit}
+            />
+          </Animated.View>
+        </GestureDetector>
       </ThemedView>
     </SafeAreaView>
   );
