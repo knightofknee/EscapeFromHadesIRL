@@ -46,6 +46,33 @@ export const Colors = {
   },
 };
 
+// Quest tab — Hades underworld palette, always dark
+export const QuestColors = {
+  background: '#0D0D1A',
+  surface: '#16162A',
+  border: '#2A2A45',
+  text: '#E8E6F0',
+  textDim: '#8884A8',
+  // Flame gradient endpoints
+  flameHigh: '#FF6E3A',  // bright orange — high score
+  flameMid: '#E74C3C',   // red — mid score
+  flameLow: '#7B1A1A',   // deep dark red — low score
+  // Gold for top scores / foundation bonus
+  gold: '#D4AC0D',
+  goldDim: '#5C4A00',
+  // Category accents
+  physical: '#E74C3C',
+  mental: '#5B8DD9',
+  creative: '#9B59B6',
+  wellness: '#27AE60',
+  custom: '#7F8C8D',
+  // Reduce quest (bad habit suppression)
+  reduce: '#F39C12',
+  // Foundation badge
+  foundationActive: '#D4AC0D',
+  foundationInactive: '#2A2A45',
+};
+
 export const Fonts = Platform.select({
   ios: {
     sans: 'system-ui',

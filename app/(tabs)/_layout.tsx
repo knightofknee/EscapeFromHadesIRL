@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
+import { Text } from 'react-native';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -28,6 +29,15 @@ export default function TabLayout() {
         options={{
           title: 'Notes',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="doc.text.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="(quests)"
+        options={{
+          title: 'Quests',
+          tabBarIcon: ({ color }) => (
+            <Text style={{ color, fontSize: 20, fontWeight: '900', lineHeight: 28 }}>W</Text>
+          ),
         }}
       />
       <Tabs.Screen
