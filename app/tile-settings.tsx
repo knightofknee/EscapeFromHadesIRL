@@ -13,7 +13,8 @@ import type { RecordingMode, GlyphData } from '@/types/habit';
 
 const RECORDING_MODES: { value: RecordingMode; label: string; description: string }[] = [
   { value: 'boolean', label: 'Yes / No', description: 'Tap to toggle' },
-  { value: 'triple', label: 'No / Yes / Double', description: 'Tap to cycle' },
+  { value: 'triple', label: 'No / Yes / Goal', description: 'Tap to cycle through 3 levels' },
+  { value: 'quad', label: 'No / Yes / Goal / Ideal', description: 'Tap to cycle through 4 levels' },
   { value: 'counter', label: 'Counter', description: 'Tap to increment' },
   { value: 'value', label: 'Value', description: 'Enter a value' },
 ];

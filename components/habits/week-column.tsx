@@ -4,7 +4,8 @@ import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { formatDate } from '@/lib/date-utils';
-import type { Habit, HabitRecord, TripleValue } from '@/types/habit';
+import type { Habit, HabitRecord, TripleValue, QuadValue } from '@/types/habit';
+import type { SuccessColors } from '@/hooks/use-success-colors';
 
 type WeekColumnProps = {
   date: Date;
@@ -12,6 +13,7 @@ type WeekColumnProps = {
   habits: Habit[];
   records: Map<string, HabitRecord>;
   onTapHabit: (habitId: string, date: string) => void;
+  successColors: SuccessColors;
 };
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -19,24 +21,28 @@ const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 function getStateColor(
   habit: Habit,
   record: HabitRecord | undefined,
-  colors: (typeof Colors)['light'],
+  successColors: SuccessColors,
 ): string {
-  if (!record) return colors.tileUnrecorded;
+  if (!record) return successColors.unrecorded;
   switch (habit.recordingMode) {
     case 'boolean':
-      return record.value === true ? colors.tileRecorded : colors.tileUnrecorded;
+      return record.value === true ? successColors.recorded : successColors.unrecorded;
     case 'triple': {
       const v = record.value as TripleValue;
-      return v === 'double' ? colors.tileDouble : v === 'yes' ? colors.tileRecorded : colors.tileUnrecorded;
+      return v === 'double' ? successColors.double : v === 'yes' ? successColors.recorded : successColors.unrecorded;
+    }
+    case 'quad': {
+      const q = record.value as QuadValue;
+      return q === 'ideal' ? successColors.triple : q === 'goal' ? successColors.double : q === 'yes' ? successColors.recorded : successColors.unrecorded;
     }
     case 'counter':
-      return (record.value as number) > 0 ? colors.tileRecorded : colors.tileUnrecorded;
+      return (record.value as number) > 0 ? successColors.recorded : successColors.unrecorded;
     case 'value':
-      return (record.value as string) ? colors.tileRecorded : colors.tileUnrecorded;
+      return (record.value as string) ? successColors.recorded : successColors.unrecorded;
   }
 }
 
-export function WeekColumn({ date, isToday, habits, records, onTapHabit }: WeekColumnProps) {
+export function WeekColumn({ date, isToday, habits, records, onTapHabit, successColors }: WeekColumnProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const dayIndex = (date.getDay() + 6) % 7; // Monday=0
@@ -55,7 +61,7 @@ export function WeekColumn({ date, isToday, habits, records, onTapHabit }: WeekC
       <View style={styles.tiles}>
         {habits.map((habit) => {
           const record = records.get(habit.id);
-          const stateColor = getStateColor(habit, record, colors);
+          const stateColor = getStateColor(habit, record, successColors);
 
           return (
             <Pressable

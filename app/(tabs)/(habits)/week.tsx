@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useRef } from 'react';
-import { StyleSheet, Pressable, View, Dimensions } from 'react-native';
+import { StyleSheet, Pressable, View, Dimensions, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS, Easing } from 'react-native-reanimated';
@@ -7,19 +7,23 @@ import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WeekGrid } from '@/components/habits/week-grid';
+import { SuccessColorPicker } from '@/components/habits/success-color-picker';
 import { useHabits } from '@/hooks/use-habits';
 import { useHabitRecords, getWeekDates } from '@/hooks/use-habit-records';
 import { useAuth } from '@/contexts/auth-context';
 import { db, doc, setDoc } from '@/lib/firebase/firestore';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import type { HabitRecord, TripleValue } from '@/types/habit';
+import { useSuccessColors } from '@/hooks/use-success-colors';
+import type { HabitRecord, TripleValue, QuadValue } from '@/types/habit';
 
 export default function WeekViewScreen() {
   const { user } = useAuth();
   const { habits } = useHabits();
   const colorScheme = useColorScheme();
-  const colors = Colors[colorScheme ?? 'light'];
+  const scheme = colorScheme ?? 'light';
+  const colors = Colors[scheme];
+  const { colors: successColors } = useSuccessColors(scheme);
   const [weekOffset, setWeekOffset] = useState(0);
 
   const refDate = useMemo(() => {
@@ -40,7 +44,7 @@ export default function WeekViewScreen() {
       const existingRecords = recordsByDate[date];
       const existing = existingRecords?.get(habitId);
 
-      let newValue: boolean | TripleValue | number | string;
+      let newValue: boolean | TripleValue | QuadValue | number | string;
       switch (habit.recordingMode) {
         case 'boolean':
           newValue = existing ? !existing.value : true;
@@ -48,6 +52,11 @@ export default function WeekViewScreen() {
         case 'triple': {
           const cur = (existing?.value as TripleValue) ?? 'no';
           newValue = cur === 'no' ? 'yes' : cur === 'yes' ? 'double' : 'no';
+          break;
+        }
+        case 'quad': {
+          const cur = (existing?.value as QuadValue) ?? 'no';
+          newValue = cur === 'no' ? 'yes' : cur === 'yes' ? 'goal' : cur === 'goal' ? 'ideal' : 'no';
           break;
         }
         case 'counter':
@@ -141,12 +150,16 @@ export default function WeekViewScreen() {
 
         <GestureDetector gesture={swipeGesture}>
           <Animated.View style={[{ flex: 1 }, animatedStyle]}>
-            <WeekGrid
-              dates={dates}
-              habits={habits}
-              recordsByDate={recordsByDate}
-              onTapHabit={handleTapHabit}
-            />
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }}>
+              <WeekGrid
+                dates={dates}
+                habits={habits}
+                recordsByDate={recordsByDate}
+                onTapHabit={handleTapHabit}
+                successColors={successColors}
+              />
+              <SuccessColorPicker />
+            </ScrollView>
           </Animated.View>
         </GestureDetector>
       </ThemedView>

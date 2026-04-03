@@ -17,6 +17,8 @@ function isRecordCompleted(habit: Habit, record?: HabitRecord): boolean {
       return record.value === true;
     case 'triple':
       return record.value === 'yes' || record.value === 'double';
+    case 'quad':
+      return record.value === 'yes' || record.value === 'goal' || record.value === 'ideal';
     case 'counter':
       return (record.value as number) > 0;
     case 'value':
@@ -30,12 +32,16 @@ function computeStreak(habit: Habit, recordIndex: Map<string, HabitRecord>): { c
   let streak = 0;
   let isCurrent = true;
 
-  // Walk backwards from today
   const today = new Date();
+  const todayStr = formatDate(today);
+  const todayRecord = recordIndex.get(`${habit.id}_${todayStr}`);
+  const todayCompleted = isRecordCompleted(habit, todayRecord);
+
+  // Walk backwards from yesterday — today is still in progress
   const checkDate = new Date(today);
+  checkDate.setDate(checkDate.getDate() - 1);
 
   for (let i = 0; i < 548; i++) {
-    // 18 months
     const dateStr = formatDate(checkDate);
     const record = recordIndex.get(`${habit.id}_${dateStr}`);
     const completed = isRecordCompleted(habit, record);
@@ -52,6 +58,9 @@ function computeStreak(habit: Habit, recordIndex: Map<string, HabitRecord>): { c
     checkDate.setDate(checkDate.getDate() - 1);
   }
   longest = Math.max(longest, streak);
+
+  // If today is already completed, add it to the current streak
+  if (todayCompleted) current++;
 
   return { current, longest };
 }

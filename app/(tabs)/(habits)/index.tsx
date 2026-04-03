@@ -15,7 +15,7 @@ import type { Habit } from '@/types/habit';
 
 export default function HabitsDayScreen() {
   const { habits, isLoading } = useHabits();
-  const { records, toggleBoolean, cycleTriple, incrementCounter, setValue } = useTodayRecords();
+  const { records, toggleBoolean, cycleTriple, cycleQuad, incrementCounter, setValue } = useTodayRecords();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
@@ -34,6 +34,9 @@ export default function HabitsDayScreen() {
         case 'triple':
           cycleTriple(habitId);
           break;
+        case 'quad':
+          cycleQuad(habitId);
+          break;
         case 'counter':
           incrementCounter(habitId);
           break;
@@ -42,7 +45,7 @@ export default function HabitsDayScreen() {
           break;
       }
     },
-    [habits, toggleBoolean, cycleTriple, incrementCounter],
+    [habits, toggleBoolean, cycleTriple, cycleQuad, incrementCounter],
   );
 
   const handleLongPress = useCallback((habitId: string) => {

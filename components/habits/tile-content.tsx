@@ -2,7 +2,7 @@ import { StyleSheet, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ThemedText } from '@/components/themed-text';
 import { GlyphRenderer } from './glyph-renderer';
-import type { Habit, HabitRecord, TripleValue, GlyphData } from '@/types/habit';
+import type { Habit, HabitRecord, TripleValue, QuadValue, GlyphData } from '@/types/habit';
 
 /** Extract unique colors from glyph paths (excluding eraser strokes which are transparent) */
 function getGlyphColors(glyph: GlyphData): string[] {
@@ -37,6 +37,10 @@ function getBooleanState(record?: HabitRecord): boolean {
 
 function getTripleState(record?: HabitRecord): TripleValue {
   return (record?.value as TripleValue) ?? 'no';
+}
+
+function getQuadState(record?: HabitRecord): QuadValue {
+  return (record?.value as QuadValue) ?? 'no';
 }
 
 function getCounterValue(record?: HabitRecord): number {
@@ -97,6 +101,36 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
         );
       }
 
+      case 'quad': {
+        const state = getQuadState(record);
+        const opacity = state === 'no' ? 0.15 : 1;
+        const glyphColors = getGlyphColors(glyph);
+        const barWidth = glyphW * 0.7;
+        const barHeight = Math.max(6, smallerDim * 0.04);
+        const showBar = state === 'goal' || state === 'ideal';
+        const gStarSize = Math.max(18, smallerDim * 0.15);
+        return (
+          <View style={styles.container}>
+            {state === 'ideal' && (
+              <ThemedText style={[styles.idealStar, { fontSize: gStarSize, lineHeight: gStarSize * 1.5, top: Math.max(4, (tileHeight - glyphH) / 4 - gStarSize * 0.25) }]}>★</ThemedText>
+            )}
+            <GlyphRenderer glyph={glyph} width={glyphW} height={glyphH} opacity={opacity} />
+            {showBar && (
+              glyphColors.length <= 1 ? (
+                <View style={[styles.underline, { backgroundColor: glyphColors[0] ?? habit.color, width: barWidth, height: barHeight, borderRadius: barHeight / 2 }]} />
+              ) : (
+                <LinearGradient
+                  colors={candyCaneColors(glyphColors)}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={[styles.underline, { width: barWidth, height: barHeight, borderRadius: barHeight / 2 }]}
+                />
+              )
+            )}
+          </View>
+        );
+      }
+
       case 'counter': {
         const count = getCounterValue(record);
         if (count === 0) {
@@ -140,13 +174,23 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
   const letterSize = Math.min(tileWidth, tileHeight) * 0.8;
   const circleSize = Math.min(letterSize * 1.2, smallerDim * 0.85);
 
-  function renderLetter(opacity: number, showCircle: boolean) {
-    // Fonts reserve ~20% of em-box below baseline for descenders (g, p, y).
-    // Capital letters don't use that space, so they appear to sit high.
-    // We shift the letter down by adding positive marginTop to visually center it.
+  const starSize = Math.max(18, smallerDim * 0.15);
+
+  function renderLetter(opacity: number, showCircle: boolean, showStar: boolean = false) {
     const descenderCompensation = letterSize * 0.15;
+    // Circle top edge is at (tileHeight - circleSize) / 2 from content top.
+    // Place star halfway between content top and circle top.
+    const circleTop = (tileHeight - circleSize) / 2;
+    // On large tiles (wide, spanning full width), tuck the star just inside the circle
+    const isLargeTile = tileWidth > 300;
+    const starTop = isLargeTile
+      ? circleTop + starSize * 0.3
+      : circleTop / 2 - starSize / 2;
     return (
       <View style={styles.container}>
+        {showStar && (
+          <ThemedText style={[styles.idealStar, { fontSize: starSize, lineHeight: starSize * 1.5, top: Math.max(4, starTop - starSize * 0.25) }]}>★</ThemedText>
+        )}
         {showCircle && (
           <View
             style={[
@@ -189,6 +233,11 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
     case 'triple': {
       const state = getTripleState(record);
       return renderLetter(state === 'no' ? 0.2 : 1, state === 'double');
+    }
+
+    case 'quad': {
+      const state = getQuadState(record);
+      return renderLetter(state === 'no' ? 0.2 : 1, state === 'goal' || state === 'ideal', state === 'ideal');
     }
 
     case 'counter': {
@@ -248,6 +297,13 @@ const styles = StyleSheet.create({
     position: 'absolute',
     borderWidth: 3,
     zIndex: 0,
+  },
+  idealStar: {
+    position: 'absolute',
+    top: 0,
+    alignSelf: 'center',
+    color: '#D4AC0D',
+    zIndex: 2,
   },
   underline: {
     marginTop: 4,

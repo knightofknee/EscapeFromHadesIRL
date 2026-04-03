@@ -5,15 +5,17 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { formatDate } from '@/lib/date-utils';
 import type { Habit, HabitRecord } from '@/types/habit';
+import type { SuccessColors } from '@/hooks/use-success-colors';
 
 type WeekGridProps = {
   dates: Date[];
   habits: Habit[];
   recordsByDate: Record<string, Map<string, HabitRecord>>;
   onTapHabit: (habitId: string, date: string) => void;
+  successColors: SuccessColors;
 };
 
-export function WeekGrid({ dates, habits, recordsByDate, onTapHabit }: WeekGridProps) {
+export function WeekGrid({ dates, habits, recordsByDate, onTapHabit, successColors }: WeekGridProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const today = formatDate(new Date());
@@ -31,6 +33,7 @@ export function WeekGrid({ dates, habits, recordsByDate, onTapHabit }: WeekGridP
             habits={habits}
             records={recordsByDate[dateStr] ?? emptyMap}
             onTapHabit={onTapHabit}
+            successColors={successColors}
           />
         );
       })}
@@ -44,6 +47,6 @@ const styles = StyleSheet.create({
     gap: 2,
     padding: 4,
     borderRadius: 8,
-    flex: 1,
+    minHeight: 300,
   },
 });

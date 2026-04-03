@@ -3,7 +3,7 @@ import { AppState } from 'react-native';
 import { useAuth } from '@/contexts/auth-context';
 import { db, doc, setDoc, query, collection, where, onSnapshot } from '@/lib/firebase/firestore';
 import { getTodayString } from '@/lib/date-utils';
-import type { HabitRecord, TripleValue } from '@/types/habit';
+import type { HabitRecord, TripleValue, QuadValue } from '@/types/habit';
 
 export function useTodayRecords() {
   const { user } = useAuth();
@@ -58,7 +58,7 @@ export function useTodayRecords() {
   );
 
   const recordHabit = useCallback(
-    (habitId: string, value: boolean | TripleValue | number | string) => {
+    (habitId: string, value: boolean | TripleValue | QuadValue | number | string) => {
       if (!user) return;
 
       const docId = `${habitId}_${today.current}`;
@@ -104,6 +104,17 @@ export function useTodayRecords() {
     [recordHabit],
   );
 
+  const cycleQuad = useCallback(
+    (habitId: string) => {
+      const current = localCache.current.get(habitId);
+      const currentVal = (current?.value as QuadValue) ?? 'no';
+      const next: QuadValue =
+        currentVal === 'no' ? 'yes' : currentVal === 'yes' ? 'goal' : currentVal === 'goal' ? 'ideal' : 'no';
+      recordHabit(habitId, next);
+    },
+    [recordHabit],
+  );
+
   const incrementCounter = useCallback(
     (habitId: string) => {
       const current = localCache.current.get(habitId);
@@ -133,6 +144,7 @@ export function useTodayRecords() {
     recordHabit,
     toggleBoolean,
     cycleTriple,
+    cycleQuad,
     incrementCounter,
     resetCounter,
     setValue,

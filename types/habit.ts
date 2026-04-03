@@ -6,9 +6,11 @@ export type GridPosition = {
 /** Relative size weight for tile layout. Default 1, max 100. Higher = bigger tile. */
 export type TileSize = number;
 
-export type RecordingMode = 'boolean' | 'triple' | 'counter' | 'value';
+export type RecordingMode = 'boolean' | 'triple' | 'quad' | 'counter' | 'value';
 
 export type TripleValue = 'no' | 'yes' | 'double';
+
+export type QuadValue = 'no' | 'yes' | 'goal' | 'ideal';
 
 export type SerializedPath = {
   points: string; // SVG path string (e.g. "M 10 20 L 30 40 ...")
@@ -42,7 +44,7 @@ export type HabitRecord = {
   habitId: string;
   userId: string;
   date: string; // YYYY-MM-DD
-  value: boolean | TripleValue | number | string;
+  value: boolean | TripleValue | QuadValue | number | string;
   recordedAt: number;
 };
 
