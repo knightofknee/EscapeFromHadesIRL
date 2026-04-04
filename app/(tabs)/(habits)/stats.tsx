@@ -11,46 +11,8 @@ import { useHabitRecords, formatDate } from '@/hooks/use-habit-records';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { Habit, HabitRecord } from '@/types/habit';
-
-type CompletionChecker = (habit: Habit, record?: HabitRecord) => boolean;
-
-// Level 0: any completion (yes/double for triple, yes/goal/ideal for quad)
-function isRecordCompleted(habit: Habit, record?: HabitRecord): boolean {
-  if (!record) return false;
-  switch (habit.recordingMode) {
-    case 'boolean':
-      return record.value !== false && record.value !== 'no';
-    case 'triple':
-      return record.value === 'yes' || record.value === 'double';
-    case 'quad':
-      return record.value === 'yes' || record.value === 'goal' || record.value === 'ideal';
-    case 'counter':
-      return (record.value as number) > 0;
-    case 'value':
-      return !!(record.value as string);
-  }
-}
-
-// Level 1: goal or above
-function isRecordGoal(habit: Habit, record?: HabitRecord): boolean {
-  if (!record) return false;
-  switch (habit.recordingMode) {
-    case 'triple':
-      return record.value === 'double';
-    case 'quad':
-      return record.value === 'goal' || record.value === 'ideal';
-    default:
-      return false;
-  }
-}
-
-// Level 2: ideal only
-function isRecordIdeal(_habit: Habit, record?: HabitRecord): boolean {
-  if (!record) return false;
-  return record.value === 'ideal';
-}
-
-const LEVEL_CHECKERS: CompletionChecker[] = [isRecordCompleted, isRecordGoal, isRecordIdeal];
+import { isRecordCompleted, LEVEL_CHECKERS } from '@/lib/habit-scoring';
+import type { CompletionChecker } from '@/lib/habit-scoring';
 
 function getLevelLabel(habit: Habit, levelIndex: number): string {
   if (levelIndex === 0) return habit.name;

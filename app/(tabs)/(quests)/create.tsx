@@ -62,11 +62,13 @@ export default function CreateQuestScreen() {
     setTemplateStep('habits');
   }
 
-  async function handleSave() {
+  async function handleSave(overrideLinkedHabitIds?: string[]) {
     if (mode === 'custom' && !customName.trim()) {
       Alert.alert('Name your quest.');
       return;
     }
+
+    const habitIds = overrideLinkedHabitIds ?? linkedHabitIds;
 
     setSaving(true);
     try {
@@ -79,7 +81,7 @@ export default function CreateQuestScreen() {
           category: selectedTemplate.category,
           questType: selectedTemplate.questType,
           targetDaysPerWeek: selectedTemplate.targetDaysPerWeek,
-          linkedHabitIds,
+          linkedHabitIds: habitIds,
           status: 'active',
         });
       } else {
@@ -90,7 +92,7 @@ export default function CreateQuestScreen() {
           category: customCategory,
           questType: customQuestType,
           targetDaysPerWeek: targetDays,
-          linkedHabitIds,
+          linkedHabitIds: habitIds,
           status: 'active',
         });
       }
@@ -117,7 +119,7 @@ export default function CreateQuestScreen() {
             <ThemedText style={styles.cancel}>Back</ThemedText>
           </Pressable>
           <ThemedText style={styles.navTitle}>LINK HABITS</ThemedText>
-          <Pressable onPress={handleSave} disabled={saving}>
+          <Pressable onPress={() => handleSave()} disabled={saving}>
             <ThemedText style={[styles.save, saving && styles.saveDim]}>
               {saving ? 'Saving...' : 'Save'}
             </ThemedText>
@@ -131,10 +133,7 @@ export default function CreateQuestScreen() {
 
           <Pressable
             style={[styles.skipBtn, linkedHabitIds.length === 0 && styles.skipBtnActive]}
-            onPress={() => {
-              setLinkedHabitIds([]);
-              handleSave();
-            }}>
+            onPress={() => handleSave([])}>
             <ThemedText style={styles.skipText}>No thank you</ThemedText>
           </Pressable>
 
@@ -182,7 +181,7 @@ export default function CreateQuestScreen() {
             <ThemedText style={styles.save}>Next</ThemedText>
           </Pressable>
         ) : (
-          <Pressable onPress={handleSave} disabled={saving}>
+          <Pressable onPress={() => handleSave()} disabled={saving}>
             <ThemedText style={[styles.save, saving && styles.saveDim]}>
               {saving ? 'Saving...' : 'Save'}
             </ThemedText>

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useRef, useEffect } from 'react';
 import { ScrollView, View, Pressable, StyleSheet, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
@@ -30,6 +30,8 @@ export default function QuestDetailScreen() {
   const [editingHabits, setEditingHabits] = useState(false);
 
   const quest = quests.find((q) => q.id === id);
+  const questsRef = useRef(quests);
+  useEffect(() => { questsRef.current = quests; }, [quests]);
   const scores = useQuestScores(quest ? [quest] : [], habits, records);
   const questScore = quest ? scores.byQuest.get(quest.id) : undefined;
   const linkedHabits = useMemo(
@@ -190,8 +192,12 @@ export default function QuestDetailScreen() {
               <Pressable
                 style={styles.createHabitBtn}
                 onPress={() => {
+                  const questId = quest.id;
                   setPendingHabitCallback((habitId) => {
-                    updateQuest(quest.id, { linkedHabitIds: [...quest.linkedHabitIds, habitId] });
+                    const latest = questsRef.current.find((q) => q.id === questId);
+                    if (latest) {
+                      updateQuest(questId, { linkedHabitIds: [...latest.linkedHabitIds, habitId] });
+                    }
                   });
                   router.push({ pathname: '/tile-settings', params: { mode: 'create', prefillName: quest.name } });
                 }}>

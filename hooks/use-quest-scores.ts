@@ -40,7 +40,7 @@ function getWindowDates(): string[] {
   return dates;
 }
 
-function scoreQuest(
+export function scoreQuest(
   quest: Quest,
   habits: Habit[],
   recordIndex: Map<string, HabitRecord>,

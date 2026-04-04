@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { StyleSheet, ScrollView, TextInput, Pressable, View, Alert, Modal } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
@@ -10,7 +10,7 @@ import { TILE_COLORS, DEFAULT_TILE_COLOR } from '@/constants/grid';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useHabits } from '@/hooks/use-habits';
 import { useTodayRecords } from '@/hooks/use-today-records';
-import { consumePendingHabitCallback } from '@/lib/pending-habit-link';
+import { consumePendingHabitCallback, clearPendingHabitCallback } from '@/lib/pending-habit-link';
 import type { RecordingMode, GlyphData } from '@/types/habit';
 
 const RECORDING_MODES: { value: RecordingMode; label: string; description: string }[] = [
@@ -54,6 +54,14 @@ export default function TileSettingsModal() {
   const [color, setColor] = useState(existingHabit?.color ?? DEFAULT_TILE_COLOR);
   const [glyph, setGlyph] = useState<GlyphData | undefined>(existingHabit?.glyph);
   const [showGlyphEditor, setShowGlyphEditor] = useState(false);
+  const didSave = useRef(false);
+
+  // Clear pending habit callback if user leaves without saving
+  useEffect(() => {
+    return () => {
+      if (!didSave.current) clearPendingHabitCallback();
+    };
+  }, []);
 
   useEffect(() => {
     if (existingHabit) {
@@ -106,6 +114,7 @@ export default function TileSettingsModal() {
         isArchived: false,
       });
       if (newHabit) {
+        didSave.current = true;
         consumePendingHabitCallback(newHabit.id);
       }
     } else if (existingHabit) {
