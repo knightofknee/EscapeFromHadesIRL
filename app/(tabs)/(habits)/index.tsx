@@ -8,6 +8,7 @@ import { TileGrid } from '@/components/habits/tile-grid';
 import { QuickInputModal } from '@/components/ui/quick-input-modal';
 import { useHabits } from '@/hooks/use-habits';
 import { useTodayRecords } from '@/hooks/use-today-records';
+import { useTodayDate } from '@/hooks/use-today-date';
 import { useNotes } from '@/hooks/use-notes';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -16,6 +17,7 @@ import type { Habit } from '@/types/habit';
 export default function HabitsDayScreen() {
   const { habits, isLoading } = useHabits();
   const { records, toggleBoolean, cycleTriple, cycleQuad, incrementCounter, setValue } = useTodayRecords();
+  const { todayDate } = useTodayDate();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
@@ -75,7 +77,7 @@ export default function HabitsDayScreen() {
       <ThemedView style={styles.container}>
         <View style={styles.header}>
           <ThemedText type="title" style={styles.headerTitle}>
-            {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+            {todayDate.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
           </ThemedText>
           <View style={styles.headerActions}>
             <Pressable

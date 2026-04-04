@@ -6,10 +6,16 @@ import type { Habit, HabitRecord } from '@/types/habit';
 
 export type QuestScore = {
   questId: string;
+  // How many days completed in the window
+  completedDays: number;
+  // How many days targeted in the window
+  targetDays: number;
   // Raw execution % (0-100), before any bonuses
   executionPct: number;
-  // How many days in the window had a 'double' (level 2) completion on any linked triple habit
+  // How many days in the window had a 'double'/'goal' (level 2) completion on any linked habit
   doubleDays: number;
+  // How many days in the window had an 'ideal' (level 3) completion on any linked quad habit
+  idealDays: number;
   // Final score (0-100): execution + level bonus, capped at 100
   score: number;
 };
@@ -45,10 +51,12 @@ function scoreQuest(
 
   let completedDays = 0;
   let doubleDays = 0;
+  let idealDays = 0;
 
   for (const date of dates) {
     let dayCompleted = false;
     let dayDouble = false;
+    let dayIdeal = false;
 
     for (const habit of linkedHabits) {
       const record = recordIndex.get(`${habit.id}_${date}`);
@@ -59,10 +67,22 @@ function scoreQuest(
       if (quest.questType === 'positive') {
         switch (habit.recordingMode) {
           case 'boolean':
-            if (v === true) dayCompleted = true;
+            if (v !== false && v !== 'no') dayCompleted = true;
             break;
           case 'triple':
             if (v === 'double') {
+              dayCompleted = true;
+              dayDouble = true;
+            } else if (v === 'yes') {
+              dayCompleted = true;
+            }
+            break;
+          case 'quad':
+            if (v === 'ideal') {
+              dayCompleted = true;
+              dayDouble = true;
+              dayIdeal = true;
+            } else if (v === 'goal') {
               dayCompleted = true;
               dayDouble = true;
             } else if (v === 'yes') {
@@ -85,6 +105,7 @@ function scoreQuest(
     if (quest.questType === 'positive') {
       if (dayCompleted) completedDays++;
       if (dayDouble) doubleDays++;
+      if (dayIdeal) idealDays++;
     } else {
       // reduce: day is "good" if none of the linked habits were recorded as done
       let anyDone = false;
@@ -94,10 +115,13 @@ function scoreQuest(
         const v = record.value;
         switch (habit.recordingMode) {
           case 'boolean':
-            if (v === true) anyDone = true;
+            if (v !== false && v !== 'no') anyDone = true;
             break;
           case 'triple':
             if (v === 'yes' || v === 'double') anyDone = true;
+            break;
+          case 'quad':
+            if (v === 'yes' || v === 'goal' || v === 'ideal') anyDone = true;
             break;
           case 'counter':
             if ((v as number) > 0) anyDone = true;
@@ -116,15 +140,15 @@ function scoreQuest(
       ? Math.min(100, Math.round((completedDays / targetDays) * 100))
       : Math.round((completedDays / WINDOW_DAYS) * 100);
 
-  // Level bonus: each double day adds 0.5 extra completion point toward execution
-  // Recompute with bonus for positive quests with triple habits
+  // Level bonus: goal days add 0.5 extra, ideal days add 1.0 extra (on top of goal bonus)
   let score = executionPct;
-  if (quest.questType === 'positive' && doubleDays > 0) {
-    const bonusPoints = (doubleDays * 0.5) / targetDays;
-    score = Math.min(100, Math.round((completedDays / targetDays + bonusPoints) * 100));
+  if (quest.questType === 'positive' && (doubleDays > 0 || idealDays > 0)) {
+    const goalBonus = (doubleDays * 0.5) / targetDays;
+    const idealBonus = (idealDays * 0.5) / targetDays; // extra 0.5 on top of the goal 0.5
+    score = Math.min(100, Math.round((completedDays / targetDays + goalBonus + idealBonus) * 100));
   }
 
-  return { questId: quest.id, executionPct, doubleDays, score };
+  return { questId: quest.id, completedDays, targetDays, executionPct, doubleDays, idealDays, score };
 }
 
 export function useQuestScores(
@@ -156,10 +180,10 @@ export function useQuestScores(
     );
     const foundationCount = FOUNDATION_KEYS.filter((k) => activeTemplateKeys.has(k)).length;
 
-    // Run score = average of quest scores * foundation multiplier (5% per foundation quest)
-    const avgScore = quests.length > 0 ? totalScore / quests.length : 0;
+    // Run score = sum of quest scores * foundation multiplier (5% per foundation quest)
+    // Adding quests can only increase your score, never decrease it
     const multiplier = 1 + foundationCount * 0.05;
-    const runScore = Math.min(100, Math.round(avgScore * multiplier));
+    const runScore = Math.round(totalScore * multiplier);
 
     return { byQuest, foundationCount, runScore };
   }, [quests, habits, records]);

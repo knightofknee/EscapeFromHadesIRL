@@ -26,7 +26,7 @@ function getStateColor(
   if (!record) return successColors.unrecorded;
   switch (habit.recordingMode) {
     case 'boolean':
-      return record.value === true ? successColors.recorded : successColors.unrecorded;
+      return (record.value !== false && record.value !== 'no') ? successColors.recorded : successColors.unrecorded;
     case 'triple': {
       const v = record.value as TripleValue;
       return v === 'double' ? successColors.double : v === 'yes' ? successColors.recorded : successColors.unrecorded;

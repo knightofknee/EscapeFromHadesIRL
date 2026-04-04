@@ -10,6 +10,7 @@ import { useQuestScores } from '@/hooks/use-quest-scores';
 import { QuestColors } from '@/constants/theme';
 import { CATEGORY_NAMES, TEMPLATE_BY_KEY } from '@/constants/quest-templates';
 import { formatDate } from '@/lib/date-utils';
+import { setPendingHabitCallback } from '@/lib/pending-habit-link';
 
 function get30DayWindow() {
   const end = new Date();
@@ -21,11 +22,12 @@ function get30DayWindow() {
 export default function QuestDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { quests, pauseQuest, deleteQuest } = useQuests();
+  const { quests, updateQuest, pauseQuest, deleteQuest } = useQuests();
   const { habits } = useHabits();
   const { startDate, endDate } = useMemo(get30DayWindow, []);
   const { records } = useHabitRecords(startDate, endDate);
   const [deleting, setDeleting] = useState(false);
+  const [editingHabits, setEditingHabits] = useState(false);
 
   const quest = quests.find((q) => q.id === id);
   const scores = useQuestScores(quest ? [quest] : [], habits, records);
@@ -131,14 +133,19 @@ export default function QuestDetailScreen() {
               <ThemedText style={styles.scoreDetail}>
                 {quest.targetDaysPerWeek}×/wk target
               </ThemedText>
-              {(questScore?.doubleDays ?? 0) > 0 && (
-                <ThemedText style={styles.doubleDetail}>
-                  ★ {questScore!.doubleDays} double-level days
+              {questScore && (
+                <ThemedText style={styles.scoreDetail}>
+                  {questScore.completedDays} days done · {questScore.targetDays} day goal per last 30 days
                 </ThemedText>
               )}
-              {questScore && questScore.executionPct !== questScore.score && (
-                <ThemedText style={styles.scoreDetail}>
-                  {questScore.executionPct}% raw execution
+              {(questScore?.doubleDays ?? 0) > 0 && (
+                <ThemedText style={styles.doubleDetail}>
+                  ★ {questScore!.doubleDays} days extra effort
+                </ThemedText>
+              )}
+              {(questScore?.idealDays ?? 0) > 0 && (
+                <ThemedText style={styles.doubleDetail}>
+                  ★ {questScore!.idealDays} ideal days
                 </ThemedText>
               )}
             </View>
@@ -148,10 +155,52 @@ export default function QuestDetailScreen() {
 
         {/* Linked habits */}
         <View style={styles.section}>
-          <ThemedText style={styles.sectionLabel}>LINKED HABITS</ThemedText>
-          {linkedHabits.length === 0 ? (
+          <View style={styles.sectionHeader}>
+            <ThemedText style={styles.sectionLabel}>LINKED HABITS</ThemedText>
+            <Pressable onPress={() => setEditingHabits((v) => !v)}>
+              <ThemedText style={styles.editLink}>
+                {editingHabits ? 'Done' : 'Edit'}
+              </ThemedText>
+            </Pressable>
+          </View>
+          {editingHabits ? (
+            <>
+              {habits.map((h) => {
+                const isLinked = quest.linkedHabitIds.includes(h.id);
+                return (
+                  <Pressable
+                    key={h.id}
+                    style={[
+                      styles.habitRow,
+                      isLinked && { borderColor: h.color },
+                    ]}
+                    onPress={() => {
+                      const next = isLinked ? [] : [h.id];
+                      updateQuest(quest.id, { linkedHabitIds: next });
+                    }}
+                  >
+                    <View style={[styles.habitDot, { backgroundColor: h.color }]} />
+                    <ThemedText style={styles.habitName}>{h.name}</ThemedText>
+                    <ThemedText style={[styles.toggleIcon, isLinked && { color: h.color }]}>
+                      {isLinked ? '✓' : '+'}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+              <Pressable
+                style={styles.createHabitBtn}
+                onPress={() => {
+                  setPendingHabitCallback((habitId) => {
+                    updateQuest(quest.id, { linkedHabitIds: [...quest.linkedHabitIds, habitId] });
+                  });
+                  router.push({ pathname: '/tile-settings', params: { mode: 'create', prefillName: quest.name } });
+                }}>
+                <ThemedText style={styles.createHabitText}>＋ Create New Habit</ThemedText>
+              </Pressable>
+            </>
+          ) : linkedHabits.length === 0 ? (
             <ThemedText style={styles.dimText}>
-              No habits linked. Score is not auto-computed.
+              No habits linked. Tap Edit to link habits.
             </ThemedText>
           ) : (
             linkedHabits.map((h) => (
@@ -290,11 +339,39 @@ const styles = StyleSheet.create({
   section: {
     gap: 8,
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   sectionLabel: {
     fontSize: 9,
     fontWeight: '800',
     color: QuestColors.textDim,
     letterSpacing: 1.5,
+  },
+  editLink: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: QuestColors.flameHigh,
+  },
+  toggleIcon: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: QuestColors.textDim,
+  },
+  createHabitBtn: {
+    borderWidth: 1,
+    borderColor: QuestColors.border,
+    borderRadius: 8,
+    borderStyle: 'dashed',
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  createHabitText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: QuestColors.flameHigh,
   },
   dimText: {
     fontSize: 13,

@@ -110,5 +110,52 @@ export function useHabits() {
     [user],
   );
 
-  return { habits, isLoading, createHabit, updateHabit, archiveHabit, deleteHabit };
+  const reviveHabit = useCallback(
+    async (habitId: string) => {
+      if (!user) return;
+      // Place revived habit at the end
+      const maxRow = habits.reduce((max, h) => Math.max(max, h.position.row), -1);
+      await updateHabit(habitId, { isArchived: false, position: { row: maxRow + 1, col: 0 } });
+    },
+    [user, habits, updateHabit],
+  );
+
+  return { habits, isLoading, createHabit, updateHabit, archiveHabit, reviveHabit, deleteHabit };
+}
+
+export function useArchivedHabits() {
+  const { user } = useAuth();
+  const [habits, setHabits] = useState<Habit[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    if (!user) {
+      setHabits([]);
+      setIsLoading(false);
+      return;
+    }
+
+    const q = query(
+      collection(db, 'habits'),
+      where('userId', '==', user.uid),
+      where('isArchived', '==', true),
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Habit);
+        setHabits(data);
+        setIsLoading(false);
+      },
+      (error) => {
+        console.error('[useArchivedHabits] snapshot error:', error);
+        setIsLoading(false);
+      },
+    );
+
+    return unsubscribe;
+  }, [user]);
+
+  return { habits, isLoading };
 }

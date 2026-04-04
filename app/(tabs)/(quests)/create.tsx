@@ -11,6 +11,7 @@ import { useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { useQuests } from '@/hooks/use-quests';
 import { useHabits } from '@/hooks/use-habits';
+import { setPendingHabitCallback } from '@/lib/pending-habit-link';
 import { QuestColors } from '@/constants/theme';
 import { QUEST_TEMPLATES, CATEGORY_NAMES } from '@/constants/quest-templates';
 import type { QuestCategory, QuestType } from '@/types/quest';
@@ -19,8 +20,11 @@ const DAYS = [1, 2, 3, 4, 5, 6, 7];
 
 export default function CreateQuestScreen() {
   const router = useRouter();
-  const { createQuest } = useQuests();
+  const { quests, createQuest } = useQuests();
   const { habits } = useHabits();
+
+  // For templates: 'pick' = choose template, 'habits' = link habits step
+  const [templateStep, setTemplateStep] = useState<'pick' | 'habits'>('pick');
 
   const [mode, setMode] = useState<'template' | 'custom'>('template');
   const [selectedTemplateKey, setSelectedTemplateKey] = useState<string | null>(null);
@@ -34,6 +38,11 @@ export default function CreateQuestScreen() {
   const [linkedHabitIds, setLinkedHabitIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
 
+  const activeTemplateKeys = useMemo(
+    () => new Set(quests.filter((q) => q.status === 'active' && q.templateKey).map((q) => q.templateKey)),
+    [quests],
+  );
+
   const selectedTemplate = useMemo(
     () => QUEST_TEMPLATES.find((t) => t.key === selectedTemplateKey) ?? null,
     [selectedTemplateKey],
@@ -41,15 +50,19 @@ export default function CreateQuestScreen() {
 
   function toggleHabit(id: string) {
     setLinkedHabitIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+      prev.includes(id) ? [] : [id],
     );
   }
 
-  async function handleSave() {
-    if (mode === 'template' && !selectedTemplate) {
-      Alert.alert('Select a template or switch to custom.');
+  function handleTemplateNext() {
+    if (!selectedTemplate) {
+      Alert.alert('Select a template.');
       return;
     }
+    setTemplateStep('habits');
+  }
+
+  async function handleSave() {
     if (mode === 'custom' && !customName.trim()) {
       Alert.alert('Name your quest.');
       return;
@@ -57,19 +70,20 @@ export default function CreateQuestScreen() {
 
     setSaving(true);
     try {
+      let newQuest;
       if (mode === 'template' && selectedTemplate) {
-        await createQuest({
+        newQuest = await createQuest({
           templateKey: selectedTemplate.key,
           name: selectedTemplate.name,
           description: selectedTemplate.description,
           category: selectedTemplate.category,
           questType: selectedTemplate.questType,
-          targetDaysPerWeek: targetDays,
+          targetDaysPerWeek: selectedTemplate.targetDaysPerWeek,
           linkedHabitIds,
           status: 'active',
         });
       } else {
-        await createQuest({
+        newQuest = await createQuest({
           templateKey: null,
           name: customName.trim(),
           description: customDescription.trim(),
@@ -80,7 +94,11 @@ export default function CreateQuestScreen() {
           status: 'active',
         });
       }
-      router.back();
+      if (newQuest) {
+        router.replace(`/(tabs)/(quests)/${newQuest.id}`);
+      } else {
+        router.back();
+      }
     } catch (e) {
       console.error(e);
       Alert.alert('Failed to save quest.');
@@ -89,6 +107,69 @@ export default function CreateQuestScreen() {
     }
   }
 
+  // --- Template mode, step 2: link habits ---
+  if (mode === 'template' && templateStep === 'habits') {
+    const questName = selectedTemplate?.name ?? '';
+    return (
+      <View style={styles.root}>
+        <View style={styles.navBar}>
+          <Pressable onPress={() => setTemplateStep('pick')}>
+            <ThemedText style={styles.cancel}>Back</ThemedText>
+          </Pressable>
+          <ThemedText style={styles.navTitle}>LINK HABITS</ThemedText>
+          <Pressable onPress={handleSave} disabled={saving}>
+            <ThemedText style={[styles.save, saving && styles.saveDim]}>
+              {saving ? 'Saving...' : 'Save'}
+            </ThemedText>
+          </Pressable>
+        </View>
+
+        <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+          <ThemedText style={styles.linkQuestion}>
+            Link a habit to {questName}?
+          </ThemedText>
+
+          <Pressable
+            style={[styles.skipBtn, linkedHabitIds.length === 0 && styles.skipBtnActive]}
+            onPress={() => {
+              setLinkedHabitIds([]);
+              handleSave();
+            }}>
+            <ThemedText style={styles.skipText}>No thank you</ThemedText>
+          </Pressable>
+
+          {habits.map((h) => {
+            const linked = linkedHabitIds.includes(h.id);
+            return (
+              <Pressable
+                key={h.id}
+                style={[styles.habitRow, linked && styles.habitRowLinked]}
+                onPress={() => toggleHabit(h.id)}>
+                <View style={[styles.habitDot, { backgroundColor: h.color }]} />
+                <ThemedText style={styles.habitName}>{h.name}</ThemedText>
+                <ThemedText style={[styles.habitCheck, linked && styles.habitCheckLinked]}>
+                  {linked ? '✓' : '+'}
+                </ThemedText>
+              </Pressable>
+            );
+          })}
+
+          <Pressable
+            style={styles.createHabitBtn}
+            onPress={() => {
+              setPendingHabitCallback((habitId) => {
+                setLinkedHabitIds((prev) => [...prev, habitId]);
+              });
+              router.push({ pathname: '/tile-settings', params: { mode: 'create', prefillName: questName } });
+            }}>
+            <ThemedText style={styles.createHabitText}>＋ Create New Habit</ThemedText>
+          </Pressable>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // --- Main screen: template pick OR full custom form ---
   return (
     <View style={styles.root}>
       <View style={styles.navBar}>
@@ -96,11 +177,17 @@ export default function CreateQuestScreen() {
           <ThemedText style={styles.cancel}>Cancel</ThemedText>
         </Pressable>
         <ThemedText style={styles.navTitle}>NEW QUEST</ThemedText>
-        <Pressable onPress={handleSave} disabled={saving}>
-          <ThemedText style={[styles.save, saving && styles.saveDim]}>
-            {saving ? 'Saving...' : 'Save'}
-          </ThemedText>
-        </Pressable>
+        {mode === 'template' ? (
+          <Pressable onPress={handleTemplateNext}>
+            <ThemedText style={styles.save}>Next</ThemedText>
+          </Pressable>
+        ) : (
+          <Pressable onPress={handleSave} disabled={saving}>
+            <ThemedText style={[styles.save, saving && styles.saveDim]}>
+              {saving ? 'Saving...' : 'Save'}
+            </ThemedText>
+          </Pressable>
+        )}
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
@@ -125,30 +212,42 @@ export default function CreateQuestScreen() {
         {mode === 'template' ? (
           <View style={styles.section}>
             <ThemedText style={styles.sectionLabel}>CHOOSE A QUEST</ThemedText>
-            {QUEST_TEMPLATES.map((t) => (
-              <Pressable
-                key={t.key}
-                style={[
-                  styles.templateCard,
-                  selectedTemplateKey === t.key && styles.templateCardSelected,
-                  t.isFoundation && styles.templateCardFoundation,
-                ]}
-                onPress={() => {
-                  setSelectedTemplateKey(t.key);
-                  setTargetDays(t.targetDaysPerWeek);
-                }}>
-                <View style={styles.templateCardHeader}>
-                  <ThemedText style={styles.templateName}>{t.name}</ThemedText>
-                  {t.isFoundation && (
-                    <ThemedText style={styles.foundationBadge}>FOUNDATION</ThemedText>
-                  )}
-                </View>
-                <ThemedText style={styles.templateDesc}>{t.description}</ThemedText>
-                <ThemedText style={styles.templateMeta}>
-                  {CATEGORY_NAMES[t.category]} · {t.targetDaysPerWeek}×/wk
-                </ThemedText>
-              </Pressable>
-            ))}
+            {QUEST_TEMPLATES.map((t) => {
+              const alreadyActive = activeTemplateKeys.has(t.key);
+              return (
+                <Pressable
+                  key={t.key}
+                  style={[
+                    styles.templateCard,
+                    selectedTemplateKey === t.key && styles.templateCardSelected,
+                    t.isFoundation && styles.templateCardFoundation,
+                    alreadyActive && styles.templateCardDisabled,
+                  ]}
+                  onPress={() => {
+                    if (alreadyActive) return;
+                    if (selectedTemplateKey === t.key) {
+                      setSelectedTemplateKey(null);
+                    } else {
+                      setSelectedTemplateKey(t.key);
+                    }
+                  }}>
+                  <View style={styles.templateCardHeader}>
+                    <ThemedText style={[styles.templateName, alreadyActive && styles.templateNameDisabled]}>
+                      {t.name}
+                    </ThemedText>
+                    {alreadyActive ? (
+                      <ThemedText style={styles.activeBadge}>ACTIVE</ThemedText>
+                    ) : t.isFoundation ? (
+                      <ThemedText style={styles.foundationBadge}>FOUNDATION</ThemedText>
+                    ) : null}
+                  </View>
+                  <ThemedText style={styles.templateDesc}>{t.description}</ThemedText>
+                  <ThemedText style={styles.templateMeta}>
+                    {CATEGORY_NAMES[t.category]} · {t.targetDaysPerWeek}×/wk
+                  </ThemedText>
+                </Pressable>
+              );
+            })}
           </View>
         ) : (
           <View style={styles.section}>
@@ -212,40 +311,30 @@ export default function CreateQuestScreen() {
                 </ThemedText>
               </Pressable>
             </View>
-          </View>
-        )}
 
-        {/* Target days — shared between modes */}
-        <View style={styles.section}>
-          <ThemedText style={styles.sectionLabel}>
-            {mode === 'custom' && customQuestType === 'reduce'
-              ? 'MAX DAYS/WEEK ALLOWED'
-              : 'TARGET DAYS/WEEK'}
-          </ThemedText>
-          <View style={styles.chipRow}>
-            {DAYS.map((d) => (
-              <Pressable
-                key={d}
-                style={[styles.dayChip, targetDays === d && styles.dayChipActive]}
-                onPress={() => setTargetDays(d)}>
-                <ThemedText style={[styles.dayChipText, targetDays === d && styles.dayChipTextActive]}>
-                  {d}
-                </ThemedText>
-              </Pressable>
-            ))}
-          </View>
-        </View>
+            {/* Target days */}
+            <ThemedText style={styles.sectionLabel}>
+              {customQuestType === 'reduce' ? 'MAX DAYS/WEEK ALLOWED' : 'TARGET DAYS/WEEK'}
+            </ThemedText>
+            <View style={styles.chipRow}>
+              {DAYS.map((d) => (
+                <Pressable
+                  key={d}
+                  style={[styles.dayChip, targetDays === d && styles.dayChipActive]}
+                  onPress={() => setTargetDays(d)}>
+                  <ThemedText style={[styles.dayChipText, targetDays === d && styles.dayChipTextActive]}>
+                    {d}
+                  </ThemedText>
+                </Pressable>
+              ))}
+            </View>
 
-        {/* Habit linker */}
-        <View style={styles.section}>
-          <ThemedText style={styles.sectionLabel}>LINK HABITS (OPTIONAL)</ThemedText>
-          <ThemedText style={styles.sectionHint}>
-            Linked habits auto-feed your quest score. Skip if you want to track this separately.
-          </ThemedText>
-          {habits.length === 0 ? (
-            <ThemedText style={styles.noHabits}>No habits found.</ThemedText>
-          ) : (
-            habits.map((h) => {
+            {/* Habit linker */}
+            <ThemedText style={styles.sectionLabel}>LINK HABITS (OPTIONAL)</ThemedText>
+            <ThemedText style={styles.sectionHint}>
+              Linked habits auto-feed your quest score.
+            </ThemedText>
+            {habits.map((h) => {
               const linked = linkedHabitIds.includes(h.id);
               return (
                 <Pressable
@@ -259,9 +348,19 @@ export default function CreateQuestScreen() {
                   </ThemedText>
                 </Pressable>
               );
-            })
-          )}
-        </View>
+            })}
+            <Pressable
+              style={styles.createHabitBtn}
+              onPress={() => {
+                setPendingHabitCallback((habitId) => {
+                  setLinkedHabitIds((prev) => [...prev, habitId]);
+                });
+                router.push({ pathname: '/tile-settings', params: { mode: 'create', prefillName: customName.trim() } });
+              }}>
+              <ThemedText style={styles.createHabitText}>＋ Create New Habit</ThemedText>
+            </Pressable>
+          </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -305,7 +404,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
-    gap: 20,
+    gap: 12,
     paddingBottom: 40,
   },
   modeRow: {
@@ -361,6 +460,18 @@ const styles = StyleSheet.create({
   },
   templateCardFoundation: {
     borderColor: QuestColors.goldDim,
+  },
+  templateCardDisabled: {
+    opacity: 0.4,
+  },
+  templateNameDisabled: {
+    color: QuestColors.textDim,
+  },
+  activeBadge: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: QuestColors.textDim,
+    letterSpacing: 0.5,
   },
   templateCardHeader: {
     flexDirection: 'row',
@@ -454,8 +565,26 @@ const styles = StyleSheet.create({
   dayChipTextActive: {
     color: '#fff',
   },
-  noHabits: {
-    fontSize: 13,
+  // Step 2: Habit linking (template flow)
+  linkQuestion: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: QuestColors.text,
+    marginBottom: 4,
+  },
+  skipBtn: {
+    borderWidth: 1,
+    borderColor: QuestColors.border,
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+    backgroundColor: QuestColors.surface,
+  },
+  skipBtnActive: {
+    borderColor: QuestColors.flameMid,
+  },
+  skipText: {
+    fontSize: 14,
     color: QuestColors.textDim,
   },
   habitRow: {
@@ -489,5 +618,18 @@ const styles = StyleSheet.create({
   habitCheckLinked: {
     color: QuestColors.flameMid,
     fontWeight: '700',
+  },
+  createHabitBtn: {
+    borderWidth: 1,
+    borderColor: QuestColors.border,
+    borderRadius: 8,
+    borderStyle: 'dashed',
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  createHabitText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: QuestColors.flameHigh,
   },
 });

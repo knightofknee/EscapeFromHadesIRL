@@ -32,7 +32,7 @@ type TileContentProps = {
 };
 
 function getBooleanState(record?: HabitRecord): boolean {
-  return record?.value === true;
+  return record?.value !== false && record?.value !== 'no' && record?.value != null;
 }
 
 function getTripleState(record?: HabitRecord): TripleValue {
@@ -71,14 +71,14 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
         const done = getBooleanState(record);
         return (
           <View style={styles.container}>
-            <GlyphRenderer glyph={glyph} width={glyphW} height={glyphH} opacity={done ? 1 : 0.15} />
+            <GlyphRenderer glyph={glyph} width={glyphW} height={glyphH} opacity={done ? 1 : 0.35} />
           </View>
         );
       }
 
       case 'triple': {
         const state = getTripleState(record);
-        const opacity = state === 'no' ? 0.15 : 1;
+        const opacity = state === 'no' ? 0.35 : 1;
         const glyphColors = getGlyphColors(glyph);
         const barWidth = glyphW * 0.7;
         const barHeight = Math.max(6, smallerDim * 0.04);
@@ -103,16 +103,20 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
 
       case 'quad': {
         const state = getQuadState(record);
-        const opacity = state === 'no' ? 0.15 : 1;
+        const opacity = state === 'no' ? 0.35 : 1;
         const glyphColors = getGlyphColors(glyph);
         const barWidth = glyphW * 0.7;
         const barHeight = Math.max(6, smallerDim * 0.04);
         const showBar = state === 'goal' || state === 'ideal';
         const gStarSize = Math.max(18, smallerDim * 0.15);
+        const gSpaceAbove = (tileHeight - glyphH) / 2;
+        const gStarTop = gSpaceAbove > gStarSize * 1.5
+          ? gSpaceAbove / 2 - gStarSize / 2
+          : gSpaceAbove + gStarSize * 0.3;
         return (
           <View style={styles.container}>
             {state === 'ideal' && (
-              <ThemedText style={[styles.idealStar, { fontSize: gStarSize, lineHeight: gStarSize * 1.5, top: Math.max(4, (tileHeight - glyphH) / 4 - gStarSize * 0.25) }]}>★</ThemedText>
+              <ThemedText style={[styles.idealStar, { fontSize: gStarSize, lineHeight: gStarSize * 1.5, top: Math.max(4, gStarTop) }]}>★</ThemedText>
             )}
             <GlyphRenderer glyph={glyph} width={glyphW} height={glyphH} opacity={opacity} />
             {showBar && (
@@ -136,7 +140,7 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
         if (count === 0) {
           return (
             <View style={styles.container}>
-              <GlyphRenderer glyph={glyph} width={glyphW} height={glyphH} opacity={0.15} />
+              <GlyphRenderer glyph={glyph} width={glyphW} height={glyphH} opacity={0.35} />
             </View>
           );
         }
@@ -153,7 +157,7 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
         if (!val) {
           return (
             <View style={styles.container}>
-              <GlyphRenderer glyph={glyph} width={glyphW} height={glyphH} opacity={0.15} />
+              <GlyphRenderer glyph={glyph} width={glyphW} height={glyphH} opacity={0.35} />
             </View>
           );
         }
@@ -170,22 +174,25 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
   // Fallback: abbreviation-based rendering
   // The letter IS the tile. State shown via opacity + circle around letter for double.
   const label = habit.icon ?? habit.abbreviation;
-  // Use 60% of the smaller dimension so the letter fills the tile but doesn't clip
-  const letterSize = Math.min(tileWidth, tileHeight) * 0.8;
-  const circleSize = Math.min(letterSize * 1.2, smallerDim * 0.85);
+  // Size the letter to fit within the tile with breathing room
+  const contentW = tileWidth * 0.85;
+  const contentH = tileHeight * 0.85;
+  const contentSmaller = Math.min(contentW, contentH);
+  const letterSize = contentSmaller * 0.75;
+  const circleSize = contentSmaller * 0.95;
 
-  const starSize = Math.max(18, smallerDim * 0.15);
+  const starSize = Math.max(18, contentSmaller * 0.15);
 
   function renderLetter(opacity: number, showCircle: boolean, showStar: boolean = false) {
     const descenderCompensation = letterSize * 0.15;
     // Circle top edge is at (tileHeight - circleSize) / 2 from content top.
     // Place star halfway between content top and circle top.
-    const circleTop = (tileHeight - circleSize) / 2;
-    // On large tiles (wide, spanning full width), tuck the star just inside the circle
-    const isLargeTile = tileWidth > 300;
-    const starTop = isLargeTile
-      ? circleTop + starSize * 0.3
-      : circleTop / 2 - starSize / 2;
+    const circleTop = (contentH - circleSize) / 2;
+    // If there's room above the circle for the star, place it there; otherwise tuck inside
+    const spaceAboveCircle = circleTop;
+    const starTop = spaceAboveCircle > starSize * 1.5
+      ? spaceAboveCircle / 2 - starSize / 2
+      : circleTop + starSize * 0.8;
     return (
       <View style={styles.container}>
         {showStar && (
@@ -210,6 +217,7 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
             {
               fontSize: letterSize,
               lineHeight: letterSize,
+              width: contentW,
               color: habit.color,
               opacity,
               marginTop: descenderCompensation,
@@ -227,34 +235,36 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
   switch (habit.recordingMode) {
     case 'boolean': {
       const done = getBooleanState(record);
-      return renderLetter(done ? 1 : 0.2, false);
+      return renderLetter(done ? 1 : 0.35, false);
     }
 
     case 'triple': {
       const state = getTripleState(record);
-      return renderLetter(state === 'no' ? 0.2 : 1, state === 'double');
+      return renderLetter(state === 'no' ? 0.35 : 1, state === 'double');
     }
 
     case 'quad': {
       const state = getQuadState(record);
-      return renderLetter(state === 'no' ? 0.2 : 1, state === 'goal' || state === 'ideal', state === 'ideal');
+      return renderLetter(state === 'no' ? 0.35 : 1, state === 'goal' || state === 'ideal', state === 'ideal');
     }
 
     case 'counter': {
       const count = getCounterValue(record);
+      const counterLetterSize = contentSmaller * 0.45;
+      const counterNumSize = contentSmaller * 0.3;
       return (
         <View style={styles.container}>
-          <View style={{ width: tileWidth * 0.85, height: tileHeight * 0.5 }}>
-            <ThemedText
-              style={[styles.bigLetter, { fontSize: letterSize * 0.7, lineHeight: letterSize * 0.8, color: habit.color, opacity: count > 0 ? 1 : 0.2 }]}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-            >
-              {label}
-            </ThemedText>
-          </View>
+          <ThemedText
+            style={[styles.bigLetter, { fontSize: counterLetterSize, lineHeight: counterLetterSize, color: habit.color, opacity: count > 0 ? 1 : 0.35 }]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+          >
+            {label}
+          </ThemedText>
           {count > 0 && (
-            <ThemedText style={[styles.counterOverlay, { fontSize: letterSize * 0.4 }]}>{count}</ThemedText>
+            <ThemedText style={[styles.counterOverlay, { fontSize: counterNumSize, lineHeight: counterNumSize }]}>
+              {count}
+            </ThemedText>
           )}
         </View>
       );
@@ -262,19 +272,19 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
 
     case 'value': {
       const val = getStringValue(record);
+      const valLetterSize = contentSmaller * 0.45;
+      const valTextSize = contentSmaller * 0.2;
       return (
         <View style={styles.container}>
-          <View style={{ width: tileWidth * 0.85, height: tileHeight * 0.45 }}>
-            <ThemedText
-              style={[styles.bigLetter, { fontSize: letterSize * 0.6, lineHeight: letterSize * 0.7, color: habit.color, opacity: val ? 1 : 0.2 }]}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-            >
-              {label}
-            </ThemedText>
-          </View>
+          <ThemedText
+            style={[styles.bigLetter, { fontSize: valLetterSize, lineHeight: valLetterSize, color: habit.color, opacity: val ? 1 : 0.35 }]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+          >
+            {label}
+          </ThemedText>
           {!!val && (
-            <ThemedText style={[styles.valueOverlay, { fontSize: letterSize * 0.3 }]} numberOfLines={1}>{val}</ThemedText>
+            <ThemedText style={[styles.valueOverlay, { fontSize: valTextSize, lineHeight: valTextSize }]} numberOfLines={1} adjustsFontSizeToFit>{val}</ThemedText>
           )}
         </View>
       );

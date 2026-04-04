@@ -9,6 +9,8 @@ import { Colors } from '@/constants/theme';
 import { TILE_COLORS, DEFAULT_TILE_COLOR } from '@/constants/grid';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useHabits } from '@/hooks/use-habits';
+import { useTodayRecords } from '@/hooks/use-today-records';
+import { consumePendingHabitCallback } from '@/lib/pending-habit-link';
 import type { RecordingMode, GlyphData } from '@/types/habit';
 
 const RECORDING_MODES: { value: RecordingMode; label: string; description: string }[] = [
@@ -20,21 +22,35 @@ const RECORDING_MODES: { value: RecordingMode; label: string; description: strin
 ];
 
 export default function TileSettingsModal() {
-  const params = useLocalSearchParams<{ habitId?: string; mode?: string }>();
+  const params = useLocalSearchParams<{ habitId?: string; mode?: string; prefillName?: string }>();
   const isCreating = params.mode === 'create' || !params.habitId;
   const { habits, createHabit, updateHabit, archiveHabit } = useHabits();
+  const { getRecord, recordHabit } = useTodayRecords();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
   const existingHabit = habits.find((h) => h.id === params.habitId);
 
-  const [name, setName] = useState(existingHabit?.name ?? '');
+  const [name, setName] = useState(existingHabit?.name ?? params.prefillName ?? '');
   const [abbreviation, setAbbreviation] = useState(existingHabit?.abbreviation ?? '');
   const [icon, setIcon] = useState(existingHabit?.icon ?? '');
   const [recordingMode, setRecordingMode] = useState<RecordingMode>(
     existingHabit?.recordingMode ?? 'boolean',
   );
   const [tileSize, setTileSize] = useState<number>(existingHabit?.tileSize ?? 1);
+
+  // Compute current display order for position control
+  const sortedHabits = [...habits].sort(
+    (a, b) => a.position.row * 100 + a.position.col - (b.position.row * 100 + b.position.col),
+  );
+  const totalHabits = habits.length;
+  const currentIndex = existingHabit ? sortedHabits.findIndex((h) => h.id === existingHabit.id) : -1;
+  const [position, setPosition] = useState<number>(1);
+  const [positionInitialized, setPositionInitialized] = useState(false);
+  const existingRecord = existingHabit ? getRecord(existingHabit.id) : undefined;
+  const currentCounterValue = (existingRecord?.value as number) ?? 0;
+  const [counterValue, setCounterValue] = useState<string>(String(currentCounterValue));
+  const [counterInitialized, setCounterInitialized] = useState(false);
   const [color, setColor] = useState(existingHabit?.color ?? DEFAULT_TILE_COLOR);
   const [glyph, setGlyph] = useState<GlyphData | undefined>(existingHabit?.glyph);
   const [showGlyphEditor, setShowGlyphEditor] = useState(false);
@@ -51,6 +67,22 @@ export default function TileSettingsModal() {
     }
   }, [existingHabit]);
 
+  // Set position once habits are loaded
+  useEffect(() => {
+    if (!positionInitialized && currentIndex >= 0) {
+      setPosition(currentIndex + 1);
+      setPositionInitialized(true);
+    }
+  }, [currentIndex, positionInitialized]);
+
+  // Sync counter value once record loads
+  useEffect(() => {
+    if (!counterInitialized && existingRecord && existingHabit?.recordingMode === 'counter') {
+      setCounterValue(String((existingRecord.value as number) ?? 0));
+      setCounterInitialized(true);
+    }
+  }, [existingRecord, counterInitialized, existingHabit]);
+
   async function handleSave() {
     if (!name.trim()) {
       Alert.alert('Name required', 'Please enter a name for this habit.');
@@ -62,7 +94,7 @@ export default function TileSettingsModal() {
     if (isCreating) {
       // Find next available position
       const maxRow = habits.reduce((max, h) => Math.max(max, h.position.row), -1);
-      await createHabit({
+      const newHabit = await createHabit({
         name: name.trim(),
         abbreviation: abbr,
         icon: icon.trim() || undefined,
@@ -73,6 +105,9 @@ export default function TileSettingsModal() {
         color,
         isArchived: false,
       });
+      if (newHabit) {
+        consumePendingHabitCallback(newHabit.id);
+      }
     } else if (existingHabit) {
       await updateHabit(existingHabit.id, {
         name: name.trim(),
@@ -83,6 +118,36 @@ export default function TileSettingsModal() {
         tileSize,
         color,
       });
+
+      // Save counter value if changed
+      if (recordingMode === 'counter') {
+        const newVal = parseInt(counterValue, 10) || 0;
+        if (newVal !== currentCounterValue) {
+          recordHabit(existingHabit.id, newVal);
+        }
+      }
+
+      // Reorder if position changed
+      const oldIndex = currentIndex;
+      const newIndex = position - 1;
+      if (oldIndex >= 0 && oldIndex !== newIndex) {
+        // Remove from old position, insert at new position
+        const reordered = sortedHabits.filter((h) => h.id !== existingHabit.id);
+        reordered.splice(newIndex, 0, existingHabit);
+        // Update positions for all affected habits
+        const updates = reordered.map((h, i) => ({
+          id: h.id,
+          position: { row: i, col: 0 },
+        }));
+        await Promise.all(
+          updates
+            .filter((u) => {
+              const orig = habits.find((h) => h.id === u.id);
+              return orig && (orig.position.row !== u.position.row || orig.position.col !== u.position.col);
+            })
+            .map((u) => updateHabit(u.id, { position: u.position })),
+        );
+      }
     }
 
     router.back();
@@ -238,6 +303,40 @@ export default function TileSettingsModal() {
           ))}
         </View>
 
+        {/* Counter direct edit (only for existing counter habits) */}
+        {!isCreating && recordingMode === 'counter' && (
+          <>
+            <ThemedText type="defaultSemiBold" style={styles.label}>
+              Edit Directly
+            </ThemedText>
+            <View style={styles.sizeRow}>
+              <Pressable
+                style={[styles.stepperButton, { borderColor: colors.tileBorder }]}
+                onPress={() => setCounterValue((v) => String(Math.max(0, (parseInt(v, 10) || 0) - 1)))}
+              >
+                <ThemedText style={styles.stepperText}>−</ThemedText>
+              </Pressable>
+              <TextInput
+                style={[styles.sizeInput, { color: colors.text, borderColor: colors.tileBorder }]}
+                value={counterValue}
+                onChangeText={(t) => {
+                  const n = parseInt(t, 10);
+                  if (!isNaN(n)) setCounterValue(String(Math.max(0, n)));
+                  else if (t === '') setCounterValue('0');
+                }}
+                keyboardType="number-pad"
+                maxLength={6}
+              />
+              <Pressable
+                style={[styles.stepperButton, { borderColor: colors.tileBorder }]}
+                onPress={() => setCounterValue((v) => String((parseInt(v, 10) || 0) + 1))}
+              >
+                <ThemedText style={styles.stepperText}>+</ThemedText>
+              </Pressable>
+            </View>
+          </>
+        )}
+
         {/* Tile Size */}
         <ThemedText type="defaultSemiBold" style={styles.label}>
           Relative Size
@@ -267,6 +366,40 @@ export default function TileSettingsModal() {
             <ThemedText style={styles.stepperText}>+</ThemedText>
           </Pressable>
         </View>
+
+        {/* Position (only for existing habits) */}
+        {!isCreating && totalHabits > 1 && (
+          <>
+            <ThemedText type="defaultSemiBold" style={styles.label}>
+              Position
+            </ThemedText>
+            <View style={styles.sizeRow}>
+              <Pressable
+                style={[styles.stepperButton, { borderColor: colors.tileBorder }]}
+                onPress={() => setPosition((p) => Math.max(1, p - 1))}
+              >
+                <ThemedText style={styles.stepperText}>−</ThemedText>
+              </Pressable>
+              <TextInput
+                style={[styles.sizeInput, { color: colors.text, borderColor: colors.tileBorder }]}
+                value={String(position)}
+                onChangeText={(t) => {
+                  const n = parseInt(t, 10);
+                  if (!isNaN(n)) setPosition(Math.max(1, Math.min(totalHabits, n)));
+                  else if (t === '') setPosition(1);
+                }}
+                keyboardType="number-pad"
+                maxLength={3}
+              />
+              <Pressable
+                style={[styles.stepperButton, { borderColor: colors.tileBorder }]}
+                onPress={() => setPosition((p) => Math.min(totalHabits, p + 1))}
+              >
+                <ThemedText style={styles.stepperText}>+</ThemedText>
+              </Pressable>
+            </View>
+          </>
+        )}
 
         {/* Color */}
         <ThemedText type="defaultSemiBold" style={styles.label}>
@@ -307,6 +440,14 @@ export default function TileSettingsModal() {
         <Pressable style={[styles.saveButton, { backgroundColor: colors.tint }]} onPress={handleSave}>
           <ThemedText style={styles.saveText}>{isCreating ? 'Create Habit' : 'Save Changes'}</ThemedText>
         </Pressable>
+
+        {isCreating && (
+          <Pressable style={styles.reviveLink} onPress={() => router.push('/revive-habit')}>
+            <ThemedText style={[styles.reviveLinkText, { color: colors.icon }]}>
+              Revive Archived Habit
+            </ThemedText>
+          </Pressable>
+        )}
 
         {!isCreating && (
           <Pressable style={styles.deleteButton} onPress={handleDelete}>
@@ -456,6 +597,14 @@ const styles = StyleSheet.create({
     color: '#E74C3C',
     fontWeight: '600',
     fontSize: 16,
+  },
+  reviveLink: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  reviveLinkText: {
+    fontSize: 13,
+    fontWeight: '500',
   },
   // Glyph section
   glyphRow: {

@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAuth } from '@/contexts/auth-context';
+import { db, doc, setDoc, onSnapshot } from '@/lib/firebase/firestore';
 
 export type SuccessLevel = 'unrecorded' | 'recorded' | 'double' | 'triple';
 
 export type SuccessColors = Record<SuccessLevel, string>;
-
-const STORAGE_KEY = '@success_colors';
 
 const DEFAULT_COLORS_LIGHT: SuccessColors = {
   unrecorded: '#D5D8DC',
@@ -26,48 +25,46 @@ export const DEFAULT_SUCCESS_COLORS = {
   dark: DEFAULT_COLORS_DARK,
 };
 
-let globalColors: SuccessColors | null = null;
-let listeners: Array<(c: SuccessColors | null) => void> = [];
-
-function notify(colors: SuccessColors | null) {
-  globalColors = colors;
-  listeners.forEach((l) => l(colors));
-}
-
 export function useSuccessColors(colorScheme: 'light' | 'dark') {
-  const [customColors, setLocal] = useState<SuccessColors | null>(globalColors);
+  const { user } = useAuth();
+  const [customColors, setCustomColors] = useState<SuccessColors | null>(null);
 
   useEffect(() => {
-    AsyncStorage.getItem(STORAGE_KEY).then((value) => {
-      if (value) {
-        try {
-          notify(JSON.parse(value));
-        } catch {}
+    if (!user) {
+      setCustomColors(null);
+      return;
+    }
+
+    const ref = doc(db, 'userSettings', user.uid);
+    const unsubscribe = onSnapshot(ref, (snap) => {
+      const data = snap.data();
+      if (data?.successColors) {
+        setCustomColors(data.successColors as SuccessColors);
+      } else {
+        setCustomColors(null);
       }
     });
 
-    const listener = (c: SuccessColors | null) => setLocal(c);
-    listeners.push(listener);
-    return () => {
-      listeners = listeners.filter((l) => l !== listener);
-    };
-  }, []);
+    return unsubscribe;
+  }, [user]);
 
   const colors: SuccessColors = customColors ?? DEFAULT_SUCCESS_COLORS[colorScheme];
 
   const setSuccessColor = useCallback(
     (level: SuccessLevel, color: string) => {
+      if (!user) return;
       const next = { ...colors, [level]: color };
-      notify(next);
-      AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      setCustomColors(next);
+      setDoc(doc(db, 'userSettings', user.uid), { successColors: next }, { merge: true });
     },
-    [colors],
+    [user, colors],
   );
 
   const resetColors = useCallback(() => {
-    notify(null);
-    AsyncStorage.removeItem(STORAGE_KEY);
-  }, []);
+    if (!user) return;
+    setCustomColors(null);
+    setDoc(doc(db, 'userSettings', user.uid), { successColors: null }, { merge: true });
+  }, [user]);
 
   return { colors, setSuccessColor, resetColors, isCustom: customColors !== null };
 }

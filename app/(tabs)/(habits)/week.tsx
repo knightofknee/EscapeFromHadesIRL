@@ -148,20 +148,26 @@ export default function WeekViewScreen() {
           <ThemedText style={[styles.backText, { color: colors.tint }]}>← Day View</ThemedText>
         </Pressable>
 
-        <GestureDetector gesture={swipeGesture}>
-          <Animated.View style={[{ flex: 1 }, animatedStyle]}>
-            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }}>
-              <WeekGrid
-                dates={dates}
-                habits={habits}
-                recordsByDate={recordsByDate}
-                onTapHabit={handleTapHabit}
-                successColors={successColors}
-              />
-              <SuccessColorPicker />
-            </ScrollView>
-          </Animated.View>
-        </GestureDetector>
+        {habits.length === 0 ? (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            <ThemedText style={{ opacity: 0.5, fontSize: 16 }}>No habits yet</ThemedText>
+          </View>
+        ) : (
+          <GestureDetector gesture={swipeGesture}>
+            <Animated.View style={[{ flex: 1 }, animatedStyle]}>
+              <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }}>
+                <WeekGrid
+                  dates={dates}
+                  habits={habits}
+                  recordsByDate={recordsByDate}
+                  onTapHabit={handleTapHabit}
+                  successColors={successColors}
+                />
+                <SuccessColorPicker />
+              </ScrollView>
+            </Animated.View>
+          </GestureDetector>
+        )}
       </ThemedView>
     </SafeAreaView>
   );

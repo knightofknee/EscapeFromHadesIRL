@@ -1,30 +1,25 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { AppState } from 'react-native';
 import { useAuth } from '@/contexts/auth-context';
 import { db, doc, setDoc, query, collection, where, onSnapshot } from '@/lib/firebase/firestore';
 import { getTodayString } from '@/lib/date-utils';
+import { useTodayDate } from '@/hooks/use-today-date';
 import type { HabitRecord, TripleValue, QuadValue } from '@/types/habit';
 
 export function useTodayRecords() {
   const { user } = useAuth();
   const [records, setRecords] = useState<Map<string, HabitRecord>>(new Map());
   const localCache = useRef<Map<string, HabitRecord>>(new Map());
-  const today = useRef(getTodayString());
+  const { todayStr } = useTodayDate();
+  const today = useRef(todayStr);
 
-  // Refresh the date when the app comes back to foreground (handles midnight rollover)
-  const [dateKey, setDateKey] = useState(getTodayString());
+  // Sync the ref when todayStr changes (midnight rollover or foreground)
+  const [dateKey, setDateKey] = useState(todayStr);
   useEffect(() => {
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') {
-        const now = getTodayString();
-        if (now !== today.current) {
-          today.current = now;
-          setDateKey(now);
-        }
-      }
-    });
-    return () => sub.remove();
-  }, []);
+    if (todayStr !== today.current) {
+      today.current = todayStr;
+      setDateKey(todayStr);
+    }
+  }, [todayStr]);
 
   useEffect(() => {
     if (!user) return;

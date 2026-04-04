@@ -80,8 +80,8 @@ export const QUEST_TEMPLATES: QuestTemplate[] = [
   },
   {
     key: 'hydrate',
-    name: 'Waters of Lethe',
-    description: 'Drink water. Not from the Lethe — that erases memory.',
+    name: 'Font of Mnemosyne',
+    description: 'Drink water. The river of memory sustains those who drink deep.',
     category: 'wellness',
     questType: 'positive',
     targetDaysPerWeek: 7,

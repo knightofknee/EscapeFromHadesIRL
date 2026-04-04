@@ -14,13 +14,17 @@ function isCompleted(habit: Habit, record?: HabitRecord): boolean {
   if (!record) return false;
   switch (habit.recordingMode) {
     case 'boolean':
-      return record.value === true;
+      return record.value !== false && record.value !== 'no';
     case 'triple':
       return record.value === 'yes' || record.value === 'double';
+    case 'quad':
+      return record.value === 'yes' || record.value === 'goal' || record.value === 'ideal';
     case 'counter':
       return (record.value as number) > 0;
     case 'value':
       return !!(record.value as string);
+    default:
+      return false;
   }
 }
 
@@ -82,41 +86,57 @@ export default function MonthViewScreen() {
     return weeks;
   }, [year, month, daysInMonth]);
 
+  // For current month, only count up to yesterday (today still in progress)
+  const countDays = useMemo(() => {
+    const now = new Date();
+    if (year === now.getFullYear() && month === now.getMonth()) {
+      return Math.max(1, now.getDate() - 1);
+    }
+    return daysInMonth;
+  }, [year, month, daysInMonth]);
+
   // Per-habit completion rate for the month
   const habitRates = useMemo(() => {
     return habits.map((habit) => {
       let completed = 0;
-      for (let d = 1; d <= daysInMonth; d++) {
+      for (let d = 1; d <= countDays; d++) {
         const dateStr = formatDate(new Date(year, month, d));
         const record = recordIndex.get(`${habit.id}_${dateStr}`);
         if (isCompleted(habit, record)) completed++;
       }
-      const rate = daysInMonth > 0 ? Math.round((completed / daysInMonth) * 100) : 0;
+      const rate = countDays > 0 ? Math.round((completed / countDays) * 100) : 0;
       return { habit, completed, rate };
     });
-  }, [habits, recordIndex, year, month, daysInMonth]);
+  }, [habits, recordIndex, year, month, countDays]);
 
-  // Heatmap data: for each day, what percentage of habits are completed
+  // Heatmap data: for each day, weighted score of habit completion
+  // Base completion = 1.0, goal/double = 1.25, ideal = 1.5
   const dayCompletionMap = useMemo(() => {
     const map: Record<number, number> = {};
     if (habits.length === 0) return map;
+    // Max possible per habit is 1.5 (ideal), so max total = habits.length * 1.5
+    const maxPerHabit = 1.5;
     for (let d = 1; d <= daysInMonth; d++) {
       const dateStr = formatDate(new Date(year, month, d));
-      let completed = 0;
+      let score = 0;
       for (const habit of habits) {
         const record = recordIndex.get(`${habit.id}_${dateStr}`);
-        if (isCompleted(habit, record)) completed++;
+        if (!record) continue;
+        const v = record.value;
+        if (v === 'ideal') score += 1.5;
+        else if (v === 'goal' || v === 'double') score += 1.25;
+        else if (isCompleted(habit, record)) score += 1.0;
       }
-      map[d] = completed / habits.length;
+      map[d] = score / (habits.length * maxPerHabit);
     }
     return map;
   }, [habits, recordIndex, year, month, daysInMonth]);
 
   function heatmapColor(ratio: number): string {
     if (ratio === 0) return colors.tileUnrecorded;
-    if (ratio < 0.5) return `${colors.tileRecorded}60`;
-    if (ratio < 1) return `${colors.tileRecorded}B0`;
-    return colors.tileRecorded;
+    // Map ratio to hex opacity: 0.01 → 30, 1.0 → FF
+    const opacity = Math.round(0x30 + (0xFF - 0x30) * Math.min(ratio, 1));
+    return `${colors.tileRecorded}${opacity.toString(16).padStart(2, '0').toUpperCase()}`;
   }
 
   return (
@@ -138,6 +158,11 @@ export default function MonthViewScreen() {
           <ThemedText style={[styles.backText, { color: colors.tint }]}>← Day View</ThemedText>
         </Pressable>
 
+        {habits.length === 0 ? (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            <ThemedText style={{ opacity: 0.5, fontSize: 16 }}>No habits yet</ThemedText>
+          </View>
+        ) : (
         <ScrollView contentContainerStyle={styles.scrollContent}>
           {/* Calendar heatmap */}
           <View style={styles.calendarSection}>
@@ -182,7 +207,7 @@ export default function MonthViewScreen() {
               <View style={styles.habitStats}>
                 <ThemedText style={styles.rateText}>{rate}%</ThemedText>
                 <ThemedText style={styles.countText}>
-                  {completed}/{daysInMonth}
+                  {completed}/{countDays}
                 </ThemedText>
               </View>
               <View style={[styles.rateBar, { backgroundColor: colors.tileUnrecorded }]}>
@@ -193,6 +218,7 @@ export default function MonthViewScreen() {
             </View>
           ))}
         </ScrollView>
+        )}
       </ThemedView>
     </SafeAreaView>
   );
