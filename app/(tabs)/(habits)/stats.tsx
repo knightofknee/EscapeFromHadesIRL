@@ -63,6 +63,7 @@ function computeStreak(
   longest = Math.max(longest, streak);
 
   if (todayCompleted) current++;
+  longest = Math.max(longest, current);
 
   return { current, longest };
 }
