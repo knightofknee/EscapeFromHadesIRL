@@ -1,5 +1,6 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
@@ -58,12 +59,14 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <AuthProvider>
-        <ThemeProvider value={effectiveScheme === 'dark' ? DarkTheme : DefaultTheme}>
-          <RootNavigator />
-          <StatusBar style={effectiveScheme === 'dark' ? 'light' : 'dark'} />
-        </ThemeProvider>
-      </AuthProvider>
+      <KeyboardProvider>
+        <AuthProvider>
+          <ThemeProvider value={effectiveScheme === 'dark' ? DarkTheme : DefaultTheme}>
+            <RootNavigator />
+            <StatusBar style={effectiveScheme === 'dark' ? 'light' : 'dark'} />
+          </ThemeProvider>
+        </AuthProvider>
+      </KeyboardProvider>
     </GestureHandlerRootView>
   );
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { StyleSheet, ScrollView, View, Pressable } from 'react-native';
+import { StyleSheet, View, Pressable } from 'react-native';
 import { useLocalSearchParams, router, useNavigation } from 'expo-router';
+import { KeyboardAwareScrollView, KeyboardToolbar } from 'react-native-keyboard-controller';
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
 import { NoteEditor } from '@/components/notes/note-editor';
@@ -82,7 +83,13 @@ export default function NoteEditorScreen() {
         </Pressable>
       </View>
 
-      <ScrollView style={styles.scrollView} keyboardDismissMode="interactive">
+      <KeyboardAwareScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        bottomOffset={60}
+        keyboardDismissMode="interactive"
+        keyboardShouldPersistTaps="handled"
+      >
         <NoteEditor
           note={note}
           tags={tags}
@@ -91,7 +98,9 @@ export default function NoteEditorScreen() {
           onUpdateTags={handleUpdateTags}
           onCreateTag={handleCreateTag}
         />
-      </ScrollView>
+      </KeyboardAwareScrollView>
+
+      <KeyboardToolbar />
     </ThemedView>
   );
 }
@@ -118,6 +127,9 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 600,
   },
   centered: {
     flex: 1,
