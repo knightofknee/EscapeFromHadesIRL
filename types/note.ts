@@ -20,4 +20,6 @@ export type Note = {
   tags: InlineTag[];
   createdAt: number;
   updatedAt: number;
+  pinned?: boolean; // currently pinned
+  hasBeenPinned?: boolean; // was ever pinned (history for future search)
 };

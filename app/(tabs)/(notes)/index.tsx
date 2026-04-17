@@ -1,8 +1,13 @@
 import { useState, useMemo, useCallback } from 'react';
-import { StyleSheet, FlatList, TextInput, View, Pressable } from 'react-native';
+import { StyleSheet, FlatList, TextInput, View, Pressable, Keyboard } from 'react-native';
 import { router } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
+import { useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
+import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 import { NoteListItem } from '@/components/notes/note-list-item';
 import { TagChip } from '@/components/notes/tag-chip';
 import { useNotes } from '@/hooks/use-notes';
@@ -10,14 +15,25 @@ import { useTags } from '@/hooks/use-tags';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
+const DISMISS_BAR_HEIGHT = 40;
+
 export default function NotesListScreen() {
-  const { notes, isLoading, createNote, deleteNote } = useNotes();
+  const { notes, isLoading, createNote, deleteNote, togglePinNote } = useNotes();
   const { tags } = useTags();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
+  const tabBarHeight = useBottomTabBarHeight();
+  const { height: kbHeight, progress } = useReanimatedKeyboardAnimation();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
+
+  // Dismiss bar slides with keyboard via Reanimated
+  const animatedBarStyle = useAnimatedStyle(() => ({
+    transform: [{
+      translateY: DISMISS_BAR_HEIGHT * (1 - progress.value) + tabBarHeight + kbHeight.value,
+    }],
+  }));
 
   const filteredNotes = useMemo(() => {
     let result = notes;
@@ -36,19 +52,26 @@ export default function NotesListScreen() {
       );
     }
 
-    return result;
+    // Pinned notes first, then unpinned. Within each group, preserve updatedAt desc.
+    return [...result].sort((a, b) => {
+      const ap = a.pinned ? 1 : 0;
+      const bp = b.pinned ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      return b.updatedAt - a.updatedAt;
+    });
   }, [notes, searchQuery, selectedTagId]);
 
-  const handleCreateNote = useCallback(async () => {
-    const note = await createNote('');
+  const handleCreateNote = useCallback(() => {
+    const note = createNote('');
     if (note) {
-      router.push(`/(tabs)/(notes)/${note.id}`);
+      router.push(`/(tabs)/(notes)/${note.id}?new=1`);
     }
   }, [createNote]);
 
 
   return (
     <ThemedView style={styles.container}>
+      <SafeAreaView edges={['top']} />
       {/* Search */}
       <View style={styles.searchContainer}>
         <TextInput
@@ -58,6 +81,7 @@ export default function NotesListScreen() {
           placeholder="Search notes..."
           placeholderTextColor={colors.icon}
           clearButtonMode="while-editing"
+          keyboardAppearance={colorScheme === 'dark' ? 'dark' : 'light'}
         />
       </View>
 
@@ -87,6 +111,7 @@ export default function NotesListScreen() {
       <FlatList
         data={filteredNotes}
         keyExtractor={(item) => item.id}
+        style={styles.list}
         contentContainerStyle={styles.listContent}
         renderItem={({ item }) => (
           <NoteListItem
@@ -94,6 +119,7 @@ export default function NotesListScreen() {
             tags={tags}
             onPress={() => router.push(`/(tabs)/(notes)/${item.id}`)}
             onDelete={(noteId) => deleteNote(noteId)}
+            onTogglePin={(noteId, pinned) => togglePinNote(noteId, pinned)}
           />
         )}
         ListEmptyComponent={
@@ -120,6 +146,20 @@ export default function NotesListScreen() {
       >
         <ThemedText style={[styles.exportText, { color: colors.tint }]}>Export Notes</ThemedText>
       </Pressable>
+
+      {/* Keyboard dismiss bar — slides with keyboard */}
+      <Animated.View
+        style={[
+          styles.dismissBar,
+          { backgroundColor: colors.background, borderTopColor: colors.tileBorder },
+          animatedBarStyle,
+        ]}
+      >
+        <View style={styles.dismissSpacer} />
+        <Pressable onPress={Keyboard.dismiss} style={styles.dismissButton} hitSlop={8}>
+          <IconSymbol name="keyboard.chevron.compact.down" size={22} color={colors.icon} />
+        </Pressable>
+      </Animated.View>
     </ThemedView>
   );
 }
@@ -145,9 +185,11 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     gap: 6,
   },
+  list: {
+    marginBottom: 88, // reserve space for FAB + Export Notes so they never overlap list items
+  },
   listContent: {
     padding: 16,
-    paddingBottom: 100,
     gap: 10,
   },
   empty: {
@@ -161,7 +203,7 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: 20,
-    bottom: 80,
+    bottom: 16,
     width: 56,
     height: 56,
     borderRadius: 28,
@@ -182,10 +224,28 @@ const styles = StyleSheet.create({
   exportLink: {
     position: 'absolute',
     left: 20,
-    bottom: 88,
+    bottom: 34, // vertically centered with FAB (FAB is 56 tall at bottom:16, center at 44)
   },
   exportText: {
     fontSize: 14,
     fontWeight: '600',
+  },
+  dismissBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  dismissSpacer: {
+    flex: 1,
+  },
+  dismissButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
 });

@@ -5,31 +5,37 @@ import { getTodayString } from '@/lib/date-utils';
 import { useTodayDate } from '@/hooks/use-today-date';
 import type { HabitRecord, TripleValue, QuadValue } from '@/types/habit';
 
-export function useTodayRecords() {
+/**
+ * Loads/edits habit records for a specific date. Defaults to today, which
+ * auto-advances on midnight/foreground. Pass a date string to pin to a
+ * specific day (used by the day navigator in the habits screen).
+ */
+export function useTodayRecords(dateStr?: string) {
   const { user } = useAuth();
   const [records, setRecords] = useState<Map<string, HabitRecord>>(new Map());
   const localCache = useRef<Map<string, HabitRecord>>(new Map());
   const { todayStr } = useTodayDate();
-  const today = useRef(todayStr);
+  const effectiveDate = dateStr ?? todayStr;
+  const activeDate = useRef(effectiveDate);
 
-  // Sync the ref when todayStr changes (midnight rollover or foreground)
-  const [dateKey, setDateKey] = useState(todayStr);
+  // Keep ref in sync with the effective date (pinned or today rollover)
+  const [dateKey, setDateKey] = useState(effectiveDate);
   useEffect(() => {
-    if (todayStr !== today.current) {
-      today.current = todayStr;
-      setDateKey(todayStr);
+    if (effectiveDate !== activeDate.current) {
+      activeDate.current = effectiveDate;
+      setDateKey(effectiveDate);
     }
-  }, [todayStr]);
+  }, [effectiveDate]);
 
   useEffect(() => {
     if (!user) return;
 
-    today.current = getTodayString();
+    activeDate.current = effectiveDate;
 
     const q = query(
       collection(db, 'records'),
       where('userId', '==', user.uid),
-      where('date', '==', today.current),
+      where('date', '==', activeDate.current),
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -56,12 +62,12 @@ export function useTodayRecords() {
     (habitId: string, value: boolean | TripleValue | QuadValue | number | string) => {
       if (!user) return;
 
-      const docId = `${habitId}_${today.current}`;
+      const docId = `${habitId}_${activeDate.current}`;
       const record: HabitRecord = {
         id: docId,
         habitId,
         userId: user.uid,
-        date: today.current,
+        date: activeDate.current,
         value,
         recordedAt: Date.now(),
       };

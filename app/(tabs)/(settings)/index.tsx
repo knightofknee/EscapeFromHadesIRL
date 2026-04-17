@@ -7,12 +7,14 @@ import { signOut } from '@/lib/firebase/auth';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAppearance } from '@/hooks/use-appearance';
+import { useHomeScreen } from '@/hooks/use-home-screen';
 
 export default function SettingsScreen() {
   const { user } = useAuth();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const { appearance, setAppearance } = useAppearance();
+  const { homeScreen, setHomeScreen } = useHomeScreen();
 
   async function handleSignOut() {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -50,6 +52,25 @@ export default function SettingsScreen() {
                   : 'Email'}
             </ThemedText>
           </View>
+        </View>
+
+        {/* Home Screen */}
+        <ThemedText type="defaultSemiBold" style={styles.sectionHeader}>
+          Home Screen
+        </ThemedText>
+        <View style={[styles.card, { backgroundColor: colors.tileBackground, borderColor: colors.tileBorder }]}>
+          <Pressable
+            style={styles.row}
+            onPress={() => setHomeScreen(homeScreen === 'notes' ? 'default' : 'notes')}
+          >
+            <View style={{ flex: 1 }}>
+              <ThemedText style={styles.label}>Open to Notes</ThemedText>
+              <ThemedText style={[styles.value, { opacity: 0.5, fontSize: 12, marginTop: 2 }]}>
+                Opens to your most recent note, or a new one if none recent
+              </ThemedText>
+            </View>
+            {homeScreen === 'notes' && <ThemedText style={{ color: colors.tint }}>✓</ThemedText>}
+          </Pressable>
         </View>
 
         {/* Appearance */}

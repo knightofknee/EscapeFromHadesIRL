@@ -41,8 +41,8 @@ export function useNotes() {
   }, [user]);
 
   const createNote = useCallback(
-    async (title: string, content: string = '') => {
-      if (!user) return;
+    (title: string, content: string = '') => {
+      if (!user) return null;
       const ref = doc(collection(db, 'notes'));
       const now = Date.now();
       const newNote: Note = {
@@ -54,7 +54,10 @@ export function useNotes() {
         createdAt: now,
         updatedAt: now,
       };
-      await setDoc(ref, newNote);
+      // Optimistically add to local state so the editor screen finds it immediately
+      setNotes((prev) => [newNote, ...prev]);
+      // Fire-and-forget Firestore write
+      setDoc(ref, newNote);
       return newNote;
     },
     [user],
@@ -69,6 +72,23 @@ export function useNotes() {
     [user],
   );
 
+  const togglePinNote = useCallback(
+    async (noteId: string, pinned: boolean) => {
+      if (!user) return;
+      // Optimistic local update — no updatedAt change (pinning shouldn't bump edit time)
+      setNotes((prev) =>
+        prev.map((n) =>
+          n.id === noteId ? { ...n, pinned, hasBeenPinned: n.hasBeenPinned || pinned } : n,
+        ),
+      );
+      const ref = doc(db, 'notes', noteId);
+      const payload: Partial<Note> = { pinned };
+      if (pinned) payload.hasBeenPinned = true;
+      await setDoc(ref, payload, { merge: true });
+    },
+    [user],
+  );
+
   const deleteNote = useCallback(
     async (noteId: string) => {
       if (!user) return;
@@ -77,5 +97,5 @@ export function useNotes() {
     [user],
   );
 
-  return { notes, isLoading, createNote, updateNote, deleteNote };
+  return { notes, isLoading, createNote, updateNote, togglePinNote, deleteNote };
 }
