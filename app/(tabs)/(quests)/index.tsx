@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { ScrollView, View, Pressable, StyleSheet, StatusBar } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { QuestCard } from '@/components/quests/quest-card';
@@ -24,6 +25,7 @@ function get30DayWindow() {
 
 export default function QuestsScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { quests, isLoading: questsLoading } = useQuests();
   const { habits } = useHabits();
   const { startDate, endDate } = useMemo(get30DayWindow, []);
@@ -47,7 +49,7 @@ export default function QuestsScreen() {
   );
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
       <StatusBar barStyle="light-content" />
 
       {/* Header */}
@@ -133,7 +135,6 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: QuestColors.background,
-    paddingTop: 56,
   },
   header: {
     flexDirection: 'row',

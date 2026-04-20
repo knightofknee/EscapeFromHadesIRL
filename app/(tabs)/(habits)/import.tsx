@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { StyleSheet, ScrollView, View, Pressable, Image, Alert, TextInput } from 'react-native';
+import { StyleSheet, ScrollView, View, Pressable, Image, Alert, TextInput, useWindowDimensions } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -19,6 +19,8 @@ export default function ImportScreen() {
   const { user } = useAuth();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
+  const { height: winHeight } = useWindowDimensions();
+  const previewHeight = Math.round(Math.min(320, Math.max(180, winHeight * 0.28)));
 
   const [step, setStep] = useState<ImportStep>('capture');
   const [imageUri, setImageUri] = useState<string | null>(null);
@@ -143,7 +145,7 @@ export default function ImportScreen() {
         )}
 
         {imageUri && (
-          <Image source={{ uri: imageUri }} style={styles.preview} resizeMode="contain" />
+          <Image source={{ uri: imageUri }} style={[styles.preview, { height: previewHeight }]} resizeMode="contain" />
         )}
 
         {step === 'processing' && (
@@ -196,7 +198,7 @@ const styles = StyleSheet.create({
   captureButtons: { flexDirection: 'row', gap: 12, marginTop: 8 },
   captureButton: { flex: 1, height: 48, borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
   captureText: { color: '#fff', fontWeight: '600', fontSize: 15 },
-  preview: { width: '100%', height: 250, borderRadius: 8, marginVertical: 8 },
+  preview: { width: '100%', borderRadius: 8, marginVertical: 8 },
   statusText: { textAlign: 'center', paddingVertical: 20, opacity: 0.6, fontSize: 16 },
   reviewSection: { gap: 8 },
   confidence: { opacity: 0.5, fontSize: 13 },

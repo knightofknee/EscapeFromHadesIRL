@@ -2,7 +2,7 @@
   "expo": {
     "name": "Escape from Hades IRL",
     "slug": "EscapeFromHadesIRL",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "escapefromhadesirl",
@@ -16,7 +16,7 @@
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       },
-      "buildNumber": "5"
+      "buildNumber": "1"
     },
     "android": {
       "adaptiveIcon": {

@@ -116,7 +116,7 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
         return (
           <View style={styles.container}>
             {state === 'ideal' && (
-              <ThemedText style={[styles.idealStar, { fontSize: gStarSize, lineHeight: gStarSize * 1.5, top: Math.max(4, gStarTop) }]}>★</ThemedText>
+              <ThemedText style={[styles.idealStar, { fontSize: gStarSize, lineHeight: gStarSize * 1.5, top: Math.max(4, Math.min(gStarTop, tileHeight * 0.15)) }]}>★</ThemedText>
             )}
             <GlyphRenderer glyph={glyph} width={glyphW} height={glyphH} opacity={opacity} />
             {showBar && (
@@ -196,7 +196,7 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
     return (
       <View style={styles.container}>
         {showStar && (
-          <ThemedText style={[styles.idealStar, { fontSize: starSize, lineHeight: starSize * 1.5, top: Math.max(4, starTop - starSize * 0.25) }]}>★</ThemedText>
+          <ThemedText style={[styles.idealStar, { fontSize: starSize, lineHeight: starSize * 1.5, top: Math.max(4, Math.min(starTop - starSize * 0.25, contentH * 0.15)) }]}>★</ThemedText>
         )}
         {showCircle && (
           <View

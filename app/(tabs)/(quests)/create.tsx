@@ -8,6 +8,7 @@ import {
   Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { useQuests } from '@/hooks/use-quests';
 import { useHabits } from '@/hooks/use-habits';
@@ -20,6 +21,7 @@ const DAYS = [1, 2, 3, 4, 5, 6, 7];
 
 export default function CreateQuestScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { quests, createQuest } = useQuests();
   const { habits } = useHabits();
 
@@ -114,7 +116,7 @@ export default function CreateQuestScreen() {
     const questName = selectedTemplate?.name ?? '';
     return (
       <View style={styles.root}>
-        <View style={styles.navBar}>
+        <View style={[styles.navBar, { paddingTop: insets.top + 8 }]}>
           <Pressable onPress={() => setTemplateStep('pick')}>
             <ThemedText style={styles.cancel}>Back</ThemedText>
           </Pressable>
@@ -171,7 +173,7 @@ export default function CreateQuestScreen() {
   // --- Main screen: template pick OR full custom form ---
   return (
     <View style={styles.root}>
-      <View style={styles.navBar}>
+      <View style={[styles.navBar, { paddingTop: insets.top + 8 }]}>
         <Pressable onPress={() => router.back()}>
           <ThemedText style={styles.cancel}>Cancel</ThemedText>
         </Pressable>
@@ -218,8 +220,9 @@ export default function CreateQuestScreen() {
                   key={t.key}
                   style={[
                     styles.templateCard,
-                    selectedTemplateKey === t.key && styles.templateCardSelected,
+                    // Foundation styling first so selection can override its border
                     t.isFoundation && styles.templateCardFoundation,
+                    selectedTemplateKey === t.key && styles.templateCardSelected,
                     alreadyActive && styles.templateCardDisabled,
                   ]}
                   onPress={() => {
@@ -375,7 +378,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingTop: 56,
     paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: QuestColors.border,

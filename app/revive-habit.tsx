@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { StyleSheet, ScrollView, Pressable, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -10,6 +11,8 @@ import { useHabits, useArchivedHabits } from '@/hooks/use-habits';
 export default function ReviveHabitScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
+  const insets = useSafeAreaInsets();
+  const footerReserve = insets.bottom + 96;
   const { reviveHabit } = useHabits();
   const { habits: archived, isLoading } = useArchivedHabits();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -32,7 +35,7 @@ export default function ReviveHabitScreen() {
         <View style={{ width: 60 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: footerReserve }]}>
         {isLoading ? (
           <ThemedText style={styles.emptyText}>Loading...</ThemedText>
         ) : archived.length === 0 ? (
@@ -69,7 +72,7 @@ export default function ReviveHabitScreen() {
       </ScrollView>
 
       {selectedId && (
-        <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: insets.bottom + 12 }]}>
           <Pressable
             style={[styles.reviveButton, { backgroundColor: colors.tint }]}
             onPress={handleRevive}
@@ -106,7 +109,6 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 16,
     gap: 10,
-    paddingBottom: 100,
   },
   emptyText: {
     textAlign: 'center',
@@ -146,8 +148,8 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    padding: 16,
-    paddingBottom: 32,
+    paddingHorizontal: 16,
+    paddingTop: 16,
   },
   reviveButton: {
     height: 48,

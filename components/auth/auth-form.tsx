@@ -11,8 +11,8 @@ import {
   Keyboard,
   Animated,
   Easing,
-  Dimensions,
   TouchableWithoutFeedback,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -57,7 +57,6 @@ const themes = {
   },
 };
 
-const TOP_OFFSET = 140;
 const BOTTOM_GAP = 28;
 
 export function AuthForm({
@@ -73,6 +72,8 @@ export function AuthForm({
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const colors = isDark ? themes.dark : themes.light;
+  const { height: winHeight, width: winWidth } = useWindowDimensions();
+  const logoSize = Math.round(Math.min(140, Math.max(96, winWidth * 0.3)));
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -88,8 +89,7 @@ export function AuthForm({
   const keyboardVisibleRef = useRef(false);
 
   const recomputeShift = (kbHeight: number, duration?: number) => {
-    const winH = Dimensions.get('window').height;
-    const keyboardTop = winH - kbHeight;
+    const keyboardTop = winHeight - kbHeight;
     if (cardRef.current && 'measureInWindow' in cardRef.current) {
       // @ts-ignore measureInWindow exists at runtime
       cardRef.current.measureInWindow((_x: number, y: number, _w: number, h: number) => {
@@ -177,7 +177,7 @@ export function AuthForm({
           <Animated.View
             style={[
               styles.container,
-              { paddingTop: TOP_OFFSET, transform: [{ translateY: shift }] },
+              { transform: [{ translateY: shift }] },
             ]}
           >
             {/* Decorative blobs */}
@@ -186,10 +186,20 @@ export function AuthForm({
 
             {/* Header / logo */}
             <View style={styles.header}>
-              <View style={styles.logoWrapper}>
+              <View
+                style={[
+                  styles.logoWrapper,
+                  { width: logoSize, height: logoSize },
+                ]}
+              >
                 <Image
                   source={require('@/assets/images/icon.png')}
-                  style={styles.logo}
+                  style={{
+                    width: logoSize + 12,
+                    height: logoSize + 12,
+                    marginTop: -6,
+                    marginLeft: -6,
+                  }}
                   resizeMode="cover"
                 />
               </View>
@@ -407,23 +417,17 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     paddingHorizontal: 20,
+    justifyContent: 'center',
+    paddingBottom: 24,
   },
   header: {
     alignItems: 'center',
     marginBottom: 18,
   },
   logoWrapper: {
-    width: 120,
-    height: 120,
     borderRadius: 26,
     overflow: 'hidden',
     marginBottom: 12,
-  },
-  logo: {
-    width: 132,
-    height: 132,
-    marginTop: -6,
-    marginLeft: -6,
   },
   title: {
     fontSize: 28,
@@ -477,6 +481,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     marginTop: 4,
+    minHeight: 48,
+    justifyContent: 'center',
   },
   primaryBtnText: {
     color: '#fff',
@@ -505,17 +511,19 @@ const styles = StyleSheet.create({
   googleBtn: {
     flex: 1,
     borderWidth: 1,
-    paddingVertical: 14,
+    paddingVertical: 18,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    minHeight: 56,
   },
   appleBtn: {
     flex: 1,
-    paddingVertical: 14,
+    paddingVertical: 18,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    minHeight: 56,
   },
   ssoBtnInner: {
     flexDirection: 'row',

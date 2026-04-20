@@ -226,7 +226,7 @@ export default function TileSettingsModal() {
           style={[styles.input, { color: colors.text, borderColor: colors.tileBorder }]}
           value={abbreviation}
           onChangeText={(t) => setAbbreviation(t.slice(0, 4))}
-          placeholder={name ? name.slice(0, 2).toUpperCase() : 'Ex'}
+          placeholder={name ? name.slice(0, 1).toUpperCase() : 'E'}
           placeholderTextColor={colors.icon}
         />
 

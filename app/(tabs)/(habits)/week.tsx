@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useRef } from 'react';
-import { StyleSheet, Pressable, View, Dimensions, ScrollView } from 'react-native';
+import { StyleSheet, Pressable, View, ScrollView, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS, Easing } from 'react-native-reanimated';
@@ -84,7 +84,7 @@ export default function WeekViewScreen() {
 
   const translateX = useSharedValue(0);
   const opacity = useSharedValue(1);
-  const screenWidth = Dimensions.get('window').width;
+  const { width: screenWidth } = useWindowDimensions();
   const SWIPE_THRESHOLD = screenWidth * 0.2;
 
   const changeWeek = useCallback((direction: number) => {

@@ -1,16 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, View, Pressable, Keyboard, useWindowDimensions, ActivityIndicator } from 'react-native';
+import { StyleSheet, View, Pressable, Keyboard, ActivityIndicator, ScrollView } from 'react-native';
 import { useLocalSearchParams, useNavigation, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
-import { useReanimatedKeyboardAnimation, useKeyboardHandler } from 'react-native-keyboard-controller';
-import Animated, {
-  useAnimatedStyle,
-  useAnimatedRef,
-  useAnimatedScrollHandler,
-  useSharedValue,
-  scrollTo,
-} from 'react-native-reanimated';
+import {
+  useReanimatedKeyboardAnimation,
+  KeyboardAwareScrollView,
+} from 'react-native-keyboard-controller';
+import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -22,8 +19,8 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { InlineTag } from '@/types/note';
 
 const DISMISS_BAR_HEIGHT = 40;
-const BUFFER_ABOVE_BAR = 60; // ~2 lines clearance
-const BOTTOM_OFFSET = DISMISS_BAR_HEIGHT + BUFFER_ABOVE_BAR;
+// Keep caret comfortably above the dismiss bar when typing.
+const CARET_CLEARANCE = DISMISS_BAR_HEIGHT + 24;
 
 // In-memory map of scroll position per note id — persists while app is running.
 // Keeps scroll position when navigating away from and back to a note.
@@ -37,60 +34,14 @@ export default function NoteEditorScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const tabBarHeight = useBottomTabBarHeight();
-  const { height: screenHeight } = useWindowDimensions();
   const { height: kbHeight, progress } = useReanimatedKeyboardAnimation();
   const [isFocused, setIsFocused] = useState(false);
 
   // Ref to NoteEditor for imperative formatting commands
   const noteEditorRef = useRef<NoteEditorHandle>(null);
 
-  // Shared values on UI thread
-  const scrollRef = useAnimatedRef<Animated.ScrollView>();
-  const scrollOffset = useSharedValue(0);
-  const tapY = useSharedValue(0); // screen Y of the user's tap
-  const scrollAtStart = useSharedValue(0);
-  const scrollDelta = useSharedValue(0);
-  const targetKbHeight = useSharedValue(0);
-
-  // Track scroll position via onScroll (avoids useScrollViewOffset ref timing warning)
-  const scrollHandler = useAnimatedScrollHandler({
-    onScroll: (e) => {
-      'worklet';
-      scrollOffset.value = e.contentOffset.y;
-    },
-  });
-
-  // Keyboard sync: compute scroll delta once at onStart, interpolate during onMove
-  useKeyboardHandler(
-    {
-      onStart: (e) => {
-        'worklet';
-        if (e.height === 0) {
-          // Keyboard hiding → don't auto-scroll (Done shouldn't shift content)
-          scrollDelta.value = 0;
-          targetKbHeight.value = 0;
-          return;
-        }
-
-        targetKbHeight.value = e.height;
-        scrollAtStart.value = scrollOffset.value;
-
-        // tapY is the screen Y where the user tapped (= approx cursor position)
-        // Desired cursor Y = just above dismiss bar + 2 line buffer
-        const desiredCursorY = screenHeight - e.height - BOTTOM_OFFSET;
-
-        // Only scroll if tap is below the desired threshold
-        scrollDelta.value = Math.max(0, tapY.value - desiredCursorY);
-      },
-      onMove: (e) => {
-        'worklet';
-        if (scrollDelta.value <= 0 || targetKbHeight.value <= 0) return;
-        const p = Math.min(1, Math.max(0, e.height / targetKbHeight.value));
-        scrollTo(scrollRef, 0, scrollAtStart.value + scrollDelta.value * p, false);
-      },
-    },
-    [screenHeight],
-  );
+  // Scroll ref for position save/restore across navigation.
+  const scrollRef = useRef<ScrollView>(null);
 
   // Dismiss bar slides with keyboard via Reanimated
   const animatedBarStyle = useAnimatedStyle(() => ({
@@ -98,11 +49,6 @@ export default function NoteEditorScreen() {
       translateY: DISMISS_BAR_HEIGHT * (1 - progress.value) + tabBarHeight + kbHeight.value,
     }],
   }));
-
-  // Capture tap Y synchronously on touch — fires before keyboard animation
-  const handleTouchStart = useCallback((e: { nativeEvent: { pageY: number } }) => {
-    tapY.value = e.nativeEvent.pageY;
-  }, [tapY]);
 
   // Scroll position persistence across navigation
   const hasRestoredRef = useRef(false);
@@ -122,7 +68,7 @@ export default function NoteEditorScreen() {
       scrollRef.current?.scrollTo({ y: saved, animated: false });
     }
     hasRestoredRef.current = true;
-  }, [id, scrollRef]);
+  }, [id]);
 
   const note = notes.find((n) => n.id === id);
   const noteRef = useRef(note);
@@ -200,17 +146,17 @@ export default function NoteEditorScreen() {
         </View>
       </SafeAreaView>
 
-      <Animated.ScrollView
+      <KeyboardAwareScrollView
         ref={scrollRef}
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         keyboardDismissMode="interactive"
         keyboardShouldPersistTaps="handled"
-        onScroll={scrollHandler}
+        bottomOffset={CARET_CLEARANCE}
+        disableScrollOnKeyboardHide
         onScrollEndDrag={saveScrollPos}
         onMomentumScrollEnd={saveScrollPos}
         onContentSizeChange={restoreScrollPos}
-        scrollEventThrottle={16}
       >
         <NoteEditor
           ref={noteEditorRef}
@@ -223,9 +169,8 @@ export default function NoteEditorScreen() {
           onCreateTag={handleCreateTag}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
-          onTouchStart={handleTouchStart}
         />
-      </Animated.ScrollView>
+      </KeyboardAwareScrollView>
 
       <Animated.View
         style={[
@@ -290,7 +235,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 600,
+    flexGrow: 1,
+    paddingBottom: 40,
   },
   centered: {
     flex: 1,

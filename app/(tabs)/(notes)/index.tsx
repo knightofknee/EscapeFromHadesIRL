@@ -133,7 +133,7 @@ export default function NotesListScreen() {
 
       {/* FAB */}
       <Pressable
-        style={[styles.fab, { backgroundColor: colors.tint }]}
+        style={[styles.fab, { backgroundColor: colors.tint, bottom: tabBarHeight + 16 }]}
         onPress={handleCreateNote}
       >
         <ThemedText style={styles.fabText}>+</ThemedText>
@@ -203,7 +203,6 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: 20,
-    bottom: 16,
     width: 56,
     height: 56,
     borderRadius: 28,

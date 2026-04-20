@@ -1,6 +1,7 @@
 import { useMemo, useState, useRef, useEffect } from 'react';
 import { ScrollView, View, Pressable, StyleSheet, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ScoreBar } from '@/components/quests/score-bar';
 import { useQuests } from '@/hooks/use-quests';
@@ -22,6 +23,7 @@ function get30DayWindow() {
 export default function QuestDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { quests, updateQuest, pauseQuest, deleteQuest } = useQuests();
   const { habits } = useHabits();
   const { startDate, endDate } = useMemo(get30DayWindow, []);
@@ -91,7 +93,7 @@ export default function QuestDetailScreen() {
 
   return (
     <View style={styles.root}>
-      <View style={styles.navBar}>
+      <View style={[styles.navBar, { paddingTop: insets.top + 8 }]}>
         <Pressable onPress={() => router.back()}>
           <ThemedText style={styles.backText}>← Back</ThemedText>
         </Pressable>
@@ -245,7 +247,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingTop: 56,
     paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: QuestColors.border,

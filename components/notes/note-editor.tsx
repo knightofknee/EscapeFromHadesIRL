@@ -17,7 +17,6 @@ type NoteEditorProps = {
   onCreateTag: (name: string) => void;
   onFocus?: () => void;
   onBlur?: () => void;
-  onTouchStart?: (e: { nativeEvent: { pageY: number } }) => void;
 };
 
 export type NoteEditorHandle = {
@@ -116,7 +115,6 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     onCreateTag,
     onFocus,
     onBlur,
-    onTouchStart,
   },
   ref,
 ) {
@@ -270,7 +268,6 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
         keyboardAppearance={colorScheme === 'dark' ? 'dark' : 'light'}
         onFocus={onFocus}
         onBlur={onBlur}
-        onTouchStart={onTouchStart}
       />
 
       {/* Tags bar */}
@@ -312,7 +309,6 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
         keyboardAppearance={colorScheme === 'dark' ? 'dark' : 'light'}
         onFocus={onFocus}
         onBlur={onBlur}
-        onTouchStart={onTouchStart}
       />
 
       <TagPicker

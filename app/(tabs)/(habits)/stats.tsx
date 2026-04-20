@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
-import { StyleSheet, ScrollView, View, Pressable, Dimensions } from 'react-native';
+import { StyleSheet, ScrollView, View, Pressable, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS, Easing } from 'react-native-reanimated';
 import { ThemedText } from '@/components/themed-text';
@@ -211,7 +211,8 @@ function HabitStatsSection({ habit, recordIndex }: HabitStatsSectionProps) {
   const [pageIndex, setPageIndex] = useState(0);
 
   const translateX = useSharedValue(0);
-  const contentWidth = Dimensions.get('window').width - 32; // minus scrollContent padding
+  const { width: winWidth } = useWindowDimensions();
+  const contentWidth = winWidth - 32;
   const SWIPE_THRESHOLD = contentWidth * 0.15;
 
   const changePage = useCallback((direction: number) => {
