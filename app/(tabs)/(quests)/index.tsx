@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
-import { ScrollView, View, Pressable, StyleSheet, StatusBar } from 'react-native';
+import { ScrollView, View, Pressable, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useIsFocused } from '@react-navigation/native';
+import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { QuestCard } from '@/components/quests/quest-card';
@@ -26,6 +28,7 @@ function get30DayWindow() {
 export default function QuestsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const isFocused = useIsFocused();
   const { quests, isLoading: questsLoading } = useQuests();
   const { habits } = useHabits();
   const { startDate, endDate } = useMemo(get30DayWindow, []);
@@ -50,7 +53,10 @@ export default function QuestsScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
-      <StatusBar barStyle="light-content" />
+      {/* Only apply the light-content override when this tab is focused.
+          Tab screens stay mounted; without the guard, white status-bar icons
+          would leak to light-mode screens in other tabs and become invisible. */}
+      {isFocused && <StatusBar style="light" />}
 
       {/* Header */}
       <View style={styles.header}>

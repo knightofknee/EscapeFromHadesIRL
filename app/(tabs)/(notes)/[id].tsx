@@ -1,17 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, View, Pressable, Keyboard, ActivityIndicator, ScrollView } from 'react-native';
+import { StyleSheet, View, Pressable, Keyboard, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { useLocalSearchParams, useNavigation, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import {
   useReanimatedKeyboardAnimation,
-  KeyboardAwareScrollView,
+  useKeyboardHandler,
 } from 'react-native-keyboard-controller';
-import Animated, { useAnimatedStyle } from 'react-native-reanimated';
+import Animated, {
+  useAnimatedStyle,
+  useAnimatedRef,
+  useAnimatedScrollHandler,
+  useSharedValue,
+  scrollTo,
+} from 'react-native-reanimated';
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { NoteEditor, type NoteEditorHandle } from '@/components/notes/note-editor';
+import { TagPicker } from '@/components/notes/tag-picker';
 import { useNotes } from '@/hooks/use-notes';
 import { useTags } from '@/hooks/use-tags';
 import { Colors } from '@/constants/theme';
@@ -19,12 +26,8 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { InlineTag } from '@/types/note';
 
 const DISMISS_BAR_HEIGHT = 40;
-// Keep caret comfortably above the dismiss bar when typing.
-const CARET_CLEARANCE = DISMISS_BAR_HEIGHT + 24;
-
-// In-memory map of scroll position per note id — persists while app is running.
-// Keeps scroll position when navigating away from and back to a note.
-const scrollPositions = new Map<string, number>();
+// Two-line clearance below the cursor, above the dismiss bar.
+const BUFFER_ABOVE_BAR = 60;
 
 export default function NoteEditorScreen() {
   const { id, new: isNewParam } = useLocalSearchParams<{ id: string; new?: string }>();
@@ -35,13 +38,70 @@ export default function NoteEditorScreen() {
   const colors = Colors[colorScheme ?? 'light'];
   const tabBarHeight = useBottomTabBarHeight();
   const { height: kbHeight, progress } = useReanimatedKeyboardAnimation();
+  const { height: screenHeight } = useWindowDimensions();
   const [isFocused, setIsFocused] = useState(false);
+  const [tagPickerOpen, setTagPickerOpen] = useState(false);
 
   // Ref to NoteEditor for imperative formatting commands
   const noteEditorRef = useRef<NoteEditorHandle>(null);
 
-  // Scroll ref for position save/restore across navigation.
-  const scrollRef = useRef<ScrollView>(null);
+  // Animated scroll ref — required for scrollTo worklet from Reanimated.
+  const scrollRef = useAnimatedRef<Animated.ScrollView>();
+  const scrollOffset = useSharedValue(0);
+  const tapY = useSharedValue(0); // screen Y of the user's most recent tap
+  const scrollAtStart = useSharedValue(0);
+  const scrollDelta = useSharedValue(0);
+  const targetKbHeight = useSharedValue(0);
+  const keyboardIsOpen = useSharedValue(0); // 0 closed, 1 opening/open
+
+  const scrollHandler = useAnimatedScrollHandler({
+    onScroll: (e) => {
+      'worklet';
+      scrollOffset.value = e.contentOffset.y;
+    },
+  });
+
+  // Move content in sync with keyboard animation. Compute the required scroll
+  // delta ONCE when the keyboard starts opening from a closed state, based on
+  // where the user tapped. Each `onMove` frame scales that delta by keyboard
+  // progress, so content animates frame-by-frame with the keyboard. Subsequent
+  // `onStart` calls while keyboard is already open (e.g. predictive bar frame
+  // changes) are ignored — otherwise a stale `tapY` would scroll to the wrong
+  // spot.
+  useKeyboardHandler(
+    {
+      onStart: (e) => {
+        'worklet';
+        if (e.height === 0) {
+          keyboardIsOpen.value = 0;
+          scrollDelta.value = 0;
+          targetKbHeight.value = 0;
+          return;
+        }
+        if (keyboardIsOpen.value === 1) {
+          // Already open — don't re-scroll on frame changes.
+          return;
+        }
+        keyboardIsOpen.value = 1;
+        targetKbHeight.value = e.height;
+        scrollAtStart.value = scrollOffset.value;
+        const desiredCursorY = screenHeight - e.height - DISMISS_BAR_HEIGHT - BUFFER_ABOVE_BAR;
+        scrollDelta.value = Math.max(0, tapY.value - desiredCursorY);
+      },
+      onMove: (e) => {
+        'worklet';
+        if (scrollDelta.value <= 0 || targetKbHeight.value <= 0) return;
+        const p = Math.min(1, Math.max(0, e.height / targetKbHeight.value));
+        scrollTo(scrollRef, 0, scrollAtStart.value + scrollDelta.value * p, false);
+      },
+    },
+    [screenHeight],
+  );
+
+  // Capture tap Y synchronously on touch — fires before keyboard animation
+  const handleTouchStart = useCallback((e: { nativeEvent: { pageY: number } }) => {
+    tapY.value = e.nativeEvent.pageY;
+  }, [tapY]);
 
   // Dismiss bar slides with keyboard via Reanimated
   const animatedBarStyle = useAnimatedStyle(() => ({
@@ -49,26 +109,6 @@ export default function NoteEditorScreen() {
       translateY: DISMISS_BAR_HEIGHT * (1 - progress.value) + tabBarHeight + kbHeight.value,
     }],
   }));
-
-  // Scroll position persistence across navigation
-  const hasRestoredRef = useRef(false);
-  // Reset restore flag whenever we navigate to a different note
-  useEffect(() => {
-    hasRestoredRef.current = false;
-  }, [id]);
-
-  const saveScrollPos = useCallback((e: { nativeEvent: { contentOffset: { y: number } } }) => {
-    if (id) scrollPositions.set(id, e.nativeEvent.contentOffset.y);
-  }, [id]);
-
-  const restoreScrollPos = useCallback(() => {
-    if (hasRestoredRef.current || !id) return;
-    const saved = scrollPositions.get(id);
-    if (saved && saved > 0) {
-      scrollRef.current?.scrollTo({ y: saved, animated: false });
-    }
-    hasRestoredRef.current = true;
-  }, [id]);
 
   const note = notes.find((n) => n.id === id);
   const noteRef = useRef(note);
@@ -109,10 +149,39 @@ export default function NoteEditorScreen() {
 
   const handleCreateTag = useCallback(
     async (name: string) => {
-      await createTag(name);
+      if (!id) return;
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const normalized = trimmed.toLowerCase();
+
+      // Attach an existing tag (case-insensitive match) rather than creating a duplicate.
+      const existing = tags.find((t) => t.name.trim().toLowerCase() === normalized);
+      const tagId = existing ? existing.id : (await createTag(trimmed))?.id;
+      if (!tagId) return;
+
+      const currentTags = noteRef.current?.tags ?? [];
+      if (currentTags.some((t) => t.tagId === tagId)) return;
+      await updateNote(id, {
+        tags: [...currentTags, { tagId, startIndex: 0, endIndex: 0 }],
+      });
     },
-    [createTag],
+    [createTag, id, tags, updateNote],
   );
+
+  const handleToggleTag = useCallback(
+    (tagId: string) => {
+      if (!id) return;
+      const currentTags = noteRef.current?.tags ?? [];
+      const isAttached = currentTags.some((t) => t.tagId === tagId);
+      const nextTags = isAttached
+        ? currentTags.filter((t) => t.tagId !== tagId)
+        : [...currentTags, { tagId, startIndex: 0, endIndex: 0 }];
+      updateNote(id, { tags: nextTags });
+    },
+    [id, updateNote],
+  );
+
+  const noteTagIds = note ? [...new Set(note.tags.map((t) => t.tagId))] : [];
 
   if (!note) {
     // Still loading notes — show spinner. Only show "not found" once loading is done.
@@ -146,17 +215,20 @@ export default function NoteEditorScreen() {
         </View>
       </SafeAreaView>
 
-      <KeyboardAwareScrollView
+      <Animated.ScrollView
         ref={scrollRef}
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         keyboardDismissMode="interactive"
         keyboardShouldPersistTaps="handled"
-        bottomOffset={CARET_CLEARANCE}
-        disableScrollOnKeyboardHide
-        onScrollEndDrag={saveScrollPos}
-        onMomentumScrollEnd={saveScrollPos}
-        onContentSizeChange={restoreScrollPos}
+        onScroll={scrollHandler}
+        scrollEventThrottle={16}
+        // Stop iOS from auto-scrolling to "keep cursor visible" in the
+        // multiline TextInput child — that behavior yanks the view to the
+        // bottom of the note the first time the user drags near the text.
+        automaticallyAdjustContentInsets={false}
+        automaticallyAdjustKeyboardInsets={false}
+        contentInsetAdjustmentBehavior="never"
       >
         <NoteEditor
           ref={noteEditorRef}
@@ -166,16 +238,19 @@ export default function NoteEditorScreen() {
           onUpdateTitle={handleUpdateTitle}
           onUpdateContent={handleUpdateContent}
           onUpdateTags={handleUpdateTags}
-          onCreateTag={handleCreateTag}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
+          onOpenTagPicker={() => setTagPickerOpen(true)}
+          onTouchStart={handleTouchStart}
         />
-      </KeyboardAwareScrollView>
+      </Animated.ScrollView>
 
       <Animated.View
+        pointerEvents={tagPickerOpen ? 'none' : 'auto'}
         style={[
           styles.dismissBar,
           { backgroundColor: colors.background, borderTopColor: colors.tileBorder },
+          tagPickerOpen && { opacity: 0 },
           animatedBarStyle,
         ]}
       >
@@ -205,6 +280,15 @@ export default function NoteEditorScreen() {
           <IconSymbol name="keyboard.chevron.compact.down" size={22} color={colors.icon} />
         </Pressable>
       </Animated.View>
+
+      <TagPicker
+        visible={tagPickerOpen}
+        tags={tags}
+        selectedTagIds={noteTagIds}
+        onToggleTag={handleToggleTag}
+        onCreateTag={handleCreateTag}
+        onClose={() => setTagPickerOpen(false)}
+      />
     </ThemedView>
   );
 }
@@ -235,8 +319,12 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    flexGrow: 1,
-    paddingBottom: 40,
+    // Room to scroll the focused line up out of the keyboard's way.
+    // NOTE: deliberately no flexGrow here — adding it stretches the multiline
+    // TextInput (flex:1 inside) to fill the visible area, which triggers iOS's
+    // native "keep TextInput cursor visible" scroll-correction on short scrolls
+    // and jumps the view to the bottom of the content.
+    paddingBottom: 600,
   },
   centered: {
     flex: 1,

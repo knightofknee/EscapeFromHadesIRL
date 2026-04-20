@@ -1,7 +1,9 @@
 import { StyleSheet, ScrollView, View, Pressable, Alert, Linking } from 'react-native';
 import { router } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { BackButton } from '@/components/ui/back-button';
 import { useAuth } from '@/contexts/auth-context';
 import { signOut } from '@/lib/firebase/auth';
 import { deleteAccountAndData } from '@/lib/firebase/account-deletion';
@@ -49,6 +51,11 @@ export default function AdditionalSettingsScreen() {
 
   return (
     <ThemedView style={styles.container}>
+      <SafeAreaView edges={['top']}>
+        <View style={styles.header}>
+          <BackButton />
+        </View>
+      </SafeAreaView>
       <ScrollView contentContainerStyle={styles.content}>
         {/* Legal */}
         <ThemedText type="defaultSemiBold" style={styles.sectionHeader}>
@@ -88,6 +95,12 @@ export default function AdditionalSettingsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
   content: { padding: 16, paddingBottom: 40, gap: 8 },
   sectionHeader: { fontSize: 13, opacity: 0.5, marginTop: 12, marginLeft: 4, textTransform: 'uppercase' },
   card: { borderRadius: 10, borderWidth: 1, overflow: 'hidden' },

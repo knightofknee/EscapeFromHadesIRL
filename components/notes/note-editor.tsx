@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 're
 import { StyleSheet, TextInput, View, Pressable, ScrollView, type NativeSyntheticEvent, type TextInputSelectionChangeEventData } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { TagChip } from './tag-chip';
-import { TagPicker } from './tag-picker';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { Note, Tag, InlineTag } from '@/types/note';
@@ -14,9 +13,10 @@ type NoteEditorProps = {
   onUpdateTitle: (title: string) => void;
   onUpdateContent: (content: string) => void;
   onUpdateTags: (tags: InlineTag[]) => void;
-  onCreateTag: (name: string) => void;
   onFocus?: () => void;
   onBlur?: () => void;
+  onOpenTagPicker?: () => void;
+  onTouchStart?: (e: { nativeEvent: { pageY: number } }) => void;
 };
 
 export type NoteEditorHandle = {
@@ -60,8 +60,9 @@ const NUM_LINE_RE = /^(\s*)(\d+)\.\s+(.*)$/;
 type ListKind = 'bullet' | 'number';
 
 /** Toggle a list style on the lines touched by the selection.
- *  If the first line is already the given list kind, removes the prefix from
- *  all matching lines in the block (un-list). Otherwise adds the prefix. */
+ *  - Same kind clicked again → strip the prefix (un-list).
+ *  - Other kind clicked on an existing list → swap the prefix.
+ *  - No list → add the prefix. */
 function toggleList(
   content: string,
   sel: { start: number; end: number },
@@ -74,24 +75,29 @@ function toggleList(
   const block = content.slice(lineStart, lineEnd);
   const lines = block.split('\n');
 
-  const re = kind === 'bullet' ? BULLET_LINE_RE : NUM_LINE_RE;
-  const firstLineHasPrefix = re.test(lines[0] ?? '');
+  const currentRe = kind === 'bullet' ? BULLET_LINE_RE : NUM_LINE_RE;
+  const otherRe = kind === 'bullet' ? NUM_LINE_RE : BULLET_LINE_RE;
+  const firstLineHasCurrent = currentRe.test(lines[0] ?? '');
 
   let transformed: string[];
-  if (firstLineHasPrefix) {
-    // Un-list: strip the prefix from any line that has it
+  if (firstLineHasCurrent) {
+    // Un-list: strip the current kind's prefix from any line that has it.
     transformed = lines.map((l) => {
-      const m = l.match(re);
+      const m = l.match(currentRe);
       if (!m) return l;
-      // Bullet regex: [1]=prefix, [2]=text. Number regex: [1]=indent, [2]=num, [3]=text.
+      // Bullet regex: [2]=text. Number regex: [3]=text.
       return kind === 'bullet' ? m[2] : m[3];
     });
   } else {
-    // Apply: prefix each line (skip lines that already have the correct prefix)
+    // Apply (or swap from the other kind): strip any existing other-kind
+    // prefix, then add this kind's prefix. Skip lines that already have
+    // this kind's prefix (mixed selection).
     transformed = lines.map((l, i) => {
-      if (re.test(l)) return l; // already has the correct prefix
+      const om = l.match(otherRe);
+      const stripped = om ? (kind === 'bullet' ? om[3] : om[2]) : l;
+      if (currentRe.test(stripped)) return stripped;
       const prefix = kind === 'bullet' ? BULLET_PREFIX : `  ${i + 1}. `;
-      return prefix + l;
+      return prefix + stripped;
     });
   }
 
@@ -112,15 +118,15 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     onUpdateTitle,
     onUpdateContent,
     onUpdateTags,
-    onCreateTag,
     onFocus,
     onBlur,
+    onOpenTagPicker,
+    onTouchStart,
   },
   ref,
 ) {
   const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
-  const [showTagPicker, setShowTagPicker] = useState(false);
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [pendingSelection, setPendingSelection] = useState<{ start: number; end: number } | null>(null);
   const colorScheme = useColorScheme();
@@ -268,6 +274,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
         keyboardAppearance={colorScheme === 'dark' ? 'dark' : 'light'}
         onFocus={onFocus}
         onBlur={onBlur}
+        onTouchStart={onTouchStart}
       />
 
       {/* Tags bar */}
@@ -285,7 +292,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
           ))}
           <Pressable
             style={[styles.addTagButton, { borderColor: colors.tileBorder }]}
-            onPress={() => setShowTagPicker(true)}
+            onPress={() => onOpenTagPicker?.()}
           >
             <ThemedText style={[styles.addTagText, { color: colors.icon }]}>+ Tag</ThemedText>
           </Pressable>
@@ -309,15 +316,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
         keyboardAppearance={colorScheme === 'dark' ? 'dark' : 'light'}
         onFocus={onFocus}
         onBlur={onBlur}
-      />
-
-      <TagPicker
-        visible={showTagPicker}
-        tags={tags}
-        selectedTagIds={noteTagIds}
-        onToggleTag={handleToggleTag}
-        onCreateTag={onCreateTag}
-        onClose={() => setShowTagPicker(false)}
+        onTouchStart={onTouchStart}
       />
     </View>
   );

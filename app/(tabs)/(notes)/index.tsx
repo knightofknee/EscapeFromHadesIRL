@@ -1,6 +1,6 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { StyleSheet, FlatList, TextInput, View, Pressable, Keyboard } from 'react-native';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
@@ -19,7 +19,7 @@ const DISMISS_BAR_HEIGHT = 40;
 
 export default function NotesListScreen() {
   const { notes, isLoading, createNote, deleteNote, togglePinNote } = useNotes();
-  const { tags } = useTags();
+  const { tags, deleteTag } = useTags();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const tabBarHeight = useBottomTabBarHeight();
@@ -34,6 +34,40 @@ export default function NotesListScreen() {
       translateY: DISMISS_BAR_HEIGHT * (1 - progress.value) + tabBarHeight + kbHeight.value,
     }],
   }));
+
+  // Only show tags that are actually attached to at least one note.
+  const visibleTags = useMemo(() => {
+    const inUse = new Set<string>();
+    for (const n of notes) {
+      for (const t of n.tags) inUse.add(t.tagId);
+    }
+    return tags.filter((t) => inUse.has(t.id));
+  }, [notes, tags]);
+
+  // Delete orphaned tags whenever the notes page is focused. 500ms debounce
+  // lets Firestore snapshots settle after any in-flight tag attachment writes.
+  useFocusEffect(
+    useCallback(() => {
+      if (isLoading) return;
+      const timer = setTimeout(() => {
+        const inUse = new Set<string>();
+        for (const n of notes) {
+          for (const t of n.tags) inUse.add(t.tagId);
+        }
+        for (const tag of tags) {
+          if (!inUse.has(tag.id)) deleteTag(tag.id);
+        }
+      }, 500);
+      return () => clearTimeout(timer);
+    }, [notes, tags, isLoading, deleteTag]),
+  );
+
+  // Drop the active filter if its tag is no longer in use.
+  useEffect(() => {
+    if (selectedTagId && !visibleTags.some((t) => t.id === selectedTagId)) {
+      setSelectedTagId(null);
+    }
+  }, [selectedTagId, visibleTags]);
 
   const filteredNotes = useMemo(() => {
     let result = notes;
@@ -86,7 +120,7 @@ export default function NotesListScreen() {
       </View>
 
       {/* Tag filters */}
-      {tags.length > 0 && (
+      {visibleTags.length > 0 && (
         <View style={styles.tagFilters}>
           <TagChip
             name="All"
@@ -94,7 +128,7 @@ export default function NotesListScreen() {
             onPress={() => setSelectedTagId(null)}
             small
           />
-          {tags.map((tag) => (
+          {visibleTags.map((tag) => (
             <TagChip
               key={tag.id}
               name={tag.name}

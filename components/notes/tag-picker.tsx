@@ -1,5 +1,8 @@
-import { useState } from 'react';
-import { StyleSheet, Modal, View, Pressable, TextInput, ScrollView } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { StyleSheet, View, Pressable, TextInput, ScrollView, Keyboard } from 'react-native';
+import Animated, { useAnimatedStyle } from 'react-native-reanimated';
+import { useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { ThemedText } from '@/components/themed-text';
 import { TagChip } from './tag-chip';
 import { Colors } from '@/constants/theme';
@@ -26,6 +29,29 @@ export function TagPicker({
   const [newTagName, setNewTagName] = useState('');
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
+  const { height: kbHeight, progress } = useReanimatedKeyboardAnimation();
+  const tabBarHeight = useBottomTabBarHeight();
+  const inputRef = useRef<TextInput>(null);
+
+  // Sheet anchors to the screen's bottom (above the tab bar). When the keyboard
+  // opens, lift by |kbHeight| + tabBarHeight so the sheet's bottom lands just
+  // above the keyboard — KEYBOARD_GAP leaves a small sliver of note content
+  // visible between the sheet and the keyboard for visual separation.
+  const KEYBOARD_GAP = 12;
+  const sheetStyle = useAnimatedStyle(() => ({
+    transform: [
+      {
+        translateY:
+          kbHeight.value + (tabBarHeight - KEYBOARD_GAP) * progress.value,
+      },
+    ],
+  }));
+
+  useEffect(() => {
+    if (!visible) return;
+    const t = setTimeout(() => inputRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, [visible]);
 
   function handleCreate() {
     if (!newTagName.trim()) return;
@@ -33,66 +59,89 @@ export function TagPicker({
     setNewTagName('');
   }
 
+  function handleClose() {
+    Keyboard.dismiss();
+    setNewTagName('');
+    onClose();
+  }
+
+  if (!visible) return null;
+
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <View style={[styles.content, { backgroundColor: colors.tileBackground }]}>
-          <View style={styles.header}>
-            <ThemedText type="defaultSemiBold">Tags</ThemedText>
-            <Pressable onPress={onClose}>
-              <ThemedText style={{ color: colors.tint }}>Done</ThemedText>
-            </Pressable>
-          </View>
-
-          <View style={styles.createRow}>
-            <TextInput
-              style={[styles.input, { color: colors.text, borderColor: colors.tileBorder }]}
-              value={newTagName}
-              onChangeText={setNewTagName}
-              placeholder="New tag name..."
-              placeholderTextColor={colors.icon}
-              onSubmitEditing={handleCreate}
-              returnKeyType="done"
-            />
-            <Pressable
-              style={[styles.createButton, { backgroundColor: colors.tint }]}
-              onPress={handleCreate}
-            >
-              <ThemedText style={styles.createText}>+</ThemedText>
-            </Pressable>
-          </View>
-
-          <ScrollView style={styles.tagList} contentContainerStyle={styles.tagListContent}>
-            {tags.map((tag) => (
-              <TagChip
-                key={tag.id}
-                name={tag.name}
-                color={tag.color}
-                selected={selectedTagIds.includes(tag.id)}
-                onPress={() => onToggleTag(tag.id)}
-              />
-            ))}
-            {tags.length === 0 && (
-              <ThemedText style={styles.emptyText}>No tags yet. Create one above.</ThemedText>
-            )}
-          </ScrollView>
+    <View style={styles.overlay}>
+      <Pressable style={styles.backdrop} onPress={handleClose} />
+      <Animated.View
+        style={[styles.sheet, { backgroundColor: colors.tileBackground }, sheetStyle]}
+      >
+        <View style={styles.header}>
+          <ThemedText type="defaultSemiBold">Tags</ThemedText>
+          <Pressable onPress={handleClose} hitSlop={8}>
+            <ThemedText style={{ color: colors.tint }}>Done</ThemedText>
+          </Pressable>
         </View>
-      </View>
-    </Modal>
+
+        <View style={styles.createRow}>
+          <TextInput
+            ref={inputRef}
+            style={[styles.input, { color: colors.text, borderColor: colors.tileBorder }]}
+            value={newTagName}
+            onChangeText={setNewTagName}
+            placeholder="New tag name..."
+            placeholderTextColor={colors.icon}
+            keyboardAppearance={colorScheme === 'dark' ? 'dark' : 'light'}
+            autoCapitalize="none"
+            autoCorrect={false}
+            onSubmitEditing={handleCreate}
+            returnKeyType="done"
+          />
+          <Pressable
+            style={[styles.createButton, { backgroundColor: colors.tint }]}
+            onPress={handleCreate}
+          >
+            <ThemedText style={styles.createText}>+</ThemedText>
+          </Pressable>
+        </View>
+
+        <ScrollView
+          style={styles.tagList}
+          contentContainerStyle={styles.tagListContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          {tags.map((tag) => (
+            <TagChip
+              key={tag.id}
+              name={tag.name}
+              color={tag.color}
+              selected={selectedTagIds.includes(tag.id)}
+              onPress={() => onToggleTag(tag.id)}
+            />
+          ))}
+          {tags.length === 0 && (
+            <ThemedText style={styles.emptyText}>No tags yet. Create one above.</ThemedText>
+          )}
+        </ScrollView>
+      </Animated.View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   overlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1000,
+    elevation: 1000,
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.4)',
   },
-  content: {
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+  sheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 16,
     padding: 20,
-    maxHeight: '60%',
   },
   header: {
     flexDirection: 'row',
@@ -126,7 +175,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   tagList: {
-    flex: 1,
+    maxHeight: 280,
   },
   tagListContent: {
     flexDirection: 'row',
