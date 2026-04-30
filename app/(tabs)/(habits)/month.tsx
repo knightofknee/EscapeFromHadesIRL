@@ -6,6 +6,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useHabits } from '@/hooks/use-habits';
 import { useHabitRecords, formatDate } from '@/hooks/use-habit-records';
+import { useVacationDays } from '@/hooks/use-vacation-days';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { Habit, HabitRecord } from '@/types/habit';
@@ -38,6 +39,7 @@ export default function MonthViewScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const [monthOffset, setMonthOffset] = useState(0);
+  const { days: vacationDays, dateSet: vacationSet } = useVacationDays();
 
   const { year, month, daysInMonth, startDate, endDate, monthLabel } = useMemo(() => {
     const now = new Date();
@@ -95,22 +97,38 @@ export default function MonthViewScreen() {
     return daysInMonth;
   }, [year, month, daysInMonth]);
 
-  // Per-habit completion rate for the month
+  // Active days = days the user actually tracked (countDays minus vacation
+  // days). Used as the denominator for per-habit rates so vacation days
+  // "didn't happen" for stats purposes.
+  const activeDays = useMemo(() => {
+    let n = 0;
+    for (let d = 1; d <= countDays; d++) {
+      const dateStr = formatDate(new Date(year, month, d));
+      if (!vacationSet.has(dateStr)) n++;
+    }
+    return n;
+  }, [countDays, vacationSet, year, month]);
+
+  // Per-habit completion rate for the month — vacation days excluded from
+  // both numerator and denominator.
   const habitRates = useMemo(() => {
     return habits.map((habit) => {
       let completed = 0;
       for (let d = 1; d <= countDays; d++) {
         const dateStr = formatDate(new Date(year, month, d));
+        if (vacationSet.has(dateStr)) continue;
         const record = recordIndex.get(`${habit.id}_${dateStr}`);
         if (isCompleted(habit, record)) completed++;
       }
-      const rate = countDays > 0 ? Math.round((completed / countDays) * 100) : 0;
+      const rate = activeDays > 0 ? Math.round((completed / activeDays) * 100) : 0;
       return { habit, completed, rate };
     });
-  }, [habits, recordIndex, year, month, countDays]);
+  }, [habits, recordIndex, year, month, countDays, vacationSet, activeDays]);
 
   // Heatmap data: for each day, weighted score of habit completion
   // Base completion = 1.0, goal/double = 1.25, ideal = 1.5
+  // Vacation days are skipped — they render as the vacation tile, not
+  // part of the heatmap.
   const dayCompletionMap = useMemo(() => {
     const map: Record<number, number> = {};
     if (habits.length === 0) return map;
@@ -118,6 +136,7 @@ export default function MonthViewScreen() {
     const maxPerHabit = 1.5;
     for (let d = 1; d <= daysInMonth; d++) {
       const dateStr = formatDate(new Date(year, month, d));
+      if (vacationSet.has(dateStr)) continue;
       let score = 0;
       for (const habit of habits) {
         const record = recordIndex.get(`${habit.id}_${dateStr}`);
@@ -130,7 +149,7 @@ export default function MonthViewScreen() {
       map[d] = score / (habits.length * maxPerHabit);
     }
     return map;
-  }, [habits, recordIndex, year, month, daysInMonth]);
+  }, [habits, recordIndex, year, month, daysInMonth, vacationSet]);
 
   function heatmapColor(ratio: number): string {
     if (ratio === 0) return colors.tileUnrecorded;
@@ -173,21 +192,40 @@ export default function MonthViewScreen() {
             </View>
             {calendarWeeks.map((week, wi) => (
               <View key={wi} style={styles.calendarRow}>
-                {week.map((day, di) => (
-                  <View
-                    key={di}
-                    style={[
-                      styles.calendarCell,
-                      {
-                        backgroundColor: day ? heatmapColor(dayCompletionMap[day] ?? 0) : 'transparent',
-                      },
-                    ]}
-                  >
-                    {day && (
+                {week.map((day, di) => {
+                  if (!day) {
+                    return <View key={di} style={styles.calendarCell} />;
+                  }
+                  const dateStr = formatDate(new Date(year, month, day));
+                  const vacation = vacationDays.get(dateStr);
+                  // Vacation cells use the user's chosen vacation color and
+                  // show a V (or first char of a custom label) — they're not
+                  // part of the heatmap math.
+                  if (vacation) {
+                    const initial = (vacation.label.trim() || 'V')[0];
+                    return (
+                      <View
+                        key={di}
+                        style={[styles.calendarCell, { backgroundColor: vacation.color }]}
+                      >
+                        <ThemedText style={[styles.calendarDayText, { color: '#fff', fontWeight: '700' }]}>
+                          {initial}
+                        </ThemedText>
+                      </View>
+                    );
+                  }
+                  return (
+                    <View
+                      key={di}
+                      style={[
+                        styles.calendarCell,
+                        { backgroundColor: heatmapColor(dayCompletionMap[day] ?? 0) },
+                      ]}
+                    >
                       <ThemedText style={styles.calendarDayText}>{day}</ThemedText>
-                    )}
-                  </View>
-                ))}
+                    </View>
+                  );
+                })}
               </View>
             ))}
           </View>
@@ -207,7 +245,7 @@ export default function MonthViewScreen() {
               <View style={styles.habitStats}>
                 <ThemedText style={styles.rateText}>{rate}%</ThemedText>
                 <ThemedText style={styles.countText}>
-                  {completed}/{countDays}
+                  {completed}/{activeDays}
                 </ThemedText>
               </View>
               <View style={[styles.rateBar, { backgroundColor: colors.tileUnrecorded }]}>

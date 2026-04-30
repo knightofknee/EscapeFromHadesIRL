@@ -54,3 +54,13 @@ export type GridConfig = {
   statsButtonPosition: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 };
 
+export type VacationDay = {
+  id: string; // `${userId}_${date}`
+  userId: string;
+  date: string; // YYYY-MM-DD
+  label: string; // displayed on the V tile, default "V"
+  color: string; // tile background, default green (#2ECC71)
+  createdAt: number;
+  updatedAt: number;
+};
+

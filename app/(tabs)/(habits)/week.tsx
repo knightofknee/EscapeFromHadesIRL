@@ -15,6 +15,7 @@ import { db, doc, setDoc } from '@/lib/firebase/firestore';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useSuccessColors } from '@/hooks/use-success-colors';
+import { useVacationDays } from '@/hooks/use-vacation-days';
 import type { HabitRecord, TripleValue, QuadValue } from '@/types/habit';
 
 export default function WeekViewScreen() {
@@ -24,6 +25,7 @@ export default function WeekViewScreen() {
   const scheme = colorScheme ?? 'light';
   const colors = Colors[scheme];
   const { colors: successColors } = useSuccessColors(scheme);
+  const { days: vacationDays } = useVacationDays();
   const [weekOffset, setWeekOffset] = useState(0);
 
   const refDate = useMemo(() => {
@@ -162,6 +164,7 @@ export default function WeekViewScreen() {
                   recordsByDate={recordsByDate}
                   onTapHabit={handleTapHabit}
                   successColors={successColors}
+                  vacationDays={vacationDays}
                 />
                 <SuccessColorPicker />
               </ScrollView>

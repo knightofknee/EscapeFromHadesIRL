@@ -15,6 +15,13 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TileGrid } from '@/components/habits/tile-grid';
 import { QuickInputModal } from '@/components/ui/quick-input-modal';
+import { VacationMenu } from '@/components/habits/vacation-menu';
+import { VacationRangeModal } from '@/components/habits/vacation-range-modal';
+import { VacationTile } from '@/components/habits/vacation-tile';
+import { VacationEditModal } from '@/components/habits/vacation-edit-modal';
+import { useAuth } from '@/contexts/auth-context';
+import { useVacationDays } from '@/hooks/use-vacation-days';
+import { buildDateRange, createVacationDays } from '@/lib/vacation-days';
 import { useHabits } from '@/hooks/use-habits';
 import { useTodayRecords } from '@/hooks/use-today-records';
 import { useTodayDate } from '@/hooks/use-today-date';
@@ -36,6 +43,13 @@ export default function HabitsDayScreen() {
 
   const { createNote } = useNotes();
   const [valueInputHabit, setValueInputHabit] = useState<Habit | null>(null);
+  const [vacationMenuVisible, setVacationMenuVisible] = useState(false);
+  const [vacationRangeVisible, setVacationRangeVisible] = useState(false);
+  const [vacationEditVisible, setVacationEditVisible] = useState(false);
+  const { user } = useAuth();
+  const { days: vacationDays, dateSet: vacationDateSet, getContiguousBlock } = useVacationDays();
+  const viewedVacation = vacationDays.get(viewedDate);
+  const isVacationDay = viewedVacation != null;
 
   // --- Swipe-to-change-day: Reanimated translateX on the content area ---
   const translateX = useSharedValue(0);
@@ -251,13 +265,23 @@ export default function HabitsDayScreen() {
               </View>
             ) : (
               <>
-                {/* Grid fills all available space */}
-                <TileGrid
-                  habits={habits}
-                  records={records}
-                  onTapHabit={handleTap}
-                  onLongPressHabit={handleLongPress}
-                />
+                {/* Vacation day: replace the whole grid with one big V tile.
+                    Habit data for this date is preserved in Firestore but
+                    hidden until the day is un-vacationed. */}
+                {isVacationDay && viewedVacation ? (
+                  <VacationTile
+                    label={viewedVacation.label}
+                    color={viewedVacation.color}
+                    onLongPress={() => setVacationEditVisible(true)}
+                  />
+                ) : (
+                  <TileGrid
+                    habits={habits}
+                    records={records}
+                    onTapHabit={handleTap}
+                    onLongPressHabit={handleLongPress}
+                  />
+                )}
 
                 {/* Bottom action buttons */}
                 <View style={styles.bottomButtons}>
@@ -266,6 +290,19 @@ export default function HabitsDayScreen() {
                     onPress={() => router.push({ pathname: '/tile-settings', params: { mode: 'create' } })}
                   >
                     <ThemedText style={[styles.addTileText, { color: colors.tint }]}>+ Add Habit</ThemedText>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.menuTileButton,
+                      { borderColor: colors.vacationButton, backgroundColor: `${colors.vacationButton}15` },
+                    ]}
+                    onPress={() => setVacationMenuVisible(true)}
+                    accessibilityLabel="More options"
+                    hitSlop={6}
+                  >
+                    <ThemedText style={[styles.menuTileText, { color: colors.vacationButton }]}>
+                      •••
+                    </ThemedText>
                   </Pressable>
                   <Pressable
                     style={[styles.addTileButton, { borderColor: colors.tint, backgroundColor: `${colors.tint}15` }]}
@@ -290,6 +327,41 @@ export default function HabitsDayScreen() {
           onSubmit={handleValueSubmit}
           onCancel={() => setValueInputHabit(null)}
         />
+
+        <VacationMenu
+          visible={vacationMenuVisible}
+          onClose={() => setVacationMenuVisible(false)}
+          onSelectVacation={() => setVacationRangeVisible(true)}
+        />
+
+        <VacationRangeModal
+          visible={vacationRangeVisible}
+          onCancel={() => setVacationRangeVisible(false)}
+          onConfirm={async (startDate, endDate) => {
+            if (!user) return;
+            const dates = buildDateRange(startDate, endDate);
+            await createVacationDays({
+              userId: user.uid,
+              dates,
+              existingDates: vacationDateSet,
+              defaultLabel: 'V',
+              defaultColor: colors.vacationDefault,
+            });
+            setVacationRangeVisible(false);
+          }}
+        />
+
+        {user && viewedVacation && (
+          <VacationEditModal
+            visible={vacationEditVisible}
+            userId={user.uid}
+            date={viewedDate}
+            initialLabel={viewedVacation.label}
+            initialColor={viewedVacation.color}
+            contiguousBlock={getContiguousBlock(viewedDate)}
+            onClose={() => setVacationEditVisible(false)}
+          />
+        )}
       </ThemedView>
     </SafeAreaView>
   );
@@ -390,5 +462,21 @@ const styles = StyleSheet.create({
   addTileText: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  // Smaller blue ⋯ menu button between Add Habit and Add Note.
+  // flex: 0.45 keeps it noticeably narrower than the two flex:1 siblings.
+  menuTileButton: {
+    flex: 0.45,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  menuTileText: {
+    fontSize: 18,
+    fontWeight: '700',
+    lineHeight: 18,
   },
 });

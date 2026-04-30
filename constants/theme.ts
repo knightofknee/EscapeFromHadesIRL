@@ -23,6 +23,9 @@ export const Colors = {
     noteBorder: '#E1E4E8',
     tagBackground: '#FDEDEC',
     tagText: '#E74C3C',
+    // Vacation
+    vacationButton: '#3498DB',
+    vacationDefault: '#2ECC71', // default V tile color (matches tileRecorded green)
   },
   dark: {
     text: '#ECEDEE',
@@ -43,6 +46,9 @@ export const Colors = {
     noteBorder: '#3A3D42',
     tagBackground: '#3B1A1A',
     tagText: '#EF5350',
+    // Vacation
+    vacationButton: '#3498DB',
+    vacationDefault: '#27AE60', // default V tile color (matches tileRecorded green, dark)
   },
 };
 

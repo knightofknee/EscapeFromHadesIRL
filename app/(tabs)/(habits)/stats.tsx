@@ -8,6 +8,7 @@ import { StatsCard } from '@/components/habits/stats-card';
 import { StatsChart } from '@/components/habits/stats-chart';
 import { useHabits } from '@/hooks/use-habits';
 import { useHabitRecords, formatDate } from '@/hooks/use-habit-records';
+import { useVacationDays } from '@/hooks/use-vacation-days';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { Habit, HabitRecord } from '@/types/habit';
@@ -30,6 +31,7 @@ function computeStreak(
   habit: Habit,
   recordIndex: Map<string, HabitRecord>,
   checker: CompletionChecker,
+  vacationSet: Set<string>,
 ): { current: number; longest: number } {
   let current = 0;
   let longest = 0;
@@ -38,24 +40,31 @@ function computeStreak(
 
   const today = new Date();
   const todayStr = formatDate(today);
+  const todayIsVacation = vacationSet.has(todayStr);
   const todayRecord = recordIndex.get(`${habit.id}_${todayStr}`);
-  const todayCompleted = checker(habit, todayRecord);
+  // If today is a vacation day, treat it as "skipped" — neither breaks the
+  // streak nor adds to it. Otherwise, fall back to the regular checker.
+  const todayCompleted = todayIsVacation ? false : checker(habit, todayRecord);
 
   const checkDate = new Date(today);
   checkDate.setDate(checkDate.getDate() - 1);
 
   for (let i = 0; i < 548; i++) {
     const dateStr = formatDate(checkDate);
-    const record = recordIndex.get(`${habit.id}_${dateStr}`);
-    const completed = checker(habit, record);
+    // Vacation days are removed from the timeline entirely — no increment,
+    // no reset. The streak rolls right past them.
+    if (!vacationSet.has(dateStr)) {
+      const record = recordIndex.get(`${habit.id}_${dateStr}`);
+      const completed = checker(habit, record);
 
-    if (completed) {
-      streak++;
-      if (isCurrent) current = streak;
-    } else {
-      if (isCurrent) isCurrent = false;
-      longest = Math.max(longest, streak);
-      streak = 0;
+      if (completed) {
+        streak++;
+        if (isCurrent) current = streak;
+      } else {
+        if (isCurrent) isCurrent = false;
+        longest = Math.max(longest, streak);
+        streak = 0;
+      }
     }
 
     checkDate.setDate(checkDate.getDate() - 1);
@@ -73,6 +82,7 @@ function computeMonthlyRates(
   recordIndex: Map<string, HabitRecord>,
   displayMonths: number,
   checker: CompletionChecker,
+  vacationSet: Set<string>,
 ): { date: string; value: number; avg: number }[] {
   const now = new Date();
   const todayDate = now.getDate();
@@ -92,14 +102,19 @@ function computeMonthlyRates(
     const isCurrentMonth = year === todayYear && month === todayMonth;
     const countDays = isCurrentMonth ? Math.max(1, todayDate - 1) : daysInMonth;
 
+    // Both numerator and denominator exclude vacation days — they're removed
+    // from the timeline, "as if they didn't happen".
     let completed = 0;
+    let activeDays = 0;
     for (let d = 1; d <= countDays; d++) {
       const dateStr = formatDate(new Date(year, month, d));
+      if (vacationSet.has(dateStr)) continue;
+      activeDays++;
       const record = recordIndex.get(`${habit.id}_${dateStr}`);
       if (checker(habit, record)) completed++;
     }
 
-    const rate = Math.round((completed / countDays) * 100);
+    const rate = activeDays > 0 ? Math.round((completed / activeDays) * 100) : 0;
     const label = `${year}-${String(month + 1).padStart(2, '0')}`;
     allRates.push({ date: label, rate });
   }
@@ -130,6 +145,7 @@ function computeRates(
   habit: Habit,
   recordIndex: Map<string, HabitRecord>,
   checker: CompletionChecker,
+  vacationSet: Set<string>,
 ): { week: number; month: number; quarter: number } {
   const now = new Date();
   const rates = { week: 0, month: 0, quarter: 0 };
@@ -140,14 +156,18 @@ function computeRates(
     ['quarter', 90],
   ] as const) {
     let completed = 0;
+    let active = 0;
     for (let d = 1; d <= days; d++) {
       const checkDate = new Date(now);
       checkDate.setDate(now.getDate() - d);
       const dateStr = formatDate(checkDate);
+      // Vacation days are removed from numerator AND denominator.
+      if (vacationSet.has(dateStr)) continue;
+      active++;
       const record = recordIndex.get(`${habit.id}_${dateStr}`);
       if (checker(habit, record)) completed++;
     }
-    rates[period] = Math.round((completed / days) * 100);
+    rates[period] = active > 0 ? Math.round((completed / active) * 100) : 0;
   }
 
   return rates;
@@ -158,6 +178,7 @@ function computeRates(
 type HabitStatsSectionProps = {
   habit: Habit;
   recordIndex: Map<string, HabitRecord>;
+  vacationSet: Set<string>;
 };
 
 function StatsPageContent({
@@ -165,23 +186,25 @@ function StatsPageContent({
   recordIndex,
   checker,
   colors,
+  vacationSet,
 }: {
   habit: Habit;
   recordIndex: Map<string, HabitRecord>;
   checker: CompletionChecker;
   colors: (typeof Colors)['light'];
+  vacationSet: Set<string>;
 }) {
   const { current, longest } = useMemo(
-    () => computeStreak(habit, recordIndex, checker),
-    [habit, recordIndex, checker],
+    () => computeStreak(habit, recordIndex, checker, vacationSet),
+    [habit, recordIndex, checker, vacationSet],
   );
   const rates = useMemo(
-    () => computeRates(habit, recordIndex, checker),
-    [habit, recordIndex, checker],
+    () => computeRates(habit, recordIndex, checker, vacationSet),
+    [habit, recordIndex, checker, vacationSet],
   );
   const monthlyData = useMemo(
-    () => computeMonthlyRates(habit, recordIndex, 18, checker),
-    [habit, recordIndex, checker],
+    () => computeMonthlyRates(habit, recordIndex, 18, checker, vacationSet),
+    [habit, recordIndex, checker, vacationSet],
   );
 
   return (
@@ -204,7 +227,7 @@ function StatsPageContent({
   );
 }
 
-function HabitStatsSection({ habit, recordIndex }: HabitStatsSectionProps) {
+function HabitStatsSection({ habit, recordIndex, vacationSet }: HabitStatsSectionProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const pageCount = getPageCount(habit);
@@ -270,7 +293,7 @@ function HabitStatsSection({ habit, recordIndex }: HabitStatsSectionProps) {
     pages.push(
       <View key={i} style={{ width: contentWidth }}>
         <View style={styles.statsContent}>
-          <StatsPageContent habit={habit} recordIndex={recordIndex} checker={LEVEL_CHECKERS[i]} colors={colors} />
+          <StatsPageContent habit={habit} recordIndex={recordIndex} checker={LEVEL_CHECKERS[i]} colors={colors} vacationSet={vacationSet} />
         </View>
       </View>,
     );
@@ -305,7 +328,7 @@ function HabitStatsSection({ habit, recordIndex }: HabitStatsSectionProps) {
 
       {pageCount <= 1 ? (
         <View style={styles.statsContent}>
-          <StatsPageContent habit={habit} recordIndex={recordIndex} checker={LEVEL_CHECKERS[0]} colors={colors} />
+          <StatsPageContent habit={habit} recordIndex={recordIndex} checker={LEVEL_CHECKERS[0]} colors={colors} vacationSet={vacationSet} />
         </View>
       ) : (
         <View style={{ overflow: 'hidden', width: contentWidth }}>
@@ -324,6 +347,7 @@ function HabitStatsSection({ habit, recordIndex }: HabitStatsSectionProps) {
 
 export default function StatsScreen() {
   const { habits } = useHabits();
+  const { dateSet: vacationSet } = useVacationDays();
 
   const dateRange = useMemo(() => {
     const end = new Date();
@@ -351,7 +375,7 @@ export default function StatsScreen() {
           <ThemedText style={styles.empty}>No habits to show stats for</ThemedText>
         ) : (
           habits.map((habit) => (
-            <HabitStatsSection key={habit.id} habit={habit} recordIndex={recordIndex} />
+            <HabitStatsSection key={habit.id} habit={habit} recordIndex={recordIndex} vacationSet={vacationSet} />
           ))
         )}
       </ScrollView>

@@ -4,7 +4,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { formatDate } from '@/lib/date-utils';
-import type { Habit, HabitRecord, TripleValue, QuadValue } from '@/types/habit';
+import type { Habit, HabitRecord, TripleValue, QuadValue, VacationDay } from '@/types/habit';
 import type { SuccessColors } from '@/hooks/use-success-colors';
 
 type WeekColumnProps = {
@@ -14,6 +14,7 @@ type WeekColumnProps = {
   records: Map<string, HabitRecord>;
   onTapHabit: (habitId: string, date: string) => void;
   successColors: SuccessColors;
+  vacation?: VacationDay;
 };
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -42,7 +43,7 @@ function getStateColor(
   }
 }
 
-export function WeekColumn({ date, isToday, habits, records, onTapHabit, successColors }: WeekColumnProps) {
+export function WeekColumn({ date, isToday, habits, records, onTapHabit, successColors, vacation }: WeekColumnProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const dayIndex = (date.getDay() + 6) % 7; // Monday=0
@@ -58,29 +59,45 @@ export function WeekColumn({ date, isToday, habits, records, onTapHabit, success
           {date.getDate()}
         </ThemedText>
       </View>
-      <View style={styles.tiles}>
-        {habits.map((habit) => {
-          const record = records.get(habit.id);
-          const stateColor = getStateColor(habit, record, successColors);
-
-          return (
-            <Pressable
-              key={habit.id}
-              style={[styles.miniTile, { backgroundColor: stateColor }]}
-              onPress={() => {
-                if (Platform.OS === 'ios' && !Platform.isPad) {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                }
-                onTapHabit(habit.id, dateStr);
-              }}
+      {vacation ? (
+        // Vacation day: replace the habit-tile column with a single V tile.
+        // Tap is a no-op here — the home screen is the place to edit.
+        <View style={styles.tiles}>
+          <View style={[styles.vacationTile, { backgroundColor: vacation.color }]}>
+            <ThemedText
+              style={styles.vacationLabel}
+              numberOfLines={2}
+              ellipsizeMode="tail"
             >
-              <ThemedText style={[styles.miniLabel, { color: '#fff' }]} numberOfLines={1}>
-                {habit.icon ?? habit.abbreviation}
-              </ThemedText>
-            </Pressable>
-          );
-        })}
-      </View>
+              {vacation.label.trim() || 'V'}
+            </ThemedText>
+          </View>
+        </View>
+      ) : (
+        <View style={styles.tiles}>
+          {habits.map((habit) => {
+            const record = records.get(habit.id);
+            const stateColor = getStateColor(habit, record, successColors);
+
+            return (
+              <Pressable
+                key={habit.id}
+                style={[styles.miniTile, { backgroundColor: stateColor }]}
+                onPress={() => {
+                  if (Platform.OS === 'ios' && !Platform.isPad) {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }
+                  onTapHabit(habit.id, dateStr);
+                }}
+              >
+                <ThemedText style={[styles.miniLabel, { color: '#fff' }]} numberOfLines={1}>
+                  {habit.icon ?? habit.abbreviation}
+                </ThemedText>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
     </View>
   );
 }
@@ -120,5 +137,21 @@ const styles = StyleSheet.create({
   miniLabel: {
     fontSize: 10,
     fontWeight: '700',
+  },
+  vacationTile: {
+    width: '90%',
+    flex: 1,
+    minHeight: 60,
+    borderRadius: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  vacationLabel: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center',
   },
 });
