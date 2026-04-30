@@ -12,8 +12,9 @@ import { useVacationDays } from '@/hooks/use-vacation-days';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { Habit, HabitRecord } from '@/types/habit';
-import { isRecordCompleted, LEVEL_CHECKERS } from '@/lib/habit-scoring';
+import { LEVEL_CHECKERS } from '@/lib/habit-scoring';
 import type { CompletionChecker } from '@/lib/habit-scoring';
+import { computeStreak } from '@/lib/habit-streaks';
 
 function getLevelLabel(habit: Habit, levelIndex: number): string {
   if (levelIndex === 0) return habit.name;
@@ -25,56 +26,6 @@ function getPageCount(habit: Habit): number {
   if (habit.recordingMode === 'quad') return 3;
   if (habit.recordingMode === 'triple') return 2;
   return 1;
-}
-
-function computeStreak(
-  habit: Habit,
-  recordIndex: Map<string, HabitRecord>,
-  checker: CompletionChecker,
-  vacationSet: Set<string>,
-): { current: number; longest: number } {
-  let current = 0;
-  let longest = 0;
-  let streak = 0;
-  let isCurrent = true;
-
-  const today = new Date();
-  const todayStr = formatDate(today);
-  const todayIsVacation = vacationSet.has(todayStr);
-  const todayRecord = recordIndex.get(`${habit.id}_${todayStr}`);
-  // If today is a vacation day, treat it as "skipped" — neither breaks the
-  // streak nor adds to it. Otherwise, fall back to the regular checker.
-  const todayCompleted = todayIsVacation ? false : checker(habit, todayRecord);
-
-  const checkDate = new Date(today);
-  checkDate.setDate(checkDate.getDate() - 1);
-
-  for (let i = 0; i < 548; i++) {
-    const dateStr = formatDate(checkDate);
-    // Vacation days are removed from the timeline entirely — no increment,
-    // no reset. The streak rolls right past them.
-    if (!vacationSet.has(dateStr)) {
-      const record = recordIndex.get(`${habit.id}_${dateStr}`);
-      const completed = checker(habit, record);
-
-      if (completed) {
-        streak++;
-        if (isCurrent) current = streak;
-      } else {
-        if (isCurrent) isCurrent = false;
-        longest = Math.max(longest, streak);
-        streak = 0;
-      }
-    }
-
-    checkDate.setDate(checkDate.getDate() - 1);
-  }
-  longest = Math.max(longest, streak);
-
-  if (todayCompleted) current++;
-  longest = Math.max(longest, current);
-
-  return { current, longest };
 }
 
 function computeMonthlyRates(
@@ -270,8 +221,15 @@ function HabitStatsSection({ habit, recordIndex, vacationSet }: HabitStatsSectio
       .onEnd((e) => {
         const direction = e.translationX > 0 ? -1 : 1;
         if (canSwipe(direction) && (Math.abs(e.translationX) > SWIPE_THRESHOLD || Math.abs(e.velocityX) > 500)) {
-          // Snap: offset translateX to absorb the page change, then animate to 0
-          translateX.value = translateX.value + direction * -contentWidth;
+          // Snap: offset translateX so the row stays at its dragged-to
+          // visual position when pageIndex updates, then animate the
+          // offset back to 0 — yielding a smooth slide into the new page.
+          //
+          // Math: rowVisual = -pageIndex * cw + translateX. To preserve
+          // visual across a pageIndex change of +direction, translateX
+          // must shift by +direction * contentWidth (NOT minus — that
+          // was a sign bug that caused the page to "bounce back").
+          translateX.value = translateX.value + direction * contentWidth;
           runOnJS(changePage)(direction);
           translateX.value = withTiming(0, { duration: 200, easing: Easing.out(Easing.cubic) });
         } else {
@@ -349,11 +307,13 @@ export default function StatsScreen() {
   const { habits } = useHabits();
   const { dateSet: vacationSet } = useVacationDays();
 
+  // Load every record the user has so streaks can scan all the way back.
+  // The chart still windows itself to 18 display months internally — this
+  // wider load only affects the streak calculation, which scans the full
+  // history. 2000-01-01 is comfortably before any user could have started.
   const dateRange = useMemo(() => {
     const end = new Date();
-    const start = new Date();
-    start.setMonth(start.getMonth() - 36);
-    return { startDate: formatDate(start), endDate: formatDate(end) };
+    return { startDate: '2000-01-01', endDate: formatDate(end) };
   }, []);
 
   const { records } = useHabitRecords(dateRange.startDate, dateRange.endDate);

@@ -7,6 +7,7 @@ import { ThemedView } from '@/components/themed-view';
 import { useHabits } from '@/hooks/use-habits';
 import { useHabitRecords, formatDate } from '@/hooks/use-habit-records';
 import { useVacationDays } from '@/hooks/use-vacation-days';
+import { readableTextOn } from '@/lib/contrast';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { Habit, HabitRecord } from '@/types/habit';
@@ -203,12 +204,13 @@ export default function MonthViewScreen() {
                   // part of the heatmap math.
                   if (vacation) {
                     const initial = (vacation.label.trim() || 'V')[0];
+                    const fg = readableTextOn(vacation.color);
                     return (
                       <View
                         key={di}
                         style={[styles.calendarCell, { backgroundColor: vacation.color }]}
                       >
-                        <ThemedText style={[styles.calendarDayText, { color: '#fff', fontWeight: '700' }]}>
+                        <ThemedText style={[styles.calendarDayText, { color: fg, fontWeight: '700' }]}>
                           {initial}
                         </ThemedText>
                       </View>

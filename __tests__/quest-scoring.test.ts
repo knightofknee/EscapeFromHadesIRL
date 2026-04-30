@@ -201,3 +201,58 @@ describe('scoreQuest - reduce quests', () => {
     expect(result.completedDays).toBe(30); // all good days
   });
 });
+
+describe('scoreQuest - vacation handling', () => {
+  // Spec invariants we're locking in:
+  //   1. Vacation days are removed from the timeline entirely. The window
+  //      shrinks; targetDays scales with the active window so the user
+  //      isn't punished.
+  //   2. A user who hits their target on every active day gets 100% even
+  //      if the rest of the calendar window was vacation.
+  //   3. A user who took a vacation and did nothing on active days gets 0%
+  //      (vacation alone shouldn't grant credit).
+  const habits = [makeHabit('h1', 'boolean')];
+
+  test('range with vacation days excluded → smaller active window, full credit on active days', () => {
+    const allDates = makeDates(30);
+    // Caller (useQuestScores) has already filtered out vacation dates;
+    // pass only the 23 active days.
+    const activeDates = allDates.slice(0, 23);
+    const entries = activeDates.map((d) => [`h1_${d}`, true] as [string, any]);
+    const result = scoreQuest(makeQuest(), habits, makeRecordIndex(entries), activeDates);
+    expect(result.completedDays).toBe(23);
+    // target = round(7/7 * 23) = 23 → 23/23 = 100%
+    expect(result.targetDays).toBe(23);
+    expect(result.score).toBe(100);
+  });
+
+  test('vacation user with zero active completions → 0%, no spurious credit', () => {
+    const allDates = makeDates(30);
+    const activeDates = allDates.slice(0, 5); // 25 days vacation, 5 active
+    const result = scoreQuest(makeQuest(), habits, new Map(), activeDates);
+    expect(result.completedDays).toBe(0);
+    expect(result.targetDays).toBe(5);
+    expect(result.score).toBe(0);
+  });
+
+  test('partial completion within active window scales correctly', () => {
+    const allDates = makeDates(30);
+    const activeDates = allDates.slice(0, 14); // 14-day active window
+    // 7 done out of 14 active days = 50% with a 7x/wk target.
+    const entries = activeDates.slice(0, 7).map((d) => [`h1_${d}`, true] as [string, any]);
+    const result = scoreQuest(makeQuest(), habits, makeRecordIndex(entries), activeDates);
+    expect(result.completedDays).toBe(7);
+    expect(result.targetDays).toBe(14); // round(7/7 * 14)
+    expect(result.score).toBe(50);
+  });
+
+  test('reduce quest with vacation days: only active days count toward the window', () => {
+    const allDates = makeDates(30);
+    const activeDates = allDates.slice(0, 10); // 10 active days
+    const quest = makeQuest({ questType: 'reduce' });
+    // No habit done at all on the 10 active days → 100% (all good days).
+    const result = scoreQuest(quest, habits, new Map(), activeDates);
+    expect(result.completedDays).toBe(10);
+    expect(result.score).toBe(100);
+  });
+});

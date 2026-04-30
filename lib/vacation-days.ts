@@ -22,6 +22,34 @@ export function buildDateRange(startStr: string, endStr: string): string[] {
 }
 
 /**
+ * Walk forward and backward from `dateStr` collecting every consecutive
+ * date that's also in `dateSet`. Returns the contiguous block (in order)
+ * containing `dateStr`. If `dateStr` itself isn't in `dateSet`, returns
+ * an empty array.
+ *
+ * Pure function pulled out of `useVacationDays` so it's testable on its
+ * own. The hook just wraps this with its current Map.
+ */
+export function getContiguousBlock(dateStr: string, dateSet: Set<string>): string[] {
+  if (!dateSet.has(dateStr)) return [];
+  const block: string[] = [dateStr];
+
+  let cursor = addDays(dateStr, -1);
+  while (dateSet.has(cursor)) {
+    block.unshift(cursor);
+    cursor = addDays(cursor, -1);
+  }
+
+  cursor = addDays(dateStr, 1);
+  while (dateSet.has(cursor)) {
+    block.push(cursor);
+    cursor = addDays(cursor, 1);
+  }
+
+  return block;
+}
+
+/**
  * Mark each date in `dates` as a vacation day for the user, **skipping**
  * dates that already have a vacation record. Returns the new dates that
  * were actually created.

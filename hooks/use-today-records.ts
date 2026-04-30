@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { db, doc, setDoc, query, collection, where, onSnapshot } from '@/lib/firebase/firestore';
-import { getTodayString } from '@/lib/date-utils';
 import { useTodayDate } from '@/hooks/use-today-date';
 import type { HabitRecord, TripleValue, QuadValue } from '@/types/habit';
 

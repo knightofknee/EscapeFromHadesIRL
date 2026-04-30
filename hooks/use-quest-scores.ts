@@ -47,7 +47,13 @@ export function scoreQuest(
   dates: string[],
 ): QuestScore {
   const linkedHabits = habits.filter((h) => quest.linkedHabitIds.includes(h.id));
-  const targetDays = Math.max(1, Math.round((quest.targetDaysPerWeek / 7) * WINDOW_DAYS));
+  // Window size = number of *active* days (vacation days are stripped
+  // upstream by the caller). Target scales with the active window so a
+  // user on vacation isn't punished — e.g. a 7-day-per-week quest needs
+  // the user to do it every active day, regardless of how many vacation
+  // days were excluded from the window.
+  const windowDays = Math.max(1, dates.length);
+  const targetDays = Math.max(1, Math.round((quest.targetDaysPerWeek / 7) * windowDays));
 
   let completedDays = 0;
   let doubleDays = 0;
@@ -138,7 +144,7 @@ export function scoreQuest(
   const executionPct =
     quest.questType === 'positive'
       ? Math.min(100, Math.round((completedDays / targetDays) * 100))
-      : Math.round((completedDays / WINDOW_DAYS) * 100);
+      : Math.round((completedDays / windowDays) * 100);
 
   // Level bonus: goal days add 0.5 extra, ideal days add 1.0 extra (on top of goal bonus)
   let score = executionPct;
@@ -155,9 +161,19 @@ export function useQuestScores(
   quests: Quest[],
   habits: Habit[],
   records: HabitRecord[],
+  vacationSet?: Set<string>,
 ): QuestScores {
   return useMemo(() => {
-    const dates = getWindowDates();
+    // Vacation days are removed from the timeline before scoring — the
+    // user "wasn't tracking" those days, so they shouldn't count for or
+    // against the quest. scoreQuest scales targetDays to the active
+    // window length, so a 7-day vacation just shrinks the window from
+    // 30 → 23 days; the user still has to hit their per-week rate on
+    // active days.
+    const allDates = getWindowDates();
+    const dates = vacationSet
+      ? allDates.filter((d) => !vacationSet.has(d))
+      : allDates;
 
     // Build record index: habitId_date → record
     const recordIndex = new Map<string, HabitRecord>();
@@ -186,5 +202,5 @@ export function useQuestScores(
     const runScore = Math.round(totalScore * multiplier);
 
     return { byQuest, foundationCount, runScore };
-  }, [quests, habits, records]);
+  }, [quests, habits, records, vacationSet]);
 }

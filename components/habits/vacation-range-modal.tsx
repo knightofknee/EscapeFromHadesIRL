@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, StyleSheet, View } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
@@ -9,6 +9,9 @@ import { buildDateRange } from '@/lib/vacation-days';
 
 type VacationRangeModalProps = {
   visible: boolean;
+  /** Default both pickers to this date when the modal opens. Falls back
+      to today if omitted. */
+  defaultDate?: string;
   onCancel: () => void;
   onConfirm: (startDate: string, endDate: string) => void | Promise<void>;
 };
@@ -71,6 +74,7 @@ function DateStepper({
 
 export function VacationRangeModal({
   visible,
+  defaultDate,
   onCancel,
   onConfirm,
 }: VacationRangeModalProps) {
@@ -78,36 +82,48 @@ export function VacationRangeModal({
   const colors = Colors[colorScheme ?? 'light'];
   const blue = colors.vacationButton;
   const { todayStr } = useTodayDate();
+  const initialDate = defaultDate ?? todayStr;
 
-  const [startDate, setStartDate] = useState(todayStr);
-  const [endDate, setEndDate] = useState(todayStr);
+  const [startDate, setStartDate] = useState(initialDate);
+  const [endDate, setEndDate] = useState(initialDate);
   const [submitting, setSubmitting] = useState(false);
 
-  // Reset to today every time the modal opens.
+  // Reset to the caller's chosen default every time the modal opens.
   useEffect(() => {
     if (visible) {
-      setStartDate(todayStr);
-      setEndDate(todayStr);
+      setStartDate(initialDate);
+      setEndDate(initialDate);
       setSubmitting(false);
     }
-  }, [visible, todayStr]);
+  }, [visible, initialDate]);
 
-  // Auto-swap so internal state is always start ≤ end. We display the
-  // *post-swap* values back to the user, which makes the UI feel like
-  // the dates "snap into order" silently.
-  const [orderedStart, orderedEnd] = useMemo(() => {
-    return startDate <= endDate ? [startDate, endDate] : [endDate, startDate];
-  }, [startDate, endDate]);
+  // Maintain `start ≤ end` invariant by *dragging the other side along*
+  // when the edited side would cross over. So clicking "next" on start
+  // when start === end advances BOTH (one-day range stays one day at the
+  // new date) — it doesn't silently move the end stepper instead.
+  const handleStartChange = useCallback((next: string) => {
+    setStartDate(next);
+    setEndDate((prev) => (next > prev ? next : prev));
+  }, []);
+
+  const handleEndChange = useCallback((next: string) => {
+    setEndDate(next);
+    setStartDate((prev) => (next < prev ? next : prev));
+  }, []);
 
   const dayCount = useMemo(() => {
-    return buildDateRange(orderedStart, orderedEnd).length;
-  }, [orderedStart, orderedEnd]);
+    return buildDateRange(startDate, endDate).length;
+  }, [startDate, endDate]);
 
   async function handleConfirm() {
     if (submitting) return;
     setSubmitting(true);
     try {
-      await onConfirm(orderedStart, orderedEnd);
+      await onConfirm(startDate, endDate);
+    } catch (err) {
+      // Surface failures (rules denial, network) instead of swallowing
+      // them silently. The modal stays open so the user can retry.
+      console.error('Failed to create vacation days:', err);
     } finally {
       setSubmitting(false);
     }
@@ -120,33 +136,30 @@ export function VacationRangeModal({
       animationType="fade"
       onRequestClose={onCancel}
     >
-      <View style={styles.overlay}>
-        <View style={[styles.content, { backgroundColor: colors.tileBackground }]}>
+      {/* Tap-outside-to-dismiss: outer Pressable handles backdrop taps,
+          inner Pressable stops propagation so taps inside the sheet
+          don't close it. */}
+      <Pressable style={styles.overlay} onPress={onCancel}>
+        <Pressable
+          style={[styles.content, { backgroundColor: colors.tileBackground }]}
+          onPress={(e) => e.stopPropagation()}
+        >
           <ThemedText type="defaultSemiBold" style={styles.title}>
             Set Vacation Days
           </ThemedText>
 
           <DateStepper
             label="Start"
-            date={orderedStart}
-            onChange={(next) => {
-              // If user is editing what's currently the "start" position,
-              // keep its identity (orderedStart === startDate) by writing
-              // back to whichever state holds the smaller date.
-              if (startDate <= endDate) setStartDate(next);
-              else setEndDate(next);
-            }}
+            date={startDate}
+            onChange={handleStartChange}
             accentColor={blue}
             textColor={colors.text}
           />
 
           <DateStepper
             label="End"
-            date={orderedEnd}
-            onChange={(next) => {
-              if (startDate <= endDate) setEndDate(next);
-              else setStartDate(next);
-            }}
+            date={endDate}
+            onChange={handleEndChange}
             accentColor={blue}
             textColor={colors.text}
           />
@@ -175,8 +188,8 @@ export function VacationRangeModal({
               </ThemedText>
             </Pressable>
           </View>
-        </View>
-      </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }

@@ -11,9 +11,27 @@ type VacationTileProps = {
   onLongPress: () => void;
 };
 
+// Tile inner padding (must match `tile.padding` in styles below).
+const TILE_PADDING = 24;
+// Empirical: a bold sans-serif glyph is roughly this fraction of fontSize wide.
+// Tuned so "Arizona" fits a typical phone-width tile without breaking.
+const CHAR_WIDTH_FACTOR = 0.58;
+// Line height multiplier (RN default ≈ 1.2 for bold).
+const LINE_HEIGHT_FACTOR = 1.15;
+// Floor / ceiling for the computed font size.
+const FONT_FLOOR = 16;
+const FONT_CEILING = 320;
+
 /**
- * Single full-grid tile rendered in place of the habit grid when the
- * viewed day is a vacation day. Long-press opens the edit modal.
+ * Full-grid tile that replaces the habit grid on a vacation day.
+ * Visual treatment matches the regular habit tile (see tile-grid.tsx):
+ *   - tileBackground fill (theme-aware)
+ *   - 2px colored border in the user's vacation color
+ *   - centered label rendered in the same color as the border
+ *
+ * Sizing rule: the **longest word** must fit on a single line, period.
+ * We compute the font size from measured tile dimensions so RN never
+ * needs to mid-word break — multi-word labels just wrap at spaces.
  */
 export function VacationTile({ label, color, onLongPress }: VacationTileProps) {
   const colorScheme = useColorScheme();
@@ -24,16 +42,19 @@ export function VacationTile({ label, color, onLongPress }: VacationTileProps) {
     setSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height });
   }, []);
 
-  // Auto-shrink: choose font size so the longest line fits horizontally
-  // and the whole text fits vertically. Floor at 16pt so very long labels
-  // wrap rather than vanish.
-  const fontSize = computeFontSize(label, size.w, size.h);
-  const lineHeight = fontSize * 1.1;
+  const trimmed = (label ?? '').trim() || 'V';
+  const fontSize = computeFontSize(trimmed, size.w, size.h);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.gridBackground }]}>
       <Pressable
-        style={[styles.tile, { backgroundColor: color }]}
+        style={[
+          styles.tile,
+          {
+            backgroundColor: colors.tileBackground,
+            borderColor: color,
+          },
+        ]}
         onLayout={handleLayout}
         onLongPress={() => {
           if (Platform.OS === 'ios' && !Platform.isPad) {
@@ -42,15 +63,14 @@ export function VacationTile({ label, color, onLongPress }: VacationTileProps) {
           onLongPress();
         }}
         delayLongPress={GRID.dragActivationDelay}
-        accessibilityLabel={`Vacation day: ${label}. Long press to edit.`}
+        accessibilityLabel={`Vacation day: ${trimmed}. Long press to edit.`}
       >
         {size.w > 0 && size.h > 0 && (
           <Text
-            style={[styles.label, { fontSize, lineHeight }]}
-            adjustsFontSizeToFit
-            numberOfLines={0}
+            style={[styles.label, { color, fontSize }]}
+            allowFontScaling={false}
           >
-            {label}
+            {trimmed}
           </Text>
         )}
       </Pressable>
@@ -59,25 +79,33 @@ export function VacationTile({ label, color, onLongPress }: VacationTileProps) {
 }
 
 /**
- * Heuristic font sizing for the V tile. With short labels (e.g. "V") we
- * want a giant glyph; with long labels we shrink down to a 16pt floor
- * and let RN wrap onto multiple lines.
+ * Pick a font size that:
+ *   1. Lets the longest single word fit on one line of the tile width.
+ *   2. Lets the worst-case word-per-line layout fit vertically.
+ * The smaller of the two bounds wins. Capped at FONT_CEILING for short
+ * labels (so "V" doesn't try to render at 1000pt on a tall tile) and
+ * floored at FONT_FLOOR for very long labels.
  */
 function computeFontSize(label: string, width: number, height: number): number {
-  if (width === 0 || height === 0) return 64;
-  const trimmed = label.trim() || 'V';
-  const longestLine = Math.max(...trimmed.split('\n').map((l) => l.length));
-  const len = Math.max(longestLine, 1);
+  if (!width || !height) return 64;
 
-  // Width-bounded size: assume an avg glyph ≈ 0.6 * fontSize wide.
-  const widthBound = (width * 0.85) / (len * 0.6);
-  // Height-bounded size: leave room for at least one line, more if wrapping.
-  const totalLines = Math.max(trimmed.split('\n').length, Math.ceil(len / 12));
-  const heightBound = (height * 0.85) / (totalLines * 1.1);
+  const innerW = Math.max(width - TILE_PADDING * 2, 1);
+  const innerH = Math.max(height - TILE_PADDING * 2, 1);
+
+  const words = label.split(/\s+/).filter(Boolean);
+  const longestWord = words.reduce((max, w) => Math.max(max, w.length), 1);
+  const wordCount = Math.max(words.length, 1);
+
+  // Width bound: longest word fits on one line.
+  const widthBound = innerW / (longestWord * CHAR_WIDTH_FACTOR);
+
+  // Height bound: worst case = each word on its own line. Conservative;
+  // RN may pack multiple short words per line, in which case we'll just
+  // use slightly more vertical space than necessary.
+  const heightBound = innerH / (wordCount * LINE_HEIGHT_FACTOR);
 
   const target = Math.min(widthBound, heightBound);
-  // Floor 16, ceiling 240.
-  return Math.max(16, Math.min(240, target));
+  return Math.max(FONT_FLOOR, Math.min(FONT_CEILING, target));
 }
 
 const styles = StyleSheet.create({
@@ -88,9 +116,10 @@ const styles = StyleSheet.create({
   tile: {
     flex: 1,
     borderRadius: 8,
+    borderWidth: 2,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 16,
+    padding: TILE_PADDING,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
@@ -98,8 +127,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   label: {
-    color: '#fff',
-    fontWeight: '700',
+    fontWeight: '800',
     textAlign: 'center',
   },
 });

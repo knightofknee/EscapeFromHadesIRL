@@ -134,10 +134,17 @@ export function VacationEditModal({
       onRequestClose={onClose}
     >
       <KeyboardAvoidingView
-        style={styles.overlay}
+        style={styles.kav}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <View style={[styles.content, { backgroundColor: colors.tileBackground }]}>
+        {/* Tap-outside-to-dismiss: outer Pressable handles backdrop taps,
+            inner Pressable stops propagation so taps inside the sheet
+            don't close it. */}
+        <Pressable style={styles.overlay} onPress={onClose}>
+          <Pressable
+            style={[styles.content, { backgroundColor: colors.tileBackground }]}
+            onPress={(e) => e.stopPropagation()}
+          >
           <ThemedText type="defaultSemiBold" style={styles.title}>
             Edit Vacation Day
           </ThemedText>
@@ -240,18 +247,19 @@ export function VacationEditModal({
             </Pressable>
           </View>
 
-          <Pressable
-            style={[styles.removeButton, { borderColor: colors.tint }]}
-            onPress={handleRemove}
-            disabled={submitting}
-          >
-            <ThemedText style={[styles.removeText, { color: colors.tint }]}>
-              {scope === 'block' && hasBlock
-                ? `Remove vacation (${blockSize} days)`
-                : 'Remove vacation'}
-            </ThemedText>
+            <Pressable
+              style={[styles.removeButton, { borderColor: colors.tint }]}
+              onPress={handleRemove}
+              disabled={submitting}
+            >
+              <ThemedText style={[styles.removeText, { color: colors.tint }]}>
+                {scope === 'block' && hasBlock
+                  ? `Remove vacation (${blockSize} days)`
+                  : 'Remove vacation'}
+              </ThemedText>
+            </Pressable>
           </Pressable>
-        </View>
+        </Pressable>
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -268,6 +276,9 @@ function prettyDate(dateStr: string): string {
 }
 
 const styles = StyleSheet.create({
+  kav: {
+    flex: 1,
+  },
   overlay: {
     flex: 1,
     justifyContent: 'center',

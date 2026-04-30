@@ -7,8 +7,10 @@ import {
   where,
   onSnapshot,
 } from '@/lib/firebase/firestore';
-import { addDays } from '@/lib/date-utils';
-import { VACATION_COLLECTION } from '@/lib/vacation-days';
+import {
+  VACATION_COLLECTION,
+  getContiguousBlock as getContiguousBlockPure,
+} from '@/lib/vacation-days';
 import type { VacationDay } from '@/types/habit';
 
 /**
@@ -58,28 +60,10 @@ export function useVacationDays() {
    * Returns the full contiguous run of vacation dates that contains
    * `dateStr` (inclusive). If `dateStr` itself is not a vacation day,
    * returns an empty array. Used by "apply to full vacation" edits.
+   * Logic lives in lib/vacation-days for testability.
    */
   const getContiguousBlock = useCallback(
-    (dateStr: string): string[] => {
-      if (!dateSet.has(dateStr)) return [];
-      const block: string[] = [dateStr];
-
-      // walk backward
-      let cursor = addDays(dateStr, -1);
-      while (dateSet.has(cursor)) {
-        block.unshift(cursor);
-        cursor = addDays(cursor, -1);
-      }
-
-      // walk forward
-      cursor = addDays(dateStr, 1);
-      while (dateSet.has(cursor)) {
-        block.push(cursor);
-        cursor = addDays(cursor, 1);
-      }
-
-      return block;
-    },
+    (dateStr: string): string[] => getContiguousBlockPure(dateStr, dateSet),
     [dateSet],
   );
 

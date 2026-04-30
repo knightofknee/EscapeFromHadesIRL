@@ -4,6 +4,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { formatDate } from '@/lib/date-utils';
+import { readableTextOn } from '@/lib/contrast';
 import type { Habit, HabitRecord, TripleValue, QuadValue, VacationDay } from '@/types/habit';
 import type { SuccessColors } from '@/hooks/use-success-colors';
 
@@ -65,7 +66,7 @@ export function WeekColumn({ date, isToday, habits, records, onTapHabit, success
         <View style={styles.tiles}>
           <View style={[styles.vacationTile, { backgroundColor: vacation.color }]}>
             <ThemedText
-              style={styles.vacationLabel}
+              style={[styles.vacationLabel, { color: readableTextOn(vacation.color) }]}
               numberOfLines={2}
               ellipsizeMode="tail"
             >
@@ -149,7 +150,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   vacationLabel: {
-    color: '#fff',
     fontSize: 14,
     fontWeight: '700',
     textAlign: 'center',

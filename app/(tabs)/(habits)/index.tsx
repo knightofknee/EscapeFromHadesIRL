@@ -11,6 +11,7 @@ import Animated, {
   Easing,
 } from 'react-native-reanimated';
 import { router, useFocusEffect } from 'expo-router';
+import Svg, { Rect } from 'react-native-svg';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TileGrid } from '@/components/habits/tile-grid';
@@ -245,8 +246,9 @@ export default function HabitsDayScreen() {
             <Pressable
               style={[styles.statsButton, { backgroundColor: colors.tint }]}
               onPress={() => router.push('/(tabs)/(habits)/stats')}
+              accessibilityLabel="View stats"
             >
-              <ThemedText style={styles.statsButtonText}>📊</ThemedText>
+              <StatsIcon size={22} />
             </Pressable>
           </View>
         </View>
@@ -324,6 +326,8 @@ export default function HabitsDayScreen() {
         <QuickInputModal
           visible={valueInputHabit != null}
           title={valueInputHabit?.name ?? 'Enter Value'}
+          keyboardType="numeric"
+          showStepper
           onSubmit={handleValueSubmit}
           onCancel={() => setValueInputHabit(null)}
         />
@@ -336,6 +340,7 @@ export default function HabitsDayScreen() {
 
         <VacationRangeModal
           visible={vacationRangeVisible}
+          defaultDate={viewedDate}
           onCancel={() => setVacationRangeVisible(false)}
           onConfirm={async (startDate, endDate) => {
             if (!user) return;
@@ -364,6 +369,45 @@ export default function HabitsDayScreen() {
         )}
       </ThemedView>
     </SafeAreaView>
+  );
+}
+
+// Custom 4-bar stats icon. Each bar is colored individually (Ionicons
+// is a font glyph and only takes one tint). Bar colors are pulled from
+// the app's TILE_COLORS palette so the icon is on-brand. The colors are
+// saturated enough to read clearly against both the light-mode tint
+// (#E74C3C) and the dark-mode tint (#EF5350) — same icon, no theme swap
+// needed because the surrounding circle handles the theme adaptation.
+const STATS_BAR_COLORS = [
+  '#F1C40F', // yellow
+  '#1ABC9C', // teal
+  '#00BCD4', // cyan
+  '#2ECC71', // green
+];
+
+function StatsIcon({ size = 22 }: { size?: number }) {
+  // viewBox 24×24, 4 bars 3px wide on a 5px-pitch grid, baseline at y=21.
+  // Heights vary up and down (10 → peak 18 → dip 6 → recovery 14) so it
+  // reads as a data visualization, not a cell-signal indicator.
+  const bars = [
+    { x: 3,  y: 11, h: 10 },
+    { x: 8,  y: 3,  h: 18 },
+    { x: 13, y: 15, h: 6  },
+    { x: 18, y: 7,  h: 14 },
+  ];
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      {bars.map((bar, i) => (
+        <Rect
+          key={i}
+          x={bar.x}
+          y={bar.y}
+          width={3}
+          height={bar.h}
+          fill={STATS_BAR_COLORS[i]}
+        />
+      ))}
+    </Svg>
   );
 }
 
@@ -407,9 +451,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  statsButtonText: {
-    fontSize: 18,
   },
   headerActions: {
     flexDirection: 'row',
