@@ -326,7 +326,14 @@ export default function HabitsDayScreen() {
         <QuickInputModal
           visible={valueInputHabit != null}
           title={valueInputHabit?.name ?? 'Enter Value'}
-          keyboardType="numeric"
+          // Pre-fill with the current value (or "0" if no record yet) so
+          // the user is editing/incrementing — not entering from blank.
+          initialValue={(() => {
+            if (!valueInputHabit) return '';
+            const v = records.get(valueInputHabit.id)?.value;
+            return v == null || v === '' ? '0' : String(v);
+          })()}
+          keyboardType="decimal-pad"
           showStepper
           onSubmit={handleValueSubmit}
           onCancel={() => setValueInputHabit(null)}

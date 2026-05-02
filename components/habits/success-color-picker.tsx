@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { StyleSheet, View, Pressable, ScrollView } from 'react-native';
+import { StyleSheet, View, Pressable } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useSuccessColors, DEFAULT_SUCCESS_COLORS } from '@/hooks/use-success-colors';
+import { useSuccessColors } from '@/hooks/use-success-colors';
 import type { SuccessLevel } from '@/hooks/use-success-colors';
 
 const PALETTE = [
@@ -76,7 +76,7 @@ export function SuccessColorPicker() {
       {editingLevel && (
         <View style={styles.paletteSection}>
           <ThemedText style={[styles.paletteLabel, { color: themeColors.icon }]}>
-            Pick a color for "{LEVEL_LABELS[editingLevel]}"
+            Pick a color for &ldquo;{LEVEL_LABELS[editingLevel]}&rdquo;
           </ThemedText>
           <View style={styles.paletteGrid}>
             {PALETTE.map((color) => {

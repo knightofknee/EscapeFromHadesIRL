@@ -17,12 +17,34 @@ type NoteEditorProps = {
   onBlur?: () => void;
   onOpenTagPicker?: () => void;
   onTouchStart?: (e: { nativeEvent: { pageY: number } }) => void;
+  /**
+   * Fires whenever the content's measured height OR the cursor position
+   * changes. Used by the parent screen to scroll the page so the cursor
+   * stays visible while typing — without this, hitting Enter pushes the
+   * cursor below the keyboard with no auto-follow.
+   */
+  onContentMetricsChange?: (metrics: {
+    /** Pixel height of the multiline content TextInput. */
+    contentHeight: number;
+    /** Cursor's character position from the start of content. */
+    cursorPos: number;
+    /** True if the cursor is at (or within a few chars of) the end. */
+    cursorAtEnd: boolean;
+  }) => void;
 };
 
 export type NoteEditorHandle = {
   applyStrikethrough: () => void;
   applyBullets: () => void;
   applyNumberedList: () => void;
+  /**
+   * Snapshot of the editor's *local* content — including any unsaved
+   * typing that hasn't yet been debounced into Firestore. The parent's
+   * `note.content` prop can lag this by up to 500ms, so callers (notably
+   * the text↔checklist toggle parsing the content into items) should
+   * prefer this over `note.content` to avoid losing recent edits.
+   */
+  getLatestContent: () => string;
 };
 
 // U+0336 is the Unicode combining long stroke overlay — visually strikes through
@@ -122,6 +144,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     onBlur,
     onOpenTagPicker,
     onTouchStart,
+    onContentMetricsChange,
   },
   ref,
 ) {
@@ -133,6 +156,23 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
   const colors = Colors[colorScheme ?? 'light'];
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const contentRef = useRef<TextInput>(null);
+  // Last measured pixel height of the content TextInput. Stored in a
+  // ref so the contentSizeChange and selectionChange handlers can both
+  // read the current value without scheduling re-renders.
+  const lastContentHeightRef = useRef(0);
+  // Threshold (in chars) for "cursor is at end" — a small slack lets
+  // typing past trailing whitespace still count as appending.
+  const END_SLACK = 5;
+  function emitMetrics(opts: { contentHeight?: number; cursorPos?: number; contentLength?: number }) {
+    const contentHeight = opts.contentHeight ?? lastContentHeightRef.current;
+    const cursorPos = opts.cursorPos ?? selection.end;
+    const contentLength = opts.contentLength ?? content.length;
+    onContentMetricsChange?.({
+      contentHeight,
+      cursorPos,
+      cursorAtEnd: cursorPos >= contentLength - END_SLACK,
+    });
+  }
 
   useEffect(() => {
     setTitle(note.title);
@@ -226,7 +266,13 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
   }
 
   function handleSelectionChange(e: NativeSyntheticEvent<TextInputSelectionChangeEventData>) {
-    setSelection(e.nativeEvent.selection);
+    const sel = e.nativeEvent.selection;
+    setSelection(sel);
+    // Forward to parent so the page can scroll-follow the cursor while
+    // typing. Uses current `content.length` because contentChange may
+    // not have fired yet for this keystroke (selection often updates
+    // first on iOS).
+    emitMetrics({ cursorPos: sel.end, contentLength: content.length });
   }
 
   function applyFormatting(result: { content: string; newSelection: { start: number; end: number } }) {
@@ -239,10 +285,19 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     contentRef.current?.focus();
   }
 
+  // Mirror `content` into a ref so `getLatestContent()` always returns
+  // the latest committed state, even when the imperative handle's
+  // closure was created on an earlier render.
+  const contentValueRef = useRef(content);
+  useEffect(() => {
+    contentValueRef.current = content;
+  }, [content]);
+
   useImperativeHandle(ref, () => ({
     applyStrikethrough: () => applyFormatting(formatStrikethrough(content, selection)),
     applyBullets: () => applyFormatting(toggleList(content, selection, 'bullet')),
     applyNumberedList: () => applyFormatting(toggleList(content, selection, 'number')),
+    getLatestContent: () => contentValueRef.current,
   }));
 
   const noteTagIds = [...new Set(note.tags.map((t) => t.tagId))];
@@ -317,6 +372,11 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
         onFocus={onFocus}
         onBlur={onBlur}
         onTouchStart={onTouchStart}
+        onContentSizeChange={(e) => {
+          const h = e.nativeEvent.contentSize.height;
+          lastContentHeightRef.current = h;
+          emitMetrics({ contentHeight: h });
+        }}
       />
     </View>
   );

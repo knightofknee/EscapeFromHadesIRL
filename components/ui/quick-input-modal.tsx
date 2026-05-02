@@ -48,11 +48,17 @@ export function QuickInputModal({
   // Step by +/- delta, parsing whatever numeric string is in the field.
   // Floors at 0 (habit values are conventionally non-negative). Empty
   // field treated as 0, so first tap of "+" yields "1".
+  //
+  // The Math.round(... * 1e10) / 1e10 trick rounds to 10 decimal places.
+  // This kills IEEE 754 binary-float artifacts (e.g. 2.2 - 1 evaluating
+  // to 1.2000000000000002) which always show up around digit 15–16,
+  // without losing any precision a user would actually type.
   const handleStep = useCallback(
     (delta: number) => {
       const current = parseFloat(value);
       const safeCurrent = Number.isFinite(current) ? current : 0;
-      const next = Math.max(0, safeCurrent + delta);
+      const stepped = Math.round((safeCurrent + delta) * 1e10) / 1e10;
+      const next = Math.max(0, stepped);
       setValue(String(next));
     },
     [value],

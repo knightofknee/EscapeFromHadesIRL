@@ -18,12 +18,17 @@ import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { NoteEditor, type NoteEditorHandle } from '@/components/notes/note-editor';
+import { ChecklistEditor, type ChecklistEditorHandle } from '@/components/notes/checklist-editor';
 import { TagPicker } from '@/components/notes/tag-picker';
 import { useNotes } from '@/hooks/use-notes';
 import { useTags } from '@/hooks/use-tags';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import type { InlineTag } from '@/types/note';
+import type { ChecklistItem, InlineTag } from '@/types/note';
+import {
+  formatChecklistAsText,
+  parseChecklistFromText,
+} from '@/lib/checklist-format';
 
 const DISMISS_BAR_HEIGHT = 40;
 // Two-line clearance below the cursor, above the dismiss bar.
@@ -44,6 +49,13 @@ export default function NoteEditorScreen() {
 
   // Ref to NoteEditor for imperative formatting commands
   const noteEditorRef = useRef<NoteEditorHandle>(null);
+  // Ref to ChecklistEditor (only valid when in checklist mode)
+  const checklistEditorRef = useRef<ChecklistEditorHandle>(null);
+  // Set when the user just hit the Checklist toggle (text → checklist).
+  // Watched by an effect below to focus the first item once
+  // ChecklistEditor has actually mounted (the Firestore round-trip means
+  // the type transition is async, so we can't focus inline).
+  const justToggledToChecklist = useRef(false);
 
   // Animated scroll ref — required for scrollTo worklet from Reanimated.
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
@@ -53,6 +65,10 @@ export default function NoteEditorScreen() {
   const scrollDelta = useSharedValue(0);
   const targetKbHeight = useSharedValue(0);
   const keyboardIsOpen = useSharedValue(0); // 0 closed, 1 opening/open
+  // Last reported pixel height of the editor's content TextInput.
+  // Used by the cursor-follow logic to detect content growth (Enter
+  // adds a line height; typing wraps at line ends).
+  const lastContentHeight = useSharedValue(0);
 
   const scrollHandler = useAnimatedScrollHandler({
     onScroll: (e) => {
@@ -103,6 +119,47 @@ export default function NoteEditorScreen() {
     tapY.value = e.nativeEvent.pageY;
   }, [tapY]);
 
+  // Cursor-follow while typing. Fires on every contentSize change (Enter,
+  // wrap, paste) and every selection change (cursor move). When the
+  // content grows AND the cursor is at/near the end, scroll the page by
+  // the growth delta — this is what keeps the cursor visible while you
+  // type instead of letting it slide below the keyboard.
+  //
+  // CRITICAL: Reanimated's `scrollTo` worklet only works from the UI
+  // thread. This callback runs on JS, so we call the ScrollView's
+  // imperative `scrollTo` method via the ref instead. (Earlier version
+  // called `scrollTo(ref, ...)` from JS — silently no-op'd.)
+  //
+  // We only follow when cursor is at the end because mid-content edits
+  // also grow content but should NOT scroll the user away from where
+  // they're editing.
+  const handleContentMetrics = useCallback(
+    (m: { contentHeight: number; cursorPos: number; cursorAtEnd: boolean }) => {
+      // First measurement after mount — record the height, never scroll.
+      // Otherwise the initial 0 → real-height delta would scroll a lot.
+      if (lastContentHeight.value === 0 || m.contentHeight === 0) {
+        lastContentHeight.value = m.contentHeight;
+        return;
+      }
+      // Keyboard not up → just track height. Nothing to follow.
+      if (keyboardIsOpen.value !== 1) {
+        lastContentHeight.value = m.contentHeight;
+        return;
+      }
+      const delta = m.contentHeight - lastContentHeight.value;
+      lastContentHeight.value = m.contentHeight;
+      if (delta > 0 && m.cursorAtEnd) {
+        const next = scrollOffset.value + delta;
+        // ScrollView's native imperative scrollTo — JS-callable. The
+        // useAnimatedRef returns an object whose .current is the actual
+        // ScrollView instance, so this hits the same RCT method as a
+        // regular ref would.
+        scrollRef.current?.scrollTo({ y: next, animated: false });
+      }
+    },
+    [keyboardIsOpen, lastContentHeight, scrollOffset, scrollRef],
+  );
+
   // Dismiss bar slides with keyboard via Reanimated
   const animatedBarStyle = useAnimatedStyle(() => ({
     transform: [{
@@ -119,7 +176,13 @@ export default function NoteEditorScreen() {
   useEffect(() => {
     const unsubscribe = navigation.addListener('beforeRemove', () => {
       const n = noteRef.current;
-      if (n && !n.title.trim() && !n.content.trim()) {
+      if (!n) return;
+      // Per spec: empty checklist notes should NOT auto-delete (the user
+      // explicitly chose checklist mode; "Empty checklist" is a valid
+      // state). Only text-mode (or untyped) notes get auto-killed when
+      // both title and content are empty.
+      if (n.type === 'checklist') return;
+      if (!n.title.trim() && !n.content.trim()) {
         deleteNote(n.id);
       }
     });
@@ -146,6 +209,85 @@ export default function NoteEditorScreen() {
     },
     [id, updateNote],
   );
+
+  const handleUpdateDescription = useCallback(
+    (description: string) => {
+      if (id) updateNote(id, { description });
+    },
+    [id, updateNote],
+  );
+
+  const handleUpdateChecklist = useCallback(
+    (checklist: ChecklistItem[]) => {
+      if (id) updateNote(id, { checklist });
+    },
+    [id, updateNote],
+  );
+
+  // Toggle between text and checklist modes. Round-trip is data-preserving:
+  //   text → checklist: parse the bottom of `content` for markdown checkbox
+  //                     lines as items; everything above becomes description.
+  //   checklist → text: dump description + items as markdown content. The
+  //                     dump format is round-trip parseable so a clean cycle
+  //                     restores everything exactly.
+  const handleToggleType = useCallback(() => {
+    if (!id || !note) return;
+    // Dismiss keyboard before swapping editors. Without this, the
+    // currently-focused input (NoteEditor's content or a checklist row)
+    // briefly fights with the new editor's focus call, producing a
+    // keyboard flicker as focus is yanked across the unmount.
+    Keyboard.dismiss();
+    const isChecklist = note.type === 'checklist';
+    if (isChecklist) {
+      // Going checklist → text. Pull the freshest description + items
+      // from the editor's local state — the `note` prop can lag by up
+      // to the save-debounce window, and reading the prop here would
+      // silently lose any in-flight typing. Falls back to prop values
+      // if the editor handle isn't available yet.
+      const latest = checklistEditorRef.current?.getLatestState();
+      const desc = latest?.description ?? note.description ?? '';
+      const items = latest?.items ?? note.checklist ?? [];
+      const dumped = formatChecklistAsText(desc, items);
+      updateNote(id, {
+        type: 'text',
+        content: dumped,
+        description: '',
+        checklist: [],
+      });
+    } else {
+      // Going text → checklist. Pull the freshest content from the
+      // editor's local state — `note.content` (the prop) can lag by up
+      // to the save-debounce window, so reading it would silently lose
+      // any in-flight typing. Falls back to the prop value if the
+      // editor handle isn't available yet.
+      const latestContent = noteEditorRef.current?.getLatestContent() ?? note.content ?? '';
+      const { description, items } = parseChecklistFromText(latestContent);
+      updateNote(id, {
+        type: 'checklist',
+        description,
+        checklist: items,
+        // Leave content as-is for safety. Active rendering branches on
+        // type, so the stale content is harmless until re-toggled.
+      });
+      // The type prop won't actually flip until the Firestore snapshot
+      // returns and re-renders. The effect below watches for that
+      // transition and focuses the first item once ChecklistEditor has
+      // mounted — a fixed-delay setTimeout was unreliable here.
+      justToggledToChecklist.current = true;
+    }
+  }, [id, note, updateNote]);
+
+  // Focus first item once ChecklistEditor has actually mounted following
+  // a text→checklist toggle. requestAnimationFrame defers one render
+  // tick so the new editor's refs are wired up.
+  useEffect(() => {
+    if (note?.type === 'checklist' && justToggledToChecklist.current) {
+      justToggledToChecklist.current = false;
+      requestAnimationFrame(() => {
+        checklistEditorRef.current?.focusFirstItem();
+      });
+    }
+  }, [note?.type]);
 
   const handleCreateTag = useCallback(
     async (name: string) => {
@@ -204,6 +346,23 @@ export default function NoteEditorScreen() {
             <IconSymbol name="chevron.left" size={22} color={'#3B82F6'} />
             <ThemedText style={[styles.headerButtonText, { color: '#3B82F6' }]}>Notes</ThemedText>
           </Pressable>
+          {/* Centered toggle: text ↔ checklist. Always visible — round-trip
+              is data-preserving via the markdown dump format. */}
+          <Pressable
+            onPress={handleToggleType}
+            style={styles.headerCenterButton}
+            hitSlop={8}
+            accessibilityLabel={
+              note.type === 'checklist'
+                ? 'Convert checklist back to text'
+                : 'Convert note to checklist'
+            }
+            accessibilityRole="button"
+          >
+            <ThemedText style={[styles.headerButtonText, { color: colors.tint }]}>
+              {note.type === 'checklist' ? 'Undo Checklist' : 'Checklist'}
+            </ThemedText>
+          </Pressable>
           <Pressable
             onPress={() => { setIsFocused(false); Keyboard.dismiss(); }}
             disabled={!isFocused}
@@ -230,19 +389,36 @@ export default function NoteEditorScreen() {
         automaticallyAdjustKeyboardInsets={false}
         contentInsetAdjustmentBehavior="never"
       >
-        <NoteEditor
-          ref={noteEditorRef}
-          note={note}
-          tags={tags}
-          isNew={isNew}
-          onUpdateTitle={handleUpdateTitle}
-          onUpdateContent={handleUpdateContent}
-          onUpdateTags={handleUpdateTags}
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => setIsFocused(false)}
-          onOpenTagPicker={() => setTagPickerOpen(true)}
-          onTouchStart={handleTouchStart}
-        />
+        {note.type === 'checklist' ? (
+          <ChecklistEditor
+            ref={checklistEditorRef}
+            note={note}
+            tags={tags}
+            onUpdateTitle={handleUpdateTitle}
+            onUpdateDescription={handleUpdateDescription}
+            onUpdateChecklist={handleUpdateChecklist}
+            onUpdateTags={handleUpdateTags}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
+            onOpenTagPicker={() => setTagPickerOpen(true)}
+            onTouchStart={handleTouchStart}
+          />
+        ) : (
+          <NoteEditor
+            ref={noteEditorRef}
+            note={note}
+            tags={tags}
+            isNew={isNew}
+            onUpdateTitle={handleUpdateTitle}
+            onUpdateContent={handleUpdateContent}
+            onUpdateTags={handleUpdateTags}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
+            onOpenTagPicker={() => setTagPickerOpen(true)}
+            onTouchStart={handleTouchStart}
+            onContentMetricsChange={handleContentMetrics}
+          />
+        )}
       </Animated.ScrollView>
 
       <Animated.View
@@ -254,27 +430,34 @@ export default function NoteEditorScreen() {
           animatedBarStyle,
         ]}
       >
-        <Pressable
-          onPress={() => noteEditorRef.current?.applyStrikethrough()}
-          style={styles.toolbarButton}
-          hitSlop={8}
-        >
-          <IconSymbol name="strikethrough" size={20} color={colors.icon} />
-        </Pressable>
-        <Pressable
-          onPress={() => noteEditorRef.current?.applyBullets()}
-          style={styles.toolbarButton}
-          hitSlop={8}
-        >
-          <IconSymbol name="list.bullet" size={20} color={colors.icon} />
-        </Pressable>
-        <Pressable
-          onPress={() => noteEditorRef.current?.applyNumberedList()}
-          style={styles.toolbarButton}
-          hitSlop={8}
-        >
-          <IconSymbol name="list.number" size={20} color={colors.icon} />
-        </Pressable>
+        {/* Markdown formatting toolbar applies only to text-mode notes.
+            In checklist mode the items are short single-line inputs and
+            formatting tools would conflict with the checklist semantics. */}
+        {note.type !== 'checklist' && (
+          <>
+            <Pressable
+              onPress={() => noteEditorRef.current?.applyStrikethrough()}
+              style={styles.toolbarButton}
+              hitSlop={8}
+            >
+              <IconSymbol name="strikethrough" size={20} color={colors.icon} />
+            </Pressable>
+            <Pressable
+              onPress={() => noteEditorRef.current?.applyBullets()}
+              style={styles.toolbarButton}
+              hitSlop={8}
+            >
+              <IconSymbol name="list.bullet" size={20} color={colors.icon} />
+            </Pressable>
+            <Pressable
+              onPress={() => noteEditorRef.current?.applyNumberedList()}
+              style={styles.toolbarButton}
+              hitSlop={8}
+            >
+              <IconSymbol name="list.number" size={20} color={colors.icon} />
+            </Pressable>
+          </>
+        )}
         <View style={styles.dismissSpacer} />
         <Pressable onPress={Keyboard.dismiss} style={styles.dismissButton} hitSlop={8}>
           <IconSymbol name="keyboard.chevron.compact.down" size={22} color={colors.icon} />
@@ -310,6 +493,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     padding: 8,
+  },
+  headerCenterButton: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    paddingVertical: 8,
+    pointerEvents: 'box-none',
   },
   headerButtonText: {
     fontSize: 16,

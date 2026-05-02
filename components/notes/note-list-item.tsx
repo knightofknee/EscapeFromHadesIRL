@@ -27,17 +27,61 @@ export function NoteListItem({ note, tags, onPress, onDelete, onTogglePin }: Not
 
   const uniqueTags = [...new Map(noteTags.map((t) => [t.id, t])).values()];
 
-  // Apple Notes style: if no title, promote the first non-empty line of content
-  // to be the title, and use the next non-empty line as the preview.
-  // If there's only one line (it was promoted to title), still show it below so
-  // the note doesn't look empty.
-  const contentLines = note.content.split('\n').map((l) => l.trim()).filter(Boolean);
   const hasTitle = note.title.trim().length > 0;
-  const displayTitle = hasTitle ? note.title : (contentLines[0] || '—');
-  const previewLine = hasTitle
-    ? (contentLines[0] || '')
-    : (contentLines[1] || contentLines[0] || '');
-  const preview = previewLine.slice(0, 100);
+  const isChecklist = note.type === 'checklist';
+
+  // Compute the preview line based on note type.
+  //  text mode: Apple Notes style — first non-empty line is title (if no
+  //             explicit title), next non-empty line is the preview.
+  //  checklist: description if present; else first uncompleted task; if
+  //             everything is done, show "✓"; if entirely empty, "Empty
+  //             checklist".
+  let displayTitle: string;
+  let preview: string;
+
+  if (isChecklist) {
+    const desc = (note.description ?? '').trim();
+    const items = note.checklist ?? [];
+    const firstUncompleted = items.find((i) => !i.completed && i.text.trim().length > 0);
+    const hasAnyItem = items.some((i) => i.text.trim().length > 0);
+    const allDone = hasAnyItem && items.every((i) => i.completed || !i.text.trim());
+
+    if (hasTitle) {
+      displayTitle = note.title;
+    } else if (desc.length > 0) {
+      displayTitle = desc.split('\n')[0]!;
+    } else if (firstUncompleted) {
+      displayTitle = firstUncompleted.text;
+    } else if (hasAnyItem) {
+      displayTitle = '✓';
+    } else {
+      displayTitle = 'Empty checklist';
+    }
+
+    if (hasTitle) {
+      // Title is the explicit one; preview is description or first task.
+      if (desc.length > 0) preview = desc.split('\n')[0]!;
+      else if (firstUncompleted) preview = firstUncompleted.text;
+      else if (allDone) preview = '✓';
+      else preview = '';
+    } else {
+      // displayTitle already consumed the best preview slot; secondary
+      // preview line shows the next-most-relevant string, if any.
+      if (desc.length > 0 && firstUncompleted) preview = firstUncompleted.text;
+      else preview = '';
+    }
+    preview = preview.slice(0, 100);
+  } else {
+    const contentLines = note.content
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+    displayTitle = hasTitle ? note.title : contentLines[0] || '—';
+    const previewLine = hasTitle
+      ? contentLines[0] || ''
+      : contentLines[1] || contentLines[0] || '';
+    preview = previewLine.slice(0, 100);
+  }
 
   const dateStr = new Date(note.updatedAt).toLocaleDateString('en-US', {
     month: 'short',
