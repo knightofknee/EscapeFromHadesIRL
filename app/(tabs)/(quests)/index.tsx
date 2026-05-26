@@ -12,6 +12,7 @@ import { useHabits } from '@/hooks/use-habits';
 import { useHabitRecords } from '@/hooks/use-habit-records';
 import { useQuestScores } from '@/hooks/use-quest-scores';
 import { useVacationDays } from '@/hooks/use-vacation-days';
+import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
 import { QuestColors } from '@/constants/theme';
 import { CATEGORY_NAMES, FOUNDATION_KEYS, TEMPLATE_BY_KEY } from '@/constants/quest-templates';
 import { formatDate } from '@/lib/date-utils';
@@ -30,12 +31,13 @@ export default function QuestsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
-  const { quests, isLoading: questsLoading } = useQuests();
+  const { quests, isLoading: questsLoading, isOffline } = useQuests();
   const { habits } = useHabits();
   const { startDate, endDate } = useMemo(get30DayWindow, []);
   const { records } = useHabitRecords(startDate, endDate);
   const { dateSet: vacationSet } = useVacationDays();
-  const scores = useQuestScores(quests, habits, records, vacationSet);
+  const { winOnlyWeekends } = useWinOnlyWeekends();
+  const scores = useQuestScores(quests, habits, records, vacationSet, winOnlyWeekends);
 
   // Group quests by category, preserving order
   const grouped = useMemo(() => {
@@ -107,11 +109,17 @@ export default function QuestsScreen() {
           <ThemedText style={styles.emptyText}>Loading...</ThemedText>
         ) : quests.length === 0 ? (
           <View style={styles.emptyState}>
-            <ThemedText style={styles.emptyTitle}>No active quests.</ThemedText>
-            <ThemedText style={styles.emptyText}>
-              Begin with the three foundations: walk, meditate, read. Each run starts anew. Link your
-              existing habits to track progress.
-            </ThemedText>
+            {isOffline ? (
+              <ThemedText style={styles.emptyTitle}>No internet connection</ThemedText>
+            ) : (
+              <>
+                <ThemedText style={styles.emptyTitle}>No active quests.</ThemedText>
+                <ThemedText style={styles.emptyText}>
+                  Begin with the three foundations: walk, meditate, read. Each run starts anew. Link your
+                  existing habits to track progress.
+                </ThemedText>
+              </>
+            )}
           </View>
         ) : (
           CATEGORY_ORDER.map((cat) => {

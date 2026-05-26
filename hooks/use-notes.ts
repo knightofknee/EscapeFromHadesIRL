@@ -1,27 +1,31 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/auth-context';
+import { useOfflineGuard } from '@/contexts/offline-context';
 import {
   db,
   collection,
   query,
   where,
   orderBy,
-  onSnapshot,
   doc,
   setDoc,
   deleteDoc,
 } from '@/lib/firebase/firestore';
+import { subscribeWithOfflineState } from '@/lib/firebase/subscribe';
 import type { Note } from '@/types/note';
 
 export function useNotes() {
   const { user } = useAuth();
+  const { requireOnline } = useOfflineGuard();
   const [notes, setNotes] = useState<Note[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
     if (!user) {
       setNotes([]);
       setIsLoading(false);
+      setIsOffline(false);
       return;
     }
 
@@ -31,38 +35,47 @@ export function useNotes() {
       orderBy('updatedAt', 'desc'),
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      // Defensive: validate the minimum-required fields before trusting
-      // the doc as a Note. A blind `as Note` cast (the previous code)
-      // would let a corrupt or partially-migrated doc through, then
-      // crash downstream when consumers accessed missing fields. Bad
-      // docs are dropped + logged instead of poisoning the list.
-      const data: Note[] = [];
-      for (const d of snapshot.docs) {
-        const raw = d.data() as Record<string, unknown>;
-        if (
-          typeof raw.userId !== 'string' ||
-          typeof raw.title !== 'string' ||
-          typeof raw.content !== 'string' ||
-          !Array.isArray(raw.tags) ||
-          typeof raw.createdAt !== 'number' ||
-          typeof raw.updatedAt !== 'number'
-        ) {
-          console.warn(`useNotes: skipping malformed note doc ${d.id}`, raw);
-          continue;
+    return subscribeWithOfflineState(
+      q,
+      (snapshot) => {
+        // Defensive: validate the minimum-required fields before trusting
+        // the doc as a Note. A blind `as Note` cast (the previous code)
+        // would let a corrupt or partially-migrated doc through, then
+        // crash downstream when consumers accessed missing fields. Bad
+        // docs are dropped + logged instead of poisoning the list.
+        const data: Note[] = [];
+        for (const d of snapshot.docs) {
+          const raw = d.data() as Record<string, unknown>;
+          if (
+            typeof raw.userId !== 'string' ||
+            typeof raw.title !== 'string' ||
+            typeof raw.content !== 'string' ||
+            !Array.isArray(raw.tags) ||
+            typeof raw.createdAt !== 'number' ||
+            typeof raw.updatedAt !== 'number'
+          ) {
+            console.warn(`useNotes: skipping malformed note doc ${d.id}`, raw);
+            continue;
+          }
+          data.push({ id: d.id, ...raw } as Note);
         }
-        data.push({ id: d.id, ...raw } as Note);
-      }
-      setNotes(data);
-      setIsLoading(false);
-    });
-
-    return unsubscribe;
+        setNotes(data);
+        setIsLoading(false);
+      },
+      {
+        onError: (error) => {
+          console.error('[useNotes] snapshot error:', error);
+          setIsLoading(false);
+        },
+        setOffline: setIsOffline,
+      },
+    );
   }, [user]);
 
   const createNote = useCallback(
     (title: string, content: string = '') => {
       if (!user) return null;
+      if (!requireOnline()) return null;
       const ref = doc(collection(db, 'notes'));
       const now = Date.now();
       const newNote: Note = {
@@ -84,7 +97,7 @@ export function useNotes() {
       });
       return newNote;
     },
-    [user],
+    [user, requireOnline],
   );
 
   const updateNote = useCallback(
@@ -122,6 +135,7 @@ export function useNotes() {
   const togglePinNote = useCallback(
     async (noteId: string, pinned: boolean) => {
       if (!user) return;
+      if (!requireOnline()) return;
       // Optimistic local update — no updatedAt change (pinning shouldn't bump edit time)
       setNotes((prev) =>
         prev.map((n) =>
@@ -137,20 +151,21 @@ export function useNotes() {
         console.error('togglePinNote: Firestore write failed', err);
       }
     },
-    [user],
+    [user, requireOnline],
   );
 
   const deleteNote = useCallback(
     async (noteId: string) => {
       if (!user) return;
+      if (!requireOnline()) return;
       try {
         await deleteDoc(doc(db, 'notes', noteId));
       } catch (err) {
         console.error('deleteNote: Firestore delete failed', err);
       }
     },
-    [user],
+    [user, requireOnline],
   );
 
-  return { notes, isLoading, createNote, updateNote, togglePinNote, deleteNote };
+  return { notes, isLoading, isOffline, createNote, updateNote, togglePinNote, deleteNote };
 }

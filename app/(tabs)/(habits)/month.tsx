@@ -7,6 +7,8 @@ import { ThemedView } from '@/components/themed-view';
 import { useHabits } from '@/hooks/use-habits';
 import { useHabitRecords, formatDate } from '@/hooks/use-habit-records';
 import { useVacationDays } from '@/hooks/use-vacation-days';
+import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
+import { shouldSkipWeekend } from '@/lib/habit-scoring';
 import { readableTextOn } from '@/lib/contrast';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -36,11 +38,12 @@ const MONTH_NAMES = [
 ];
 
 export default function MonthViewScreen() {
-  const { habits } = useHabits();
+  const { habits, isOffline } = useHabits();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const [monthOffset, setMonthOffset] = useState(0);
   const { days: vacationDays, dateSet: vacationSet } = useVacationDays();
+  const { winOnlyWeekends } = useWinOnlyWeekends();
 
   const { year, month, daysInMonth, startDate, endDate, monthLabel } = useMemo(() => {
     const now = new Date();
@@ -98,59 +101,60 @@ export default function MonthViewScreen() {
     return daysInMonth;
   }, [year, month, daysInMonth]);
 
-  // Active days = days the user actually tracked (countDays minus vacation
-  // days). Used as the denominator for per-habit rates so vacation days
-  // "didn't happen" for stats purposes.
-  const activeDays = useMemo(() => {
-    let n = 0;
-    for (let d = 1; d <= countDays; d++) {
-      const dateStr = formatDate(new Date(year, month, d));
-      if (!vacationSet.has(dateStr)) n++;
-    }
-    return n;
-  }, [countDays, vacationSet, year, month]);
-
-  // Per-habit completion rate for the month — vacation days excluded from
-  // both numerator and denominator.
+  // Per-habit completion rate for the month — vacation days and weekend
+  // non-completions are excluded from both numerator and denominator. With
+  // the per-habit weekend-skip rule, each habit can have its own
+  // denominator, so `activeDays` is computed inside the loop rather than
+  // as a shared scalar.
   const habitRates = useMemo(() => {
     return habits.map((habit) => {
       let completed = 0;
+      let activeDays = 0;
       for (let d = 1; d <= countDays; d++) {
         const dateStr = formatDate(new Date(year, month, d));
         if (vacationSet.has(dateStr)) continue;
         const record = recordIndex.get(`${habit.id}_${dateStr}`);
+        if (shouldSkipWeekend(habit, record, dateStr, winOnlyWeekends)) continue;
+        activeDays++;
         if (isCompleted(habit, record)) completed++;
       }
       const rate = activeDays > 0 ? Math.round((completed / activeDays) * 100) : 0;
-      return { habit, completed, rate };
+      return { habit, completed, activeDays, rate };
     });
-  }, [habits, recordIndex, year, month, countDays, vacationSet, activeDays]);
+  }, [habits, recordIndex, year, month, countDays, vacationSet, winOnlyWeekends]);
 
   // Heatmap data: for each day, weighted score of habit completion
   // Base completion = 1.0, goal/double = 1.25, ideal = 1.5
   // Vacation days are skipped — they render as the vacation tile, not
-  // part of the heatmap.
+  // part of the heatmap. With "Win only Weekends" on, weekend habits that
+  // weren't completed are excluded from both the numerator and the
+  // per-day denominator (so the day's score reflects only the habits the
+  // user was effectively tracking).
   const dayCompletionMap = useMemo(() => {
     const map: Record<number, number> = {};
     if (habits.length === 0) return map;
-    // Max possible per habit is 1.5 (ideal), so max total = habits.length * 1.5
+    // Max possible per habit is 1.5 (ideal).
     const maxPerHabit = 1.5;
     for (let d = 1; d <= daysInMonth; d++) {
       const dateStr = formatDate(new Date(year, month, d));
       if (vacationSet.has(dateStr)) continue;
       let score = 0;
+      let activeHabits = 0;
       for (const habit of habits) {
         const record = recordIndex.get(`${habit.id}_${dateStr}`);
+        if (shouldSkipWeekend(habit, record, dateStr, winOnlyWeekends)) continue;
+        activeHabits++;
         if (!record) continue;
         const v = record.value;
         if (v === 'ideal') score += 1.5;
         else if (v === 'goal' || v === 'double') score += 1.25;
         else if (isCompleted(habit, record)) score += 1.0;
       }
-      map[d] = score / (habits.length * maxPerHabit);
+      const denominator = activeHabits * maxPerHabit;
+      map[d] = denominator > 0 ? score / denominator : 0;
     }
     return map;
-  }, [habits, recordIndex, year, month, daysInMonth, vacationSet]);
+  }, [habits, recordIndex, year, month, daysInMonth, vacationSet, winOnlyWeekends]);
 
   function heatmapColor(ratio: number): string {
     if (ratio === 0) return colors.tileUnrecorded;
@@ -180,7 +184,9 @@ export default function MonthViewScreen() {
 
         {habits.length === 0 ? (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <ThemedText style={{ opacity: 0.5, fontSize: 16 }}>No habits yet</ThemedText>
+            <ThemedText style={{ opacity: 0.5, fontSize: 16 }}>
+              {isOffline ? 'No internet connection' : 'No habits yet'}
+            </ThemedText>
           </View>
         ) : (
         <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -236,7 +242,7 @@ export default function MonthViewScreen() {
           <ThemedText type="defaultSemiBold" style={styles.sectionTitle}>
             Habit Completion
           </ThemedText>
-          {habitRates.map(({ habit, completed, rate }) => (
+          {habitRates.map(({ habit, completed, activeDays, rate }) => (
             <View key={habit.id} style={[styles.habitRow, { borderColor: colors.tileBorder }]}>
               <View style={styles.habitInfo}>
                 <ThemedText style={[styles.habitAbbr, { color: habit.color }]}>

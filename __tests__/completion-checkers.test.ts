@@ -1,4 +1,4 @@
-import { isRecordCompleted, isRecordGoal, isRecordIdeal } from '../lib/habit-scoring';
+import { isRecordCompleted, isRecordGoal, isRecordIdeal, shouldSkipWeekend } from '../lib/habit-scoring';
 import type { Habit, HabitRecord } from '../types/habit';
 
 function makeHabit(mode: Habit['recordingMode']): Habit {
@@ -149,5 +149,46 @@ describe('isRecordIdeal', () => {
   });
   test('no record returns false', () => {
     expect(isRecordIdeal(makeHabit('quad'))).toBe(false);
+  });
+});
+
+describe('shouldSkipWeekend', () => {
+  const habit = makeHabit('boolean');
+  // Calendar reference: 2026-04-25 = Saturday, 2026-04-26 = Sunday,
+  // 2026-04-27 = Monday, 2026-04-28 = Tuesday.
+
+  test('returns false when winOnlyWeekends is off, regardless of day or record', () => {
+    expect(shouldSkipWeekend(habit, undefined, '2026-04-25', false)).toBe(false);
+    expect(shouldSkipWeekend(habit, makeRecord(true), '2026-04-25', false)).toBe(false);
+    expect(shouldSkipWeekend(habit, makeRecord(false), '2026-04-27', false)).toBe(false);
+  });
+
+  test('returns false on weekdays even when winOnlyWeekends is on', () => {
+    expect(shouldSkipWeekend(habit, undefined, '2026-04-27', true)).toBe(false);
+    expect(shouldSkipWeekend(habit, makeRecord(false), '2026-04-28', true)).toBe(false);
+  });
+
+  test('returns true on a weekend day when the record is missing', () => {
+    expect(shouldSkipWeekend(habit, undefined, '2026-04-25', true)).toBe(true);
+    expect(shouldSkipWeekend(habit, undefined, '2026-04-26', true)).toBe(true);
+  });
+
+  test('returns true on a weekend day when the record is non-positive', () => {
+    expect(shouldSkipWeekend(habit, makeRecord(false), '2026-04-25', true)).toBe(true);
+    expect(shouldSkipWeekend(habit, makeRecord('no'), '2026-04-26', true)).toBe(true);
+  });
+
+  test('returns false on a weekend day when the record is positive (no loss to skip)', () => {
+    expect(shouldSkipWeekend(habit, makeRecord(true), '2026-04-25', true)).toBe(false);
+  });
+
+  test('uses the provided checker to decide what counts as positive', () => {
+    const tripleHabit = makeHabit('triple');
+    // With the default (any completion) checker: "yes" counts as positive → not skipped.
+    expect(shouldSkipWeekend(tripleHabit, makeRecord('yes'), '2026-04-25', true)).toBe(false);
+    // With isRecordGoal (level 1): "yes" is NOT positive → skipped on weekend.
+    expect(shouldSkipWeekend(tripleHabit, makeRecord('yes'), '2026-04-25', true, isRecordGoal)).toBe(true);
+    // But "double" still counts at level 1.
+    expect(shouldSkipWeekend(tripleHabit, makeRecord('double'), '2026-04-25', true, isRecordGoal)).toBe(false);
   });
 });

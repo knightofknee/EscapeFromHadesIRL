@@ -21,6 +21,7 @@ import {
   vacationDocId,
 } from '@/lib/vacation-days';
 import { db, doc, writeBatch } from '@/lib/firebase/firestore';
+import { useOfflineGuard } from '@/contexts/offline-context';
 
 const MAX_LABEL_CHARS = 500;
 
@@ -55,6 +56,7 @@ export function VacationEditModal({
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const blue = colors.vacationButton;
+  const { requireOnline } = useOfflineGuard();
 
   const [label, setLabel] = useState(initialLabel);
   const [color, setColor] = useState(initialColor);
@@ -80,6 +82,7 @@ export function VacationEditModal({
 
   async function handleSave() {
     if (submitting) return;
+    if (!requireOnline()) return;
     setSubmitting(true);
     const trimmed = label.slice(0, MAX_LABEL_CHARS);
     try {
@@ -107,6 +110,7 @@ export function VacationEditModal({
 
   async function handleRemove() {
     if (submitting) return;
+    if (!requireOnline()) return;
     setSubmitting(true);
     try {
       if (scope === 'block' && hasBlock) {

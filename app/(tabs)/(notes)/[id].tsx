@@ -22,6 +22,7 @@ import { ChecklistEditor, type ChecklistEditorHandle } from '@/components/notes/
 import { TagPicker } from '@/components/notes/tag-picker';
 import { useNotes } from '@/hooks/use-notes';
 import { useTags } from '@/hooks/use-tags';
+import { useOfflineGuard } from '@/contexts/offline-context';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { ChecklistItem, InlineTag } from '@/types/note';
@@ -39,6 +40,7 @@ export default function NoteEditorScreen() {
   const isNew = isNewParam === '1';
   const { notes, isLoading: notesLoading, updateNote, deleteNote } = useNotes();
   const { tags, createTag } = useTags();
+  const { isOffline } = useOfflineGuard();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const tabBarHeight = useBottomTabBarHeight();
@@ -374,6 +376,14 @@ export default function NoteEditorScreen() {
         </View>
       </SafeAreaView>
 
+      {isOffline && (
+        <View style={styles.offlineBanner}>
+          <ThemedText style={styles.offlineBannerText}>
+            Offline — force-quitting the app may lose unsaved changes.
+          </ThemedText>
+        </View>
+      )}
+
       <Animated.ScrollView
         ref={scrollRef}
         style={styles.scrollView}
@@ -543,5 +553,16 @@ const styles = StyleSheet.create({
   toolbarButton: {
     paddingHorizontal: 10,
     paddingVertical: 4,
+  },
+  offlineBanner: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#F59E0B',
+  },
+  offlineBannerText: {
+    fontSize: 13,
+    color: '#1F2937',
+    fontWeight: '600',
+    textAlign: 'center',
   },
 });

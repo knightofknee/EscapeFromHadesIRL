@@ -18,3 +18,9 @@ export function parseDate(dateStr: string): Date {
   const [y, m, d] = dateStr.split('-').map(Number);
   return new Date(y, m - 1, d);
 }
+
+/** True if `dateStr` (YYYY-MM-DD) falls on Saturday or Sunday in local time. */
+export function isWeekend(dateStr: string): boolean {
+  const day = parseDate(dateStr).getDay();
+  return day === 0 || day === 6;
+}

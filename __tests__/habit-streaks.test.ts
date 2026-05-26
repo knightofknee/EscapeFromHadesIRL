@@ -151,6 +151,93 @@ describe('computeStreak - vacation handling', () => {
   });
 });
 
+describe('computeStreak - Win only Weekends', () => {
+  const habit = makeHabit();
+  const empty = new Set<string>();
+  // Calendar reference: 2026-04-25 = Saturday, 2026-04-26 = Sunday,
+  // 2026-04-27 = Monday, 2026-04-28 = Tuesday, 2026-04-29 = Wednesday.
+
+  test('weekend gap with no records bridges the streak when WoW is on', () => {
+    // Apr 24 (Fri) done, Apr 25/26 (Sat/Sun) empty, Apr 27 (Mon) done.
+    // Reference: Tue Apr 28 — so Mon is yesterday, Tue is today (not done).
+    const records = [
+      makeRecord('h1', '2026-04-24'),
+      makeRecord('h1', '2026-04-27'),
+    ];
+    const ref = new Date(2026, 3, 28);
+    const without = computeStreak(habit, buildIndex(records), checker, empty, { now: ref });
+    expect(without.current).toBe(1); // weekend gap breaks back to Fri
+    const withWoW = computeStreak(habit, buildIndex(records), checker, empty, {
+      now: ref,
+      winOnlyWeekends: true,
+    });
+    expect(withWoW.current).toBe(2); // Fri + Mon both counted, weekend skipped
+  });
+
+  test('explicit non-positive recording on weekend is skipped (no loss)', () => {
+    // Apr 24 (Fri) done, Apr 25 (Sat) explicit false, Apr 26 (Sun) empty, Apr 27 (Mon) done.
+    const records = [
+      makeRecord('h1', '2026-04-24'),
+      makeRecord('h1', '2026-04-25', false),
+      makeRecord('h1', '2026-04-27'),
+    ];
+    const ref = new Date(2026, 3, 28);
+    const result = computeStreak(habit, buildIndex(records), checker, empty, {
+      now: ref,
+      winOnlyWeekends: true,
+    });
+    expect(result.current).toBe(2);
+  });
+
+  test('weekend positive completion still counts toward the streak', () => {
+    // Apr 24 (Fri) done, Apr 25/26 (weekend) both done, Apr 27 (Mon) done.
+    const records = [
+      makeRecord('h1', '2026-04-24'),
+      makeRecord('h1', '2026-04-25'),
+      makeRecord('h1', '2026-04-26'),
+      makeRecord('h1', '2026-04-27'),
+    ];
+    const ref = new Date(2026, 3, 28);
+    const result = computeStreak(habit, buildIndex(records), checker, empty, {
+      now: ref,
+      winOnlyWeekends: true,
+    });
+    expect(result.current).toBe(4);
+  });
+
+  test('weekday gap still breaks the streak even with WoW on', () => {
+    // Apr 27 (Mon) done, Apr 28 (Tue) empty, Apr 29 (Wed) done.
+    // Today = Apr 30 (Thu), not done.
+    const records = [
+      makeRecord('h1', '2026-04-27'),
+      makeRecord('h1', '2026-04-29'),
+    ];
+    const result = computeStreak(habit, buildIndex(records), checker, empty, {
+      now: NOW,
+      winOnlyWeekends: true,
+    });
+    expect(result.current).toBe(1); // Wed alone (Tue gap broke)
+    expect(result.longest).toBe(1);
+  });
+
+  test('vacation takes precedence over weekend rule', () => {
+    // Apr 25 (Sat) is vacation. With WoW off, vacation alone would bridge.
+    // With WoW on, both rules say "skip" — but vacation precedence means we
+    // never even reach the weekend check. Either way: bridges the streak.
+    const records = [
+      makeRecord('h1', '2026-04-24'),
+      makeRecord('h1', '2026-04-26'),
+    ];
+    const vac = new Set(['2026-04-25']);
+    const ref = new Date(2026, 3, 27);
+    const result = computeStreak(habit, buildIndex(records), checker, vac, {
+      now: ref,
+      winOnlyWeekends: true,
+    });
+    expect(result.current).toBe(2);
+  });
+});
+
 describe('computeStreak - termination', () => {
   test('terminates well before the safety cap when records are sparse', () => {
     const habit = makeHabit();

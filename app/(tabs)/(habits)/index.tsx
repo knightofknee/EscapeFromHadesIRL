@@ -21,6 +21,7 @@ import { VacationRangeModal } from '@/components/habits/vacation-range-modal';
 import { VacationTile } from '@/components/habits/vacation-tile';
 import { VacationEditModal } from '@/components/habits/vacation-edit-modal';
 import { useAuth } from '@/contexts/auth-context';
+import { useOfflineGuard } from '@/contexts/offline-context';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import { buildDateRange, createVacationDays } from '@/lib/vacation-days';
 import { useHabits } from '@/hooks/use-habits';
@@ -33,7 +34,7 @@ import { addDays, parseDate } from '@/lib/date-utils';
 import type { Habit } from '@/types/habit';
 
 export default function HabitsDayScreen() {
-  const { habits, isLoading } = useHabits();
+  const { habits, isLoading, isOffline } = useHabits();
   const { todayStr } = useTodayDate();
   const [viewedDate, setViewedDate] = useState(todayStr);
   const { records, toggleBoolean, cycleTriple, cycleQuad, incrementCounter, setValue } =
@@ -48,6 +49,7 @@ export default function HabitsDayScreen() {
   const [vacationRangeVisible, setVacationRangeVisible] = useState(false);
   const [vacationEditVisible, setVacationEditVisible] = useState(false);
   const { user } = useAuth();
+  const { requireOnline } = useOfflineGuard();
   const { days: vacationDays, dateSet: vacationDateSet, getContiguousBlock } = useVacationDays();
   const viewedVacation = vacationDays.get(viewedDate);
   const isVacationDay = viewedVacation != null;
@@ -257,13 +259,19 @@ export default function HabitsDayScreen() {
           <Animated.View style={[styles.swipeArea, contentAnimatedStyle]}>
             {habits.length === 0 ? (
               <View style={styles.emptyState}>
-                <ThemedText style={styles.emptyText}>No habits yet</ThemedText>
-                <Pressable
-                  style={[styles.addButton, { backgroundColor: colors.tint }]}
-                  onPress={() => router.push({ pathname: '/tile-settings', params: { mode: 'create' } })}
-                >
-                  <ThemedText style={styles.addButtonText}>+ Add Your First Habit</ThemedText>
-                </Pressable>
+                {isOffline ? (
+                  <ThemedText style={styles.emptyText}>No internet connection</ThemedText>
+                ) : (
+                  <>
+                    <ThemedText style={styles.emptyText}>No habits yet</ThemedText>
+                    <Pressable
+                      style={[styles.addButton, { backgroundColor: colors.tint }]}
+                      onPress={() => router.push({ pathname: '/tile-settings', params: { mode: 'create' } })}
+                    >
+                      <ThemedText style={styles.addButtonText}>+ Add Your First Habit</ThemedText>
+                    </Pressable>
+                  </>
+                )}
               </View>
             ) : (
               <>
@@ -351,6 +359,7 @@ export default function HabitsDayScreen() {
           onCancel={() => setVacationRangeVisible(false)}
           onConfirm={async (startDate, endDate) => {
             if (!user) return;
+            if (!requireOnline()) return;
             const dates = buildDateRange(startDate, endDate);
             await createVacationDays({
               userId: user.uid,

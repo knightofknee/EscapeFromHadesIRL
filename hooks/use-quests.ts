@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/auth-context';
+import { useOfflineGuard } from '@/contexts/offline-context';
 import { deleteField } from 'firebase/firestore';
 import { stripUndefined } from '@/lib/firebase/clean';
 import {
@@ -8,22 +9,25 @@ import {
   query,
   where,
   orderBy,
-  onSnapshot,
   doc,
   setDoc,
   deleteDoc,
 } from '@/lib/firebase/firestore';
+import { subscribeWithOfflineState } from '@/lib/firebase/subscribe';
 import type { Quest } from '@/types/quest';
 
 export function useQuests() {
   const { user } = useAuth();
+  const { requireOnline } = useOfflineGuard();
   const [quests, setQuests] = useState<Quest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
     if (!user) {
       setQuests([]);
       setIsLoading(false);
+      setIsOffline(false);
       return;
     }
 
@@ -34,25 +38,27 @@ export function useQuests() {
       orderBy('activatedAt'),
     );
 
-    const unsubscribe = onSnapshot(
+    return subscribeWithOfflineState(
       q,
       (snapshot) => {
-        const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Quest);
+        const data = snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }) as Quest);
         setQuests(data);
         setIsLoading(false);
       },
-      (error) => {
-        console.error('[useQuests] snapshot error:', error);
-        setIsLoading(false);
+      {
+        onError: (error) => {
+          console.error('[useQuests] snapshot error:', error);
+          setIsLoading(false);
+        },
+        setOffline: setIsOffline,
       },
     );
-
-    return unsubscribe;
   }, [user]);
 
   const createQuest = useCallback(
     async (quest: Omit<Quest, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'activatedAt'>) => {
       if (!user) return;
+      if (!requireOnline()) return;
       const ref = doc(collection(db, 'quests'));
       const now = Date.now();
       const newQuest: Quest = {
@@ -66,12 +72,13 @@ export function useQuests() {
       await setDoc(ref, stripUndefined(newQuest));
       return newQuest;
     },
-    [user],
+    [user, requireOnline],
   );
 
   const updateQuest = useCallback(
     async (questId: string, updates: Partial<Quest>) => {
       if (!user) return;
+      if (!requireOnline()) return;
       const ref = doc(db, 'quests', questId);
       const firestoreUpdates: Record<string, any> = { updatedAt: Date.now() };
       for (const [key, value] of Object.entries(updates)) {
@@ -79,7 +86,7 @@ export function useQuests() {
       }
       await setDoc(ref, firestoreUpdates, { merge: true });
     },
-    [user],
+    [user, requireOnline],
   );
 
   const pauseQuest = useCallback(
@@ -90,10 +97,11 @@ export function useQuests() {
   const deleteQuest = useCallback(
     async (questId: string) => {
       if (!user) return;
+      if (!requireOnline()) return;
       await deleteDoc(doc(db, 'quests', questId));
     },
-    [user],
+    [user, requireOnline],
   );
 
-  return { quests, isLoading, createQuest, updateQuest, pauseQuest, deleteQuest };
+  return { quests, isLoading, isOffline, createQuest, updateQuest, pauseQuest, deleteQuest };
 }

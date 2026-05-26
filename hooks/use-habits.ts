@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/auth-context';
+import { useOfflineGuard } from '@/contexts/offline-context';
 import { deleteField } from 'firebase/firestore';
 import { stripUndefined } from '@/lib/firebase/clean';
 import {
@@ -8,22 +9,25 @@ import {
   query,
   where,
   orderBy,
-  onSnapshot,
   doc,
   setDoc,
   deleteDoc,
 } from '@/lib/firebase/firestore';
+import { subscribeWithOfflineState } from '@/lib/firebase/subscribe';
 import type { Habit } from '@/types/habit';
 
 export function useHabits() {
   const { user } = useAuth();
+  const { requireOnline } = useOfflineGuard();
   const [habits, setHabits] = useState<Habit[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
     if (!user) {
       setHabits([]);
       setIsLoading(false);
+      setIsOffline(false);
       return;
     }
 
@@ -35,10 +39,10 @@ export function useHabits() {
       orderBy('position.col'),
     );
 
-    const unsubscribe = onSnapshot(
+    return subscribeWithOfflineState(
       q,
       (snapshot) => {
-        const data = snapshot.docs.map((d) => {
+        const data = snapshot.docs.map((d: any) => {
           const raw = { id: d.id, ...d.data() } as Habit;
           // Migrate old string-based tileSize ('1x1', '2x2', etc.) to numeric
           if (typeof raw.tileSize === 'string') {
@@ -53,18 +57,20 @@ export function useHabits() {
         setHabits(data);
         setIsLoading(false);
       },
-      (error) => {
-        console.error('[useHabits] snapshot error:', error);
-        setIsLoading(false);
+      {
+        onError: (error) => {
+          console.error('[useHabits] snapshot error:', error);
+          setIsLoading(false);
+        },
+        setOffline: setIsOffline,
       },
     );
-
-    return unsubscribe;
   }, [user]);
 
   const createHabit = useCallback(
     async (habit: Omit<Habit, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => {
       if (!user) return;
+      if (!requireOnline()) return;
       const ref = doc(collection(db, 'habits'));
       const now = Date.now();
       const newHabit: Habit = {
@@ -77,12 +83,13 @@ export function useHabits() {
       await setDoc(ref, stripUndefined(newHabit));
       return newHabit;
     },
-    [user],
+    [user, requireOnline],
   );
 
   const updateHabit = useCallback(
     async (habitId: string, updates: Partial<Habit>) => {
       if (!user) return;
+      if (!requireOnline()) return;
       const ref = doc(db, 'habits', habitId);
       // Replace undefined values with deleteField() so merge: true actually removes them
       const firestoreUpdates: Record<string, any> = { updatedAt: Date.now() };
@@ -91,7 +98,7 @@ export function useHabits() {
       }
       await setDoc(ref, firestoreUpdates, { merge: true });
     },
-    [user],
+    [user, requireOnline],
   );
 
   const archiveHabit = useCallback(
@@ -105,9 +112,10 @@ export function useHabits() {
   const deleteHabit = useCallback(
     async (habitId: string) => {
       if (!user) return;
+      if (!requireOnline()) return;
       await deleteDoc(doc(db, 'habits', habitId));
     },
-    [user],
+    [user, requireOnline],
   );
 
   const reviveHabit = useCallback(
@@ -120,18 +128,20 @@ export function useHabits() {
     [user, habits, updateHabit],
   );
 
-  return { habits, isLoading, createHabit, updateHabit, archiveHabit, reviveHabit, deleteHabit };
+  return { habits, isLoading, isOffline, createHabit, updateHabit, archiveHabit, reviveHabit, deleteHabit };
 }
 
 export function useArchivedHabits() {
   const { user } = useAuth();
   const [habits, setHabits] = useState<Habit[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
     if (!user) {
       setHabits([]);
       setIsLoading(false);
+      setIsOffline(false);
       return;
     }
 
@@ -141,21 +151,22 @@ export function useArchivedHabits() {
       where('isArchived', '==', true),
     );
 
-    const unsubscribe = onSnapshot(
+    return subscribeWithOfflineState(
       q,
       (snapshot) => {
-        const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Habit);
+        const data = snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }) as Habit);
         setHabits(data);
         setIsLoading(false);
       },
-      (error) => {
-        console.error('[useArchivedHabits] snapshot error:', error);
-        setIsLoading(false);
+      {
+        onError: (error) => {
+          console.error('[useArchivedHabits] snapshot error:', error);
+          setIsLoading(false);
+        },
+        setOffline: setIsOffline,
       },
     );
-
-    return unsubscribe;
   }, [user]);
 
-  return { habits, isLoading };
+  return { habits, isLoading, isOffline };
 }

@@ -1,4 +1,5 @@
 import { scoreQuest } from '../hooks/use-quest-scores';
+import { isWeekend } from '../lib/date-utils';
 import type { Quest } from '../types/quest';
 import type { Habit, HabitRecord } from '../types/habit';
 
@@ -254,5 +255,54 @@ describe('scoreQuest - vacation handling', () => {
     const result = scoreQuest(quest, habits, new Map(), activeDates);
     expect(result.completedDays).toBe(10);
     expect(result.score).toBe(100);
+  });
+});
+
+describe('scoreQuest - Win only Weekends', () => {
+  const habits = [makeHabit('h1', 'boolean')];
+  // makeDates ends at 2026-04-04 (Saturday). Working backward 30 days, the
+  // window includes 8 weekend days (4 Sat + 4 Sun across 4 full weeks plus
+  // partial endpoints).
+
+  test('positive quest: unmarked weekends are pruned from target denominator', () => {
+    const dates = makeDates(30);
+    // User completes every WEEKDAY in the window, but nothing on weekends.
+    // Use the same isWeekend helper scoreQuest does internally so the test
+    // matches in any timezone (new Date("YYYY-MM-DD") would parse as UTC).
+    const weekdayDates = dates.filter((d) => !isWeekend(d));
+    const entries = weekdayDates.map((d) => [`h1_${d}`, true] as [string, any]);
+    const recordIndex = makeRecordIndex(entries);
+
+    const without = scoreQuest(makeQuest(), habits, recordIndex, dates, false);
+    expect(without.completedDays).toBe(weekdayDates.length);
+    // Target counts every weekend day as a miss → score < 100.
+    expect(without.score).toBeLessThan(100);
+
+    const withWoW = scoreQuest(makeQuest(), habits, recordIndex, dates, true);
+    expect(withWoW.completedDays).toBe(weekdayDates.length);
+    // With WoW, target shrinks to the weekday window → 100%.
+    expect(withWoW.targetDays).toBe(weekdayDates.length);
+    expect(withWoW.score).toBe(100);
+  });
+
+  test('positive quest: weekend completions still count as wins', () => {
+    const dates = makeDates(30);
+    // User completes every day including weekends.
+    const entries = dates.map((d) => [`h1_${d}`, true] as [string, any]);
+    const result = scoreQuest(makeQuest(), habits, makeRecordIndex(entries), dates, true);
+    expect(result.completedDays).toBe(30);
+    expect(result.targetDays).toBe(30);
+    expect(result.score).toBe(100);
+  });
+
+  test('reduce quest is unaffected by WoW (weekend non-completion is already the win)', () => {
+    const dates = makeDates(30);
+    const quest = makeQuest({ questType: 'reduce' });
+    // No habit done on any day → 100% for reduce. WoW shouldn't change that.
+    const without = scoreQuest(quest, habits, new Map(), dates, false);
+    const withWoW = scoreQuest(quest, habits, new Map(), dates, true);
+    expect(without.score).toBe(100);
+    expect(withWoW.score).toBe(100);
+    expect(withWoW.targetDays).toBe(without.targetDays);
   });
 });

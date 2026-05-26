@@ -12,9 +12,10 @@ import { useVacationDays } from '@/hooks/use-vacation-days';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { Habit, HabitRecord } from '@/types/habit';
-import { LEVEL_CHECKERS } from '@/lib/habit-scoring';
+import { LEVEL_CHECKERS, shouldSkipWeekend } from '@/lib/habit-scoring';
 import type { CompletionChecker } from '@/lib/habit-scoring';
 import { computeStreak } from '@/lib/habit-streaks';
+import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
 
 function getLevelLabel(habit: Habit, levelIndex: number): string {
   if (levelIndex === 0) return habit.name;
@@ -34,6 +35,7 @@ function computeMonthlyRates(
   displayMonths: number,
   checker: CompletionChecker,
   vacationSet: Set<string>,
+  winOnlyWeekends: boolean,
 ): { date: string; value: number; avg: number }[] {
   const now = new Date();
   const todayDate = now.getDate();
@@ -53,15 +55,17 @@ function computeMonthlyRates(
     const isCurrentMonth = year === todayYear && month === todayMonth;
     const countDays = isCurrentMonth ? Math.max(1, todayDate - 1) : daysInMonth;
 
-    // Both numerator and denominator exclude vacation days — they're removed
-    // from the timeline, "as if they didn't happen".
+    // Both numerator and denominator exclude vacation days and any weekend
+    // day that the user didn't complete (when "Win only Weekends" is on) —
+    // they're removed from the timeline, "as if they didn't happen".
     let completed = 0;
     let activeDays = 0;
     for (let d = 1; d <= countDays; d++) {
       const dateStr = formatDate(new Date(year, month, d));
       if (vacationSet.has(dateStr)) continue;
-      activeDays++;
       const record = recordIndex.get(`${habit.id}_${dateStr}`);
+      if (shouldSkipWeekend(habit, record, dateStr, winOnlyWeekends, checker)) continue;
+      activeDays++;
       if (checker(habit, record)) completed++;
     }
 
@@ -97,6 +101,7 @@ function computeRates(
   recordIndex: Map<string, HabitRecord>,
   checker: CompletionChecker,
   vacationSet: Set<string>,
+  winOnlyWeekends: boolean,
 ): { week: number; month: number; quarter: number } {
   const now = new Date();
   const rates = { week: 0, month: 0, quarter: 0 };
@@ -112,10 +117,12 @@ function computeRates(
       const checkDate = new Date(now);
       checkDate.setDate(now.getDate() - d);
       const dateStr = formatDate(checkDate);
-      // Vacation days are removed from numerator AND denominator.
+      // Vacation days and weekend non-completions are removed from
+      // numerator AND denominator.
       if (vacationSet.has(dateStr)) continue;
-      active++;
       const record = recordIndex.get(`${habit.id}_${dateStr}`);
+      if (shouldSkipWeekend(habit, record, dateStr, winOnlyWeekends, checker)) continue;
+      active++;
       if (checker(habit, record)) completed++;
     }
     rates[period] = active > 0 ? Math.round((completed / active) * 100) : 0;
@@ -130,6 +137,7 @@ type HabitStatsSectionProps = {
   habit: Habit;
   recordIndex: Map<string, HabitRecord>;
   vacationSet: Set<string>;
+  winOnlyWeekends: boolean;
 };
 
 function StatsPageContent({
@@ -138,24 +146,26 @@ function StatsPageContent({
   checker,
   colors,
   vacationSet,
+  winOnlyWeekends,
 }: {
   habit: Habit;
   recordIndex: Map<string, HabitRecord>;
   checker: CompletionChecker;
   colors: (typeof Colors)['light'];
   vacationSet: Set<string>;
+  winOnlyWeekends: boolean;
 }) {
   const { current, longest } = useMemo(
-    () => computeStreak(habit, recordIndex, checker, vacationSet),
-    [habit, recordIndex, checker, vacationSet],
+    () => computeStreak(habit, recordIndex, checker, vacationSet, { winOnlyWeekends }),
+    [habit, recordIndex, checker, vacationSet, winOnlyWeekends],
   );
   const rates = useMemo(
-    () => computeRates(habit, recordIndex, checker, vacationSet),
-    [habit, recordIndex, checker, vacationSet],
+    () => computeRates(habit, recordIndex, checker, vacationSet, winOnlyWeekends),
+    [habit, recordIndex, checker, vacationSet, winOnlyWeekends],
   );
   const monthlyData = useMemo(
-    () => computeMonthlyRates(habit, recordIndex, 18, checker, vacationSet),
-    [habit, recordIndex, checker, vacationSet],
+    () => computeMonthlyRates(habit, recordIndex, 18, checker, vacationSet, winOnlyWeekends),
+    [habit, recordIndex, checker, vacationSet, winOnlyWeekends],
   );
 
   return (
@@ -178,7 +188,7 @@ function StatsPageContent({
   );
 }
 
-function HabitStatsSection({ habit, recordIndex, vacationSet }: HabitStatsSectionProps) {
+function HabitStatsSection({ habit, recordIndex, vacationSet, winOnlyWeekends }: HabitStatsSectionProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const pageCount = getPageCount(habit);
@@ -251,7 +261,7 @@ function HabitStatsSection({ habit, recordIndex, vacationSet }: HabitStatsSectio
     pages.push(
       <View key={i} style={{ width: contentWidth }}>
         <View style={styles.statsContent}>
-          <StatsPageContent habit={habit} recordIndex={recordIndex} checker={LEVEL_CHECKERS[i]} colors={colors} vacationSet={vacationSet} />
+          <StatsPageContent habit={habit} recordIndex={recordIndex} checker={LEVEL_CHECKERS[i]} colors={colors} vacationSet={vacationSet} winOnlyWeekends={winOnlyWeekends} />
         </View>
       </View>,
     );
@@ -286,7 +296,7 @@ function HabitStatsSection({ habit, recordIndex, vacationSet }: HabitStatsSectio
 
       {pageCount <= 1 ? (
         <View style={styles.statsContent}>
-          <StatsPageContent habit={habit} recordIndex={recordIndex} checker={LEVEL_CHECKERS[0]} colors={colors} vacationSet={vacationSet} />
+          <StatsPageContent habit={habit} recordIndex={recordIndex} checker={LEVEL_CHECKERS[0]} colors={colors} vacationSet={vacationSet} winOnlyWeekends={winOnlyWeekends} />
         </View>
       ) : (
         <View style={{ overflow: 'hidden', width: contentWidth }}>
@@ -304,8 +314,9 @@ function HabitStatsSection({ habit, recordIndex, vacationSet }: HabitStatsSectio
 // --- Main screen ---
 
 export default function StatsScreen() {
-  const { habits } = useHabits();
+  const { habits, isOffline } = useHabits();
   const { dateSet: vacationSet } = useVacationDays();
+  const { winOnlyWeekends } = useWinOnlyWeekends();
 
   // Load every record the user has so streaks can scan all the way back.
   // The chart still windows itself to 18 display months internally — this
@@ -332,10 +343,12 @@ export default function StatsScreen() {
         <ThemedText style={styles.subtitle}>18-month rolling view</ThemedText>
 
         {habits.length === 0 ? (
-          <ThemedText style={styles.empty}>No habits to show stats for</ThemedText>
+          <ThemedText style={styles.empty}>
+            {isOffline ? 'No internet connection' : 'No habits to show stats for'}
+          </ThemedText>
         ) : (
           habits.map((habit) => (
-            <HabitStatsSection key={habit.id} habit={habit} recordIndex={recordIndex} vacationSet={vacationSet} />
+            <HabitStatsSection key={habit.id} habit={habit} recordIndex={recordIndex} vacationSet={vacationSet} winOnlyWeekends={winOnlyWeekends} />
           ))
         )}
       </ScrollView>

@@ -14,7 +14,7 @@ export default function ReviveHabitScreen() {
   const insets = useSafeAreaInsets();
   const footerReserve = insets.bottom + 96;
   const { reviveHabit } = useHabits();
-  const { habits: archived, isLoading } = useArchivedHabits();
+  const { habits: archived, isLoading, isOffline } = useArchivedHabits();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reviving, setReviving] = useState(false);
 
@@ -39,7 +39,9 @@ export default function ReviveHabitScreen() {
         {isLoading ? (
           <ThemedText style={styles.emptyText}>Loading...</ThemedText>
         ) : archived.length === 0 ? (
-          <ThemedText style={styles.emptyText}>No archived habits</ThemedText>
+          <ThemedText style={styles.emptyText}>
+            {isOffline ? 'No internet connection' : 'No archived habits'}
+          </ThemedText>
         ) : (
           archived.map((h) => {
             const isSelected = selectedId === h.id;

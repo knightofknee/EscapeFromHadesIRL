@@ -9,6 +9,7 @@ import { useHabits } from '@/hooks/use-habits';
 import { useHabitRecords } from '@/hooks/use-habit-records';
 import { useQuestScores } from '@/hooks/use-quest-scores';
 import { useVacationDays } from '@/hooks/use-vacation-days';
+import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
 import { QuestColors } from '@/constants/theme';
 import { CATEGORY_NAMES, TEMPLATE_BY_KEY } from '@/constants/quest-templates';
 import { formatDate } from '@/lib/date-utils';
@@ -30,13 +31,14 @@ export default function QuestDetailScreen() {
   const { startDate, endDate } = useMemo(get30DayWindow, []);
   const { records } = useHabitRecords(startDate, endDate);
   const { dateSet: vacationSet } = useVacationDays();
+  const { winOnlyWeekends } = useWinOnlyWeekends();
   const [deleting, setDeleting] = useState(false);
   const [editingHabits, setEditingHabits] = useState(false);
 
   const quest = quests.find((q) => q.id === id);
   const questsRef = useRef(quests);
   useEffect(() => { questsRef.current = quests; }, [quests]);
-  const scores = useQuestScores(quest ? [quest] : [], habits, records, vacationSet);
+  const scores = useQuestScores(quest ? [quest] : [], habits, records, vacationSet, winOnlyWeekends);
   const questScore = quest ? scores.byQuest.get(quest.id) : undefined;
   const linkedHabits = useMemo(
     () => habits.filter((h) => quest?.linkedHabitIds.includes(h.id)),

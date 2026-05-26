@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/auth-context';
+import { useOfflineGuard } from '@/contexts/offline-context';
 import { db, doc, setDoc, onSnapshot } from '@/lib/firebase/firestore';
 
 export type SuccessLevel = 'unrecorded' | 'recorded' | 'double' | 'triple';
@@ -27,6 +28,7 @@ export const DEFAULT_SUCCESS_COLORS = {
 
 export function useSuccessColors(colorScheme: 'light' | 'dark') {
   const { user } = useAuth();
+  const { requireOnline } = useOfflineGuard();
   const [customColors, setCustomColors] = useState<SuccessColors | null>(null);
 
   useEffect(() => {
@@ -53,18 +55,20 @@ export function useSuccessColors(colorScheme: 'light' | 'dark') {
   const setSuccessColor = useCallback(
     (level: SuccessLevel, color: string) => {
       if (!user) return;
+      if (!requireOnline()) return;
       const next = { ...colors, [level]: color };
       setCustomColors(next);
       setDoc(doc(db, 'userSettings', user.uid), { successColors: next }, { merge: true });
     },
-    [user, colors],
+    [user, requireOnline, colors],
   );
 
   const resetColors = useCallback(() => {
     if (!user) return;
+    if (!requireOnline()) return;
     setCustomColors(null);
     setDoc(doc(db, 'userSettings', user.uid), { successColors: null }, { merge: true });
-  }, [user]);
+  }, [user, requireOnline]);
 
   return { colors, setSuccessColor, resetColors, isCustom: customColors !== null };
 }

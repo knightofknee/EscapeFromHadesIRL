@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { formatDate } from '@/lib/date-utils';
+import { shouldSkipWeekend } from '@/lib/habit-scoring';
 import { FOUNDATION_KEYS } from '@/constants/quest-templates';
 import type { Quest } from '@/types/quest';
 import type { Habit, HabitRecord } from '@/types/habit';
@@ -45,21 +46,38 @@ export function scoreQuest(
   habits: Habit[],
   recordIndex: Map<string, HabitRecord>,
   dates: string[],
+  winOnlyWeekends: boolean = false,
 ): QuestScore {
   const linkedHabits = habits.filter((h) => quest.linkedHabitIds.includes(h.id));
+  // For positive quests with "Win only Weekends" on: a weekend day where
+  // every linked habit would be weekend-skipped contributes nothing — it's
+  // a day where the user had nothing to gain and shouldn't lose. Pre-filter
+  // such dates out of this quest's window so targetDays scales down with
+  // them, just like vacation days do. Reduce quests are unaffected
+  // (their win condition is non-completion, so the rule doesn't translate).
+  const activeDates =
+    winOnlyWeekends && quest.questType === 'positive' && linkedHabits.length > 0
+      ? dates.filter((date) =>
+          linkedHabits.some((habit) => {
+            const record = recordIndex.get(`${habit.id}_${date}`);
+            return !shouldSkipWeekend(habit, record, date, true);
+          }),
+        )
+      : dates;
   // Window size = number of *active* days (vacation days are stripped
-  // upstream by the caller). Target scales with the active window so a
-  // user on vacation isn't punished — e.g. a 7-day-per-week quest needs
-  // the user to do it every active day, regardless of how many vacation
-  // days were excluded from the window.
-  const windowDays = Math.max(1, dates.length);
+  // upstream by the caller; weekend non-positive days are stripped here
+  // when "Win only Weekends" is enabled). Target scales with the active
+  // window so a user on vacation or coasting through a quiet weekend isn't
+  // punished — e.g. a 7-day-per-week quest needs the user to do it every
+  // active day, regardless of how many days were excluded from the window.
+  const windowDays = Math.max(1, activeDates.length);
   const targetDays = Math.max(1, Math.round((quest.targetDaysPerWeek / 7) * windowDays));
 
   let completedDays = 0;
   let doubleDays = 0;
   let idealDays = 0;
 
-  for (const date of dates) {
+  for (const date of activeDates) {
     let dayCompleted = false;
     let dayDouble = false;
     let dayIdeal = false;
@@ -162,6 +180,7 @@ export function useQuestScores(
   habits: Habit[],
   records: HabitRecord[],
   vacationSet?: Set<string>,
+  winOnlyWeekends: boolean = false,
 ): QuestScores {
   return useMemo(() => {
     // Vacation days are removed from the timeline before scoring — the
@@ -185,7 +204,7 @@ export function useQuestScores(
     let totalScore = 0;
 
     for (const quest of quests) {
-      const qs = scoreQuest(quest, habits, recordIndex, dates);
+      const qs = scoreQuest(quest, habits, recordIndex, dates, winOnlyWeekends);
       byQuest.set(quest.id, qs);
       totalScore += qs.score;
     }
@@ -202,5 +221,5 @@ export function useQuestScores(
     const runScore = Math.round(totalScore * multiplier);
 
     return { byQuest, foundationCount, runScore };
-  }, [quests, habits, records, vacationSet]);
+  }, [quests, habits, records, vacationSet, winOnlyWeekends]);
 }

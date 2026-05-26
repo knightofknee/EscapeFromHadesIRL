@@ -20,7 +20,7 @@ import type { HabitRecord, TripleValue, QuadValue } from '@/types/habit';
 
 export default function WeekViewScreen() {
   const { user } = useAuth();
-  const { habits } = useHabits();
+  const { habits, isOffline } = useHabits();
   const colorScheme = useColorScheme();
   const scheme = colorScheme ?? 'light';
   const colors = Colors[scheme];
@@ -152,7 +152,9 @@ export default function WeekViewScreen() {
 
         {habits.length === 0 ? (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <ThemedText style={{ opacity: 0.5, fontSize: 16 }}>No habits yet</ThemedText>
+            <ThemedText style={{ opacity: 0.5, fontSize: 16 }}>
+              {isOffline ? 'No internet connection' : 'No habits yet'}
+            </ThemedText>
           </View>
         ) : (
           <GestureDetector gesture={swipeGesture}>

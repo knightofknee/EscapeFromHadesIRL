@@ -5,6 +5,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useHabits } from '@/hooks/use-habits';
 import { useAuth } from '@/contexts/auth-context';
+import { useOfflineGuard } from '@/contexts/offline-context';
 import { db, doc, setDoc } from '@/lib/firebase/firestore';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -17,6 +18,7 @@ type ImportStep = 'capture' | 'processing' | 'review' | 'done';
 export default function ImportScreen() {
   const { habits } = useHabits();
   const { user } = useAuth();
+  const { requireOnline } = useOfflineGuard();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const { height: winHeight } = useWindowDimensions();
@@ -77,6 +79,7 @@ export default function ImportScreen() {
 
   async function handleImport() {
     if (!user || !parsedCalendar) return;
+    if (!requireOnline()) return;
 
     const daysWithMarks = parsedCalendar.days.filter((d) => d.marks.length > 0);
     if (daysWithMarks.length === 0) {

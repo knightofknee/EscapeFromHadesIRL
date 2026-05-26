@@ -1,6 +1,6 @@
 import { formatDate } from '@/lib/date-utils';
 import type { Habit, HabitRecord } from '@/types/habit';
-import type { CompletionChecker } from '@/lib/habit-scoring';
+import { shouldSkipWeekend, type CompletionChecker } from '@/lib/habit-scoring';
 
 /**
  * Compute current and longest streaks for a habit, treating vacation
@@ -19,12 +19,13 @@ export function computeStreak(
   recordIndex: Map<string, HabitRecord>,
   checker: CompletionChecker,
   vacationSet: Set<string>,
-  options?: { now?: Date; safetyCap?: number },
+  options?: { now?: Date; safetyCap?: number; winOnlyWeekends?: boolean },
 ): { current: number; longest: number } {
   const now = options?.now ?? new Date();
   // Hard ceiling to avoid pathological infinite loops if dates ever go
   // sideways. 100 years ≈ 36500 iterations of Map.get — microseconds.
   const safetyCap = options?.safetyCap ?? 365 * 100;
+  const winOnlyWeekends = options?.winOnlyWeekends ?? false;
 
   // Find the earliest record date for this habit. If none, no streak.
   let earliestForHabit: string | null = null;
@@ -43,9 +44,18 @@ export function computeStreak(
   const todayStr = formatDate(now);
   const todayIsVacation = vacationSet.has(todayStr);
   const todayRecord = recordIndex.get(`${habit.id}_${todayStr}`);
-  // Vacation today = "skipped". Streak preserved from yesterday but not
-  // incremented. Same effect on the math as todayCompleted being false.
-  const todayCompleted = todayIsVacation ? false : checker(habit, todayRecord);
+  const todaySkippedForWeekend = shouldSkipWeekend(
+    habit,
+    todayRecord,
+    todayStr,
+    winOnlyWeekends,
+    checker,
+  );
+  // Vacation today OR weekend-skipped today = "skipped". Streak preserved
+  // from yesterday but not incremented. Same effect on the math as
+  // todayCompleted being false.
+  const todayCompleted =
+    todayIsVacation || todaySkippedForWeekend ? false : checker(habit, todayRecord);
 
   const checkDate = new Date(now);
   checkDate.setDate(checkDate.getDate() - 1);
@@ -59,8 +69,12 @@ export function computeStreak(
     if (earliestForHabit !== null && dateStr < earliestForHabit) break;
     if (earliestForHabit === null) break;
 
-    if (!vacationSet.has(dateStr)) {
-      const record = recordIndex.get(`${habit.id}_${dateStr}`);
+    const record = recordIndex.get(`${habit.id}_${dateStr}`);
+    const skipped =
+      vacationSet.has(dateStr) ||
+      shouldSkipWeekend(habit, record, dateStr, winOnlyWeekends, checker);
+
+    if (!skipped) {
       const completed = checker(habit, record);
 
       if (completed) {

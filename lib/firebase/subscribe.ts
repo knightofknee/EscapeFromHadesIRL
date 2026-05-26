@@ -1,0 +1,79 @@
+import {
+  onSnapshot,
+  type DocumentReference,
+  type FirestoreError,
+  type Query,
+  type Unsubscribe,
+} from 'firebase/firestore';
+
+type FirestoreRef = Query<any> | DocumentReference<any>;
+
+interface OfflineCallbacks {
+  onError?: (error: FirestoreError) => void;
+  setOffline: (offline: boolean) => void;
+}
+
+interface OfflineOptions {
+  offlineTimeoutMs?: number;
+}
+
+/**
+ * Wraps `onSnapshot` with offline-aware tracking so callers can show
+ * "No internet" rather than "No data yet" when an empty result is the
+ * product of a failed call.
+ *
+ * `setOffline(true)` fires when (a) we've waited longer than
+ * `offlineTimeoutMs` without a server snapshot, (b) we'd previously
+ * reached the server and went back to cache-only, or (c) the error
+ * handler ran. The very first cache-only snapshot does NOT flip
+ * offline true — that flicker is suppressed during normal startup.
+ *
+ * `{ includeMetadataChanges: true }` is set implicitly so the listener
+ * re-fires on cache↔server transitions and we recover from offline
+ * back to online without the consumer doing anything.
+ */
+export function subscribeWithOfflineState(
+  ref: FirestoreRef,
+  onNext: (snapshot: any) => void,
+  callbacks: OfflineCallbacks,
+  options: OfflineOptions = {},
+): Unsubscribe {
+  const timeoutMs = options.offlineTimeoutMs ?? 5000;
+  let seenServer = false;
+  let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+    timer = null;
+    if (!seenServer) callbacks.setOffline(true);
+  }, timeoutMs);
+
+  const clearTimer = () => {
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  };
+
+  const unsubscribe = onSnapshot(
+    ref as any,
+    { includeMetadataChanges: true },
+    (snapshot: any) => {
+      onNext(snapshot);
+      if (snapshot.metadata.fromCache) {
+        if (seenServer) callbacks.setOffline(true);
+      } else {
+        seenServer = true;
+        clearTimer();
+        callbacks.setOffline(false);
+      }
+    },
+    (error: FirestoreError) => {
+      clearTimer();
+      callbacks.setOffline(true);
+      callbacks.onError?.(error);
+    },
+  );
+
+  return () => {
+    clearTimer();
+    unsubscribe();
+  };
+}

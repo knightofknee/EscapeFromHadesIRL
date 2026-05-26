@@ -18,7 +18,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 const DISMISS_BAR_HEIGHT = 40;
 
 export default function NotesListScreen() {
-  const { notes, isLoading, createNote, deleteNote, togglePinNote } = useNotes();
+  const { notes, isLoading, isOffline, createNote, deleteNote, togglePinNote } = useNotes();
   const { tags, deleteTag } = useTags();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
@@ -159,7 +159,13 @@ export default function NotesListScreen() {
         ListEmptyComponent={
           <View style={styles.empty}>
             <ThemedText style={styles.emptyText}>
-              {isLoading ? 'Loading...' : searchQuery || selectedTagId ? 'No matching notes' : 'No notes yet'}
+              {isLoading
+                ? 'Loading...'
+                : searchQuery || selectedTagId
+                  ? 'No matching notes'
+                  : isOffline
+                    ? 'No internet connection'
+                    : 'No notes yet'}
             </ThemedText>
           </View>
         }

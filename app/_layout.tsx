@@ -10,6 +10,7 @@ import 'react-native-reanimated';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAppearance } from '@/hooks/use-appearance';
 import { AuthProvider, useAuth } from '@/contexts/auth-context';
+import { OfflineProvider } from '@/contexts/offline-context';
 import { getHomeScreen } from '@/hooks/use-home-screen';
 import { db, collection, doc, setDoc } from '@/lib/firebase/firestore';
 import type { User } from 'firebase/auth';
@@ -98,10 +99,12 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <KeyboardProvider>
         <AuthProvider>
-          <ThemeProvider value={effectiveScheme === 'dark' ? DarkTheme : DefaultTheme}>
-            <RootNavigator />
-            <StatusBar style={effectiveScheme === 'dark' ? 'light' : 'dark'} />
-          </ThemeProvider>
+          <OfflineProvider>
+            <ThemeProvider value={effectiveScheme === 'dark' ? DarkTheme : DefaultTheme}>
+              <RootNavigator />
+              <StatusBar style={effectiveScheme === 'dark' ? 'light' : 'dark'} />
+            </ThemeProvider>
+          </OfflineProvider>
         </AuthProvider>
       </KeyboardProvider>
     </GestureHandlerRootView>
