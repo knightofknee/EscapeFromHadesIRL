@@ -25,6 +25,10 @@ function getLevelLabel(habit: Habit, levelIndex: number): string {
 
 function getPageCount(habit: Habit): number {
   if (habit.recordingMode === 'quad') return 3;
+  if (habit.recordingMode === 'steps') return Math.min(3, Math.max(1, habit.stepGoals?.length ?? 1));
+  // Meditation always has 3 reachable tiers (yes/goal/ideal) since ideal is
+  // a universal threshold independent of the user's per-session config.
+  if (habit.recordingMode === 'meditation') return 3;
   if (habit.recordingMode === 'triple') return 2;
   return 1;
 }

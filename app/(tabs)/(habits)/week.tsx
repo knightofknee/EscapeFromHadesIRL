@@ -42,6 +42,9 @@ export default function WeekViewScreen() {
       if (!user) return;
       const habit = habits.find((h) => h.id === habitId);
       if (!habit) return;
+      // Steps habits are auto-filled and meditation habits open their own
+      // timer modal — neither is editable from the week-view tile tap.
+      if (habit.recordingMode === 'steps' || habit.recordingMode === 'meditation') return;
 
       const existingRecords = recordsByDate[date];
       const existing = existingRecords?.get(habitId);

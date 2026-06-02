@@ -21,6 +21,8 @@ function isCompleted(habit: Habit, record?: HabitRecord): boolean {
       return record.value !== false && record.value !== 'no';
     case 'triple':
       return record.value === 'yes' || record.value === 'double';
+    case 'steps':
+    case 'meditation':
     case 'quad':
       return record.value === 'yes' || record.value === 'goal' || record.value === 'ideal';
     case 'counter':

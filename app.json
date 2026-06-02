@@ -14,7 +14,8 @@
       "usesAppleSignIn": true,
       "deploymentTarget": "16.0",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSHealthShareUsageDescription": "We read your step count from Apple Health to auto-record your Steps Counter habit. You can disable this any time in Settings → Health."
       },
       "buildNumber": "1"
     },
@@ -60,6 +61,13 @@
               ]
             }
           }
+        }
+      ],
+      [
+        "@kingstinct/react-native-healthkit",
+        {
+          "NSHealthShareUsageDescription": "We read your step count from Apple Health to auto-record your Steps Counter habit. You can disable this any time in Settings → Health.",
+          "background": false
         }
       ]
     ],

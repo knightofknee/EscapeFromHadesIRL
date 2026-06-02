@@ -58,7 +58,11 @@ export function useTodayRecords(dateStr?: string) {
   );
 
   const recordHabit = useCallback(
-    (habitId: string, value: boolean | TripleValue | QuadValue | number | string) => {
+    (
+      habitId: string,
+      value: boolean | TripleValue | QuadValue | number | string,
+      extra?: { source?: 'auto' | 'manual'; steps?: number },
+    ) => {
       if (!user) return;
 
       const docId = `${habitId}_${activeDate.current}`;
@@ -69,6 +73,8 @@ export function useTodayRecords(dateStr?: string) {
         date: activeDate.current,
         value,
         recordedAt: Date.now(),
+        ...(extra?.source !== undefined ? { source: extra.source } : {}),
+        ...(extra?.steps !== undefined ? { steps: extra.steps } : {}),
       };
 
       // Optimistic local update — instant feel

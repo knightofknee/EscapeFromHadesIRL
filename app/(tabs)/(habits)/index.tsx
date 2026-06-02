@@ -16,6 +16,8 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TileGrid } from '@/components/habits/tile-grid';
 import { QuickInputModal } from '@/components/ui/quick-input-modal';
+import { MeditationTimerModal } from '@/components/habits/meditation-timer-modal';
+import { StepsModal } from '@/components/habits/steps-modal';
 import { VacationMenu } from '@/components/habits/vacation-menu';
 import { VacationRangeModal } from '@/components/habits/vacation-range-modal';
 import { VacationTile } from '@/components/habits/vacation-tile';
@@ -23,7 +25,12 @@ import { VacationEditModal } from '@/components/habits/vacation-edit-modal';
 import { useAuth } from '@/contexts/auth-context';
 import { useOfflineGuard } from '@/contexts/offline-context';
 import { useVacationDays } from '@/hooks/use-vacation-days';
-import { buildDateRange, createVacationDays } from '@/lib/vacation-days';
+import {
+  buildDateRange,
+  createVacationDays,
+  deleteVacationDay,
+  deleteVacationDaysBulk,
+} from '@/lib/vacation-days';
 import { useHabits } from '@/hooks/use-habits';
 import { useTodayRecords } from '@/hooks/use-today-records';
 import { useTodayDate } from '@/hooks/use-today-date';
@@ -45,6 +52,8 @@ export default function HabitsDayScreen() {
 
   const { createNote } = useNotes();
   const [valueInputHabit, setValueInputHabit] = useState<Habit | null>(null);
+  const [meditationHabit, setMeditationHabit] = useState<Habit | null>(null);
+  const [stepsHabit, setStepsHabit] = useState<Habit | null>(null);
   const [vacationMenuVisible, setVacationMenuVisible] = useState(false);
   const [vacationRangeVisible, setVacationRangeVisible] = useState(false);
   const [vacationEditVisible, setVacationEditVisible] = useState(false);
@@ -190,14 +199,28 @@ export default function HabitsDayScreen() {
         case 'value':
           setValueInputHabit(habit);
           break;
+        case 'steps':
+          // Steps tile opens the HealthKit-backed steps modal — shows the
+          // day's count, persists the tier, and lets the user refresh.
+          setStepsHabit(habit);
+          break;
+        case 'meditation':
+          // Meditation tile opens the timer + sessions modal.
+          setMeditationHabit(habit);
+          break;
       }
     },
     [habits, toggleBoolean, cycleTriple, cycleQuad, incrementCounter],
   );
 
-  const handleLongPress = useCallback((habitId: string) => {
-    router.push({ pathname: '/tile-settings', params: { habitId } });
-  }, []);
+  const handleLongPress = useCallback(
+    (habitId: string) => {
+      // Pass the viewed date so per-day edits (counter direct-edit, steps
+      // manual override) target the day the user actually long-pressed.
+      router.push({ pathname: '/tile-settings', params: { habitId, date: viewedDate } });
+    },
+    [viewedDate],
+  );
 
   const handleValueSubmit = useCallback(
     (value: string) => {
@@ -351,6 +374,29 @@ export default function HabitsDayScreen() {
           visible={vacationMenuVisible}
           onClose={() => setVacationMenuVisible(false)}
           onSelectVacation={() => setVacationRangeVisible(true)}
+          isVacationDay={isVacationDay}
+          blockSize={isVacationDay ? getContiguousBlock(viewedDate).length : 0}
+          onRemoveDay={async () => {
+            if (!user) return;
+            if (!requireOnline()) return;
+            try {
+              await deleteVacationDay({ userId: user.uid, date: viewedDate });
+            } catch (err) {
+              console.error('Failed to remove vacation day:', err);
+            }
+          }}
+          onRemoveBlock={async () => {
+            if (!user) return;
+            if (!requireOnline()) return;
+            try {
+              await deleteVacationDaysBulk({
+                userId: user.uid,
+                dates: getContiguousBlock(viewedDate),
+              });
+            } catch (err) {
+              console.error('Failed to remove vacation block:', err);
+            }
+          }}
         />
 
         <VacationRangeModal
@@ -381,6 +427,28 @@ export default function HabitsDayScreen() {
             initialColor={viewedVacation.color}
             contiguousBlock={getContiguousBlock(viewedDate)}
             onClose={() => setVacationEditVisible(false)}
+          />
+        )}
+
+        {user && (
+          <MeditationTimerModal
+            visible={meditationHabit != null}
+            habit={meditationHabit}
+            record={meditationHabit ? records.get(meditationHabit.id) : undefined}
+            date={viewedDate}
+            userId={user.uid}
+            onClose={() => setMeditationHabit(null)}
+          />
+        )}
+
+        {user && (
+          <StepsModal
+            visible={stepsHabit != null}
+            habit={stepsHabit}
+            record={stepsHabit ? records.get(stepsHabit.id) : undefined}
+            date={viewedDate}
+            userId={user.uid}
+            onClose={() => setStepsHabit(null)}
           />
         )}
       </ThemedView>

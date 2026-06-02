@@ -134,6 +134,21 @@ export async function deleteVacationDay(params: {
   await deleteDoc(ref);
 }
 
+/** Remove vacation status from every date in `dates` in one batch. */
+export async function deleteVacationDaysBulk(params: {
+  userId: string;
+  dates: string[];
+}): Promise<void> {
+  const { userId, dates } = params;
+  if (dates.length === 0) return;
+  const batch = writeBatch(db);
+  for (const date of dates) {
+    const id = vacationDocId(userId, date);
+    batch.delete(doc(db, VACATION_COLLECTION, id));
+  }
+  await batch.commit();
+}
+
 // Re-export `collection` so callers can build queries without hitting two
 // import paths. Keeps vacation-day plumbing in one file.
 export { collection };

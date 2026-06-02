@@ -17,10 +17,8 @@ import {
   updateVacationDay,
   updateVacationDaysBulk,
   deleteVacationDay,
-  VACATION_COLLECTION,
-  vacationDocId,
+  deleteVacationDaysBulk,
 } from '@/lib/vacation-days';
-import { db, doc, writeBatch } from '@/lib/firebase/firestore';
 import { useOfflineGuard } from '@/contexts/offline-context';
 
 const MAX_LABEL_CHARS = 500;
@@ -114,12 +112,7 @@ export function VacationEditModal({
     setSubmitting(true);
     try {
       if (scope === 'block' && hasBlock) {
-        // Batch delete every day in the block.
-        const batch = writeBatch(db);
-        for (const d of targetDates) {
-          batch.delete(doc(db, VACATION_COLLECTION, vacationDocId(userId, d)));
-        }
-        await batch.commit();
+        await deleteVacationDaysBulk({ userId, dates: targetDates });
       } else {
         await deleteVacationDay({ userId, date });
       }

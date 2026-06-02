@@ -33,6 +33,8 @@ function getStateColor(
       const v = record.value as TripleValue;
       return v === 'double' ? successColors.double : v === 'yes' ? successColors.recorded : successColors.unrecorded;
     }
+    case 'steps':
+    case 'meditation':
     case 'quad': {
       const q = record.value as QuadValue;
       return q === 'ideal' ? successColors.triple : q === 'goal' ? successColors.double : q === 'yes' ? successColors.recorded : successColors.unrecorded;
