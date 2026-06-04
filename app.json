@@ -12,7 +12,6 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.briancarlisle.escapefromhadesirl",
       "usesAppleSignIn": true,
-      "deploymentTarget": "16.0",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSHealthShareUsageDescription": "We read your step count from Apple Health to auto-record your Steps Counter habit. You can disable this any time in Settings → Health."

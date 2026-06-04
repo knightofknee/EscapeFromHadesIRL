@@ -14,6 +14,10 @@ export type QuestTemplate = {
 export const FOUNDATION_KEYS = ['walk', 'meditate', 'read'] as const;
 export type FoundationKey = (typeof FOUNDATION_KEYS)[number];
 
+// Curated base set, in display order: the 3 auto-recording habit types
+// (walk→steps, meditate, write→creative writing) first, then read, then
+// exercise. The rest are hidden for now (commented out below) — re-enable
+// by uncommenting.
 export const QUEST_TEMPLATES: QuestTemplate[] = [
   {
     key: 'walk',
@@ -34,15 +38,6 @@ export const QUEST_TEMPLATES: QuestTemplate[] = [
     isFoundation: true,
   },
   {
-    key: 'read',
-    name: 'Scrolls of Elysium',
-    description: 'Read. The blessed dead never stopped learning.',
-    category: 'mental',
-    questType: 'positive',
-    targetDaysPerWeek: 5,
-    isFoundation: true,
-  },
-  {
     key: 'write',
     name: "Muse's Quill",
     description: 'Write. The Muses reward those who give their thoughts form.',
@@ -52,22 +47,13 @@ export const QUEST_TEMPLATES: QuestTemplate[] = [
     isFoundation: false,
   },
   {
-    key: 'eat-right',
-    name: 'Nectar and Ambrosia',
-    description: 'Eat well. Even gods require proper sustenance.',
-    category: 'wellness',
+    key: 'read',
+    name: 'Scrolls of Elysium',
+    description: 'Read. The blessed dead never stopped learning.',
+    category: 'mental',
     questType: 'positive',
-    targetDaysPerWeek: 6,
-    isFoundation: false,
-  },
-  {
-    key: 'sleep',
-    name: 'Rest of the Shade',
-    description: 'Sleep with discipline. The shades who rest, rise stronger.',
-    category: 'wellness',
-    questType: 'positive',
-    targetDaysPerWeek: 6,
-    isFoundation: false,
+    targetDaysPerWeek: 5,
+    isFoundation: true,
   },
   {
     key: 'exercise',
@@ -78,15 +64,35 @@ export const QUEST_TEMPLATES: QuestTemplate[] = [
     targetDaysPerWeek: 4,
     isFoundation: false,
   },
-  {
-    key: 'hydrate',
-    name: 'Font of Mnemosyne',
-    description: 'Drink water. The river of memory sustains those who drink deep.',
-    category: 'wellness',
-    questType: 'positive',
-    targetDaysPerWeek: 7,
-    isFoundation: false,
-  },
+
+  // --- Hidden for now — re-enable later by uncommenting --------------------
+  // {
+  //   key: 'eat-right',
+  //   name: 'Nectar and Ambrosia',
+  //   description: 'Eat well. Even gods require proper sustenance.',
+  //   category: 'wellness',
+  //   questType: 'positive',
+  //   targetDaysPerWeek: 6,
+  //   isFoundation: false,
+  // },
+  // {
+  //   key: 'sleep',
+  //   name: 'Rest of the Shade',
+  //   description: 'Sleep with discipline. The shades who rest, rise stronger.',
+  //   category: 'wellness',
+  //   questType: 'positive',
+  //   targetDaysPerWeek: 6,
+  //   isFoundation: false,
+  // },
+  // {
+  //   key: 'hydrate',
+  //   name: 'Font of Mnemosyne',
+  //   description: 'Drink water. The river of memory sustains those who drink deep.',
+  //   category: 'wellness',
+  //   questType: 'positive',
+  //   targetDaysPerWeek: 7,
+  //   isFoundation: false,
+  // },
 ];
 
 export const TEMPLATE_BY_KEY = Object.fromEntries(

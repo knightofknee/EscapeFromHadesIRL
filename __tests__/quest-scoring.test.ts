@@ -173,12 +173,30 @@ describe('scoreQuest - reduce quests', () => {
     expect(result.score).toBe(100);
   });
 
-  test('all days recorded = 0 good days', () => {
-    const quest = makeQuest({ questType: 'reduce' });
+  test('reduce: doing it every day blows past the max → 0', () => {
+    // max 2/week over 30 days ≈ 9 allowed; doing it all 30 days is way over.
+    const quest = makeQuest({ questType: 'reduce', targetDaysPerWeek: 2 });
     const entries = dates.map((d) => [`h1_${d}`, true] as [string, any]);
     const result = scoreQuest(quest, habits, makeRecordIndex(entries), dates);
-    expect(result.completedDays).toBe(0);
+    expect(result.completedDays).toBe(0); // 0 clean days
     expect(result.score).toBe(0);
+  });
+
+  test('reduce: staying within the weekly max scores 100', () => {
+    const quest = makeQuest({ questType: 'reduce', targetDaysPerWeek: 2 });
+    // Did it on ~9 days (the allowance over 30 days) → still within budget.
+    const entries = dates.slice(0, 9).map((d) => [`h1_${d}`, true] as [string, any]);
+    const result = scoreQuest(quest, habits, makeRecordIndex(entries), dates);
+    expect(result.score).toBe(100);
+  });
+
+  test('reduce: exceeding the weekly max scales the score down', () => {
+    const quest = makeQuest({ questType: 'reduce', targetDaysPerWeek: 2 });
+    // Did it 20 of 30 days — well over the ~9 allowed, but not every day.
+    const entries = dates.slice(0, 20).map((d) => [`h1_${d}`, true] as [string, any]);
+    const result = scoreQuest(quest, habits, makeRecordIndex(entries), dates);
+    expect(result.score).toBeGreaterThan(0);
+    expect(result.score).toBeLessThan(100);
   });
 
   test('quad habit in reduce quest: "yes"/"goal"/"ideal" all count as done', () => {

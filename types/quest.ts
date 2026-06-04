@@ -13,6 +13,11 @@ export type Quest = {
   questType: QuestType;
   linkedHabitIds: string[];
   targetDaysPerWeek: number; // 1-7; for reduce quests: max allowed days per week
+  // For quad-type linked habits (steps/meditation/creativeWriting/quad): the
+  // minimum success level a day must reach to count — 1 = basic (yes), 2 =
+  // goal, 3 = ideal. Lets two quests on one habit set different bars.
+  // Undefined = 1 (basic); ignored for non-quad habits.
+  successLevel?: 1 | 2 | 3;
   status: 'active' | 'paused';
   activatedAt: number;
   createdAt: number;

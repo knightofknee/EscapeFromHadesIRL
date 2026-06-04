@@ -1,13 +1,14 @@
 import { useMemo, useState, useRef, useEffect } from 'react';
 import { ScrollView, View, Pressable, StyleSheet, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ScoreBar } from '@/components/quests/score-bar';
 import { useQuests } from '@/hooks/use-quests';
 import { useHabits } from '@/hooks/use-habits';
-import { useHabitRecords } from '@/hooks/use-habit-records';
 import { useQuestScores } from '@/hooks/use-quest-scores';
+import { useRecordsSnapshot } from '@/hooks/use-records-snapshot';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
 import { QuestColors } from '@/constants/theme';
@@ -15,10 +16,13 @@ import { CATEGORY_NAMES, TEMPLATE_BY_KEY } from '@/constants/quest-templates';
 import { formatDate } from '@/lib/date-utils';
 import { setPendingHabitCallback } from '@/lib/pending-habit-link';
 
-function get30DayWindow() {
+// 18-month window so the detail screen shows the same 30-day + 18-month scores
+// as the home. One-shot fetch on focus (see useRecordsSnapshot), not a live
+// listener — the 30-day score is derived from the same data.
+function get18MonthWindow() {
   const end = new Date();
   const start = new Date();
-  start.setDate(start.getDate() - 29);
+  start.setDate(start.getDate() - 548);
   return { startDate: formatDate(start), endDate: formatDate(end) };
 }
 
@@ -26,10 +30,11 @@ export default function QuestDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { quests, updateQuest, pauseQuest, deleteQuest } = useQuests();
+  const isFocused = useIsFocused();
+  const { quests, updateQuest, deleteQuest } = useQuests();
   const { habits } = useHabits();
-  const { startDate, endDate } = useMemo(get30DayWindow, []);
-  const { records } = useHabitRecords(startDate, endDate);
+  const { startDate, endDate } = useMemo(get18MonthWindow, []);
+  const records = useRecordsSnapshot(startDate, endDate, isFocused);
   const { dateSet: vacationSet } = useVacationDays();
   const { winOnlyWeekends } = useWinOnlyWeekends();
   const [deleting, setDeleting] = useState(false);
@@ -38,12 +43,16 @@ export default function QuestDetailScreen() {
   const quest = quests.find((q) => q.id === id);
   const questsRef = useRef(quests);
   useEffect(() => { questsRef.current = quests; }, [quests]);
-  const scores = useQuestScores(quest ? [quest] : [], habits, records, vacationSet, winOnlyWeekends);
+  const scores = useQuestScores(quest ? [quest] : [], habits, records, vacationSet, winOnlyWeekends, isFocused);
   const questScore = quest ? scores.byQuest.get(quest.id) : undefined;
   const linkedHabits = useMemo(
     () => habits.filter((h) => quest?.linkedHabitIds.includes(h.id)),
     [habits, quest],
   );
+  // Success-level editing only applies to a quad-type linked habit.
+  const isQuadHabit =
+    linkedHabits.length > 0 &&
+    ['quad', 'steps', 'meditation', 'creativeWriting'].includes(linkedHabits[0].recordingMode);
 
   if (!quest) {
     return (
@@ -71,23 +80,6 @@ export default function QuestDetailScreen() {
           onPress: async () => {
             setDeleting(true);
             await deleteQuest(quest!.id);
-            router.back();
-          },
-        },
-      ],
-    );
-  }
-
-  function confirmPause() {
-    Alert.alert(
-      'Pause quest?',
-      'This quest will no longer count toward your run score.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Pause',
-          onPress: async () => {
-            await pauseQuest(quest!.id);
             router.back();
           },
         },
@@ -143,22 +135,34 @@ export default function QuestDetailScreen() {
               </ThemedText>
               {questScore && (
                 <ThemedText style={styles.scoreDetail}>
-                  {questScore.completedDays} days done · {questScore.targetDays} day goal per last 30 days
+                  {quest.questType === 'reduce'
+                    ? `${questScore.completedDays} clean ${questScore.completedDays === 1 ? 'day' : 'days'} · max ${quest.targetDaysPerWeek}×/wk over last 30 days`
+                    : `${questScore.completedDays} ${questScore.completedDays === 1 ? 'day' : 'days'} done · ${questScore.targetDays} day goal per last 30 days`}
                 </ThemedText>
               )}
               {(questScore?.doubleDays ?? 0) > 0 && (
                 <ThemedText style={styles.doubleDetail}>
-                  ★ {questScore!.doubleDays} days extra effort
+                  ★ {questScore!.doubleDays} {questScore!.doubleDays === 1 ? 'day' : 'days'} extra effort
                 </ThemedText>
               )}
               {(questScore?.idealDays ?? 0) > 0 && (
                 <ThemedText style={styles.doubleDetail}>
-                  ★ {questScore!.idealDays} ideal days
+                  ★ {questScore!.idealDays} ideal {questScore!.idealDays === 1 ? 'day' : 'days'}
                 </ThemedText>
               )}
             </View>
           </View>
           <ScoreBar score={questScore?.score ?? 0} height={8} />
+
+          <View style={styles.scoreDivider} />
+
+          <View style={styles.score18Header}>
+            <ThemedText style={styles.scoreLabel}>18-MONTH AVERAGE</ThemedText>
+            <ThemedText style={[styles.score18Value, { color: QuestColors.gold }]}>
+              {questScore?.score18mo ?? 0}%
+            </ThemedText>
+          </View>
+          <ScoreBar score={questScore?.score18mo ?? 0} height={8} color={QuestColors.gold} />
         </View>
 
         {/* Linked habits */}
@@ -225,11 +229,35 @@ export default function QuestDetailScreen() {
           )}
         </View>
 
+        {/* Level of success — only for a quad-type linked habit on a positive
+            quest. Editing just re-scores existing records, so it's reversible. */}
+        {quest.questType === 'positive' && isQuadHabit && (
+          <View style={styles.section}>
+            <ThemedText style={styles.sectionLabel}>LEVEL OF SUCCESS</ThemedText>
+            <ThemedText style={styles.dimText}>
+              Which tier of {linkedHabits[0]?.name} counts as a win. Changing it
+              just re-scores your existing records — nothing is lost.
+            </ThemedText>
+            <View style={styles.levelRow}>
+              {([1, 2, 3] as const).map((lvl) => {
+                const active = (quest.successLevel ?? 1) === lvl;
+                return (
+                  <Pressable
+                    key={lvl}
+                    style={[styles.levelChip, active && styles.levelChipActive]}
+                    onPress={() => updateQuest(quest.id, { successLevel: lvl })}>
+                    <ThemedText style={[styles.levelChipText, active && styles.levelChipTextActive]}>
+                      {lvl === 1 ? 'BASIC' : lvl === 2 ? 'GOAL' : 'IDEAL'}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        )}
+
         {/* Actions */}
         <View style={styles.actions}>
-          <Pressable style={styles.pauseBtn} onPress={confirmPause}>
-            <ThemedText style={styles.pauseText}>PAUSE QUEST</ThemedText>
-          </Pressable>
           <Pressable style={styles.deleteBtn} onPress={confirmDelete} disabled={deleting}>
             <ThemedText style={styles.deleteText}>
               {deleting ? 'Abandoning...' : 'ABANDON QUEST'}
@@ -343,6 +371,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: QuestColors.textDim,
   },
+  scoreDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: QuestColors.border,
+  },
+  score18Header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  score18Value: {
+    fontSize: 18,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
   doubleDetail: {
     fontSize: 12,
     color: QuestColors.gold,
@@ -413,22 +455,35 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: QuestColors.textDim,
   },
-  actions: {
-    gap: 10,
-    marginTop: 8,
+  levelRow: {
+    flexDirection: 'row',
+    gap: 8,
   },
-  pauseBtn: {
+  levelChip: {
+    flex: 1,
     borderWidth: 1,
     borderColor: QuestColors.border,
-    borderRadius: 8,
-    padding: 14,
+    borderRadius: 6,
+    paddingVertical: 10,
     alignItems: 'center',
+    backgroundColor: QuestColors.surface,
   },
-  pauseText: {
+  levelChipActive: {
+    backgroundColor: QuestColors.goldDim,
+    borderColor: QuestColors.gold,
+  },
+  levelChipText: {
     fontSize: 12,
     fontWeight: '700',
     color: QuestColors.textDim,
-    letterSpacing: 1,
+    letterSpacing: 0.5,
+  },
+  levelChipTextActive: {
+    color: QuestColors.gold,
+  },
+  actions: {
+    gap: 10,
+    marginTop: 8,
   },
   deleteBtn: {
     borderWidth: 1,

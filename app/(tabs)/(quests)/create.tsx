@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import {
   ScrollView,
   View,
@@ -7,7 +7,7 @@ import {
   StyleSheet,
   Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { useQuests } from '@/hooks/use-quests';
@@ -15,9 +15,17 @@ import { useHabits } from '@/hooks/use-habits';
 import { setPendingHabitCallback } from '@/lib/pending-habit-link';
 import { QuestColors } from '@/constants/theme';
 import { QUEST_TEMPLATES, CATEGORY_NAMES } from '@/constants/quest-templates';
-import type { QuestCategory, QuestType } from '@/types/quest';
+import type { QuestType } from '@/types/quest';
 
 const DAYS = [1, 2, 3, 4, 5, 6, 7];
+
+// Base challenges started from a home stub pre-link the matching auto-record
+// habit so the quest works immediately.
+const AUTO_RECORD_MODE_BY_TEMPLATE: Record<string, string> = {
+  walk: 'steps',
+  meditate: 'meditation',
+  write: 'creativeWriting',
+};
 
 export default function CreateQuestScreen() {
   const router = useRouter();
@@ -25,20 +33,53 @@ export default function CreateQuestScreen() {
   const { quests, createQuest } = useQuests();
   const { habits } = useHabits();
 
-  // For templates: 'pick' = choose template, 'habits' = link habits step
-  const [templateStep, setTemplateStep] = useState<'pick' | 'habits'>('pick');
+  // A home "Begin" stub routes here as ?templateKey=walk — preselect that
+  // template and jump straight to the link-habit step.
+  const params = useLocalSearchParams<{ templateKey?: string }>();
+  const paramTemplate =
+    params.templateKey && QUEST_TEMPLATES.some((t) => t.key === params.templateKey)
+      ? params.templateKey
+      : null;
 
-  const [mode, setMode] = useState<'template' | 'custom'>('template');
-  const [selectedTemplateKey, setSelectedTemplateKey] = useState<string | null>(null);
+  // For templates: 'pick' = choose template, 'habits' = link habits step.
+  const [templateStep, setTemplateStep] = useState<'pick' | 'habits'>(
+    paramTemplate ? 'habits' : 'pick',
+  );
+
+  // Default to custom: the base challenges live on the quests home now, so
+  // "+ NEW" is for custom pacts. A ?templateKey entry forces template mode.
+  const [mode, setMode] = useState<'template' | 'custom'>(
+    paramTemplate ? 'template' : 'custom',
+  );
+  const [selectedTemplateKey, setSelectedTemplateKey] = useState<string | null>(
+    paramTemplate,
+  );
 
   // Custom fields
   const [customName, setCustomName] = useState('');
   const [customDescription, setCustomDescription] = useState('');
-  const [customCategory, setCustomCategory] = useState<QuestCategory>('custom');
   const [customQuestType, setCustomQuestType] = useState<QuestType>('positive');
   const [targetDays, setTargetDays] = useState(5);
+  const [successLevel, setSuccessLevel] = useState<1 | 2 | 3>(1);
   const [linkedHabitIds, setLinkedHabitIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+
+  // Auto-link the matching auto-record habit once habits load (async), so a
+  // walk/meditate/write challenge works immediately.
+  const didAutoLink = useRef(false);
+  useEffect(() => {
+    if (didAutoLink.current || !paramTemplate) return;
+    const recMode = AUTO_RECORD_MODE_BY_TEMPLATE[paramTemplate];
+    if (!recMode) {
+      didAutoLink.current = true;
+      return;
+    }
+    const match = habits.find((h) => h.recordingMode === recMode);
+    if (match) {
+      setLinkedHabitIds([match.id]);
+      didAutoLink.current = true;
+    }
+  }, [paramTemplate, habits]);
 
   const activeTemplateKeys = useMemo(
     () => new Set(quests.filter((q) => q.status === 'active' && q.templateKey).map((q) => q.templateKey)),
@@ -49,6 +90,13 @@ export default function CreateQuestScreen() {
     () => QUEST_TEMPLATES.find((t) => t.key === selectedTemplateKey) ?? null,
     [selectedTemplateKey],
   );
+
+  // The single linked habit (custom quests link exactly one). The success-
+  // level field only applies to quad-type habits (yes/goal/ideal tiers).
+  const linkedHabit = habits.find((h) => h.id === linkedHabitIds[0]);
+  const isQuadHabit =
+    !!linkedHabit &&
+    ['quad', 'steps', 'meditation', 'creativeWriting'].includes(linkedHabit.recordingMode);
 
   function toggleHabit(id: string) {
     setLinkedHabitIds((prev) =>
@@ -71,6 +119,11 @@ export default function CreateQuestScreen() {
     }
 
     const habitIds = overrideLinkedHabitIds ?? linkedHabitIds;
+    // A quest with no linked habit can't track anything, so require one.
+    if (habitIds.length === 0) {
+      Alert.alert('Link a habit', 'A quest needs a linked habit to track progress.');
+      return;
+    }
 
     setSaving(true);
     try {
@@ -91,10 +144,12 @@ export default function CreateQuestScreen() {
           templateKey: null,
           name: customName.trim(),
           description: customDescription.trim(),
-          category: customCategory,
+          category: 'custom',
           questType: customQuestType,
           targetDaysPerWeek: targetDays,
           linkedHabitIds: habitIds,
+          // Only meaningful for a positive quest on a quad habit; else basic.
+          successLevel: customQuestType === 'positive' && isQuadHabit ? successLevel : 1,
           status: 'active',
         });
       }
@@ -130,14 +185,8 @@ export default function CreateQuestScreen() {
 
         <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
           <ThemedText style={styles.linkQuestion}>
-            Link a habit to {questName}?
+            Link a habit to {questName} to track it.
           </ThemedText>
-
-          <Pressable
-            style={[styles.skipBtn, linkedHabitIds.length === 0 && styles.skipBtnActive]}
-            onPress={() => handleSave([])}>
-            <ThemedText style={styles.skipText}>No thank you</ThemedText>
-          </Pressable>
 
           {habits.map((h) => {
             const linked = linkedHabitIds.includes(h.id);
@@ -275,29 +324,6 @@ export default function CreateQuestScreen() {
               maxLength={1000}
             />
 
-            <ThemedText style={styles.sectionLabel}>CATEGORY</ThemedText>
-            <View style={styles.chipRow}>
-              {(['physical', 'mental', 'creative', 'wellness', 'custom'] as QuestCategory[]).map(
-                (cat) => (
-                  <Pressable
-                    key={cat}
-                    style={[
-                      styles.chip,
-                      customCategory === cat && {
-                        backgroundColor: QuestColors[cat],
-                        borderColor: QuestColors[cat],
-                      },
-                    ]}
-                    onPress={() => setCustomCategory(cat)}>
-                    <ThemedText
-                      style={[styles.chipText, customCategory === cat && styles.chipTextActive]}>
-                      {cat.toUpperCase()}
-                    </ThemedText>
-                  </Pressable>
-                ),
-              )}
-            </View>
-
             <ThemedText style={styles.sectionLabel}>QUEST TYPE</ThemedText>
             <View style={styles.chipRow}>
               <Pressable
@@ -334,9 +360,10 @@ export default function CreateQuestScreen() {
             </View>
 
             {/* Habit linker */}
-            <ThemedText style={styles.sectionLabel}>LINK HABITS (OPTIONAL)</ThemedText>
+            <ThemedText style={styles.sectionLabel}>LINK A HABIT</ThemedText>
             <ThemedText style={styles.sectionHint}>
-              Linked habits auto-feed your quest score.
+              A linked habit feeds this quest&apos;s score — required, or the
+              quest has nothing to track.
             </ThemedText>
             {habits.map((h) => {
               const linked = linkedHabitIds.includes(h.id);
@@ -363,6 +390,29 @@ export default function CreateQuestScreen() {
               }}>
               <ThemedText style={styles.createHabitText}>＋ Create New Habit</ThemedText>
             </Pressable>
+
+            {customQuestType === 'positive' && isQuadHabit && (
+              <>
+                <ThemedText style={styles.sectionLabel}>LEVEL OF SUCCESS</ThemedText>
+                <ThemedText style={styles.sectionHint}>
+                  Which tier of {linkedHabit?.name} counts as a win — make a second
+                  quest at a higher tier for a tougher goal on the same habit.
+                </ThemedText>
+                <View style={styles.chipRow}>
+                  {([1, 2, 3] as const).map((lvl) => (
+                    <Pressable
+                      key={lvl}
+                      style={[styles.chip, successLevel === lvl && styles.chipPositiveActive]}
+                      onPress={() => setSuccessLevel(lvl)}>
+                      <ThemedText
+                        style={[styles.chipText, successLevel === lvl && styles.chipTextActive]}>
+                        {lvl === 1 ? 'BASIC' : lvl === 2 ? 'GOAL' : 'IDEAL'}
+                      </ThemedText>
+                    </Pressable>
+                  ))}
+                </View>
+              </>
+            )}
           </View>
         )}
       </ScrollView>

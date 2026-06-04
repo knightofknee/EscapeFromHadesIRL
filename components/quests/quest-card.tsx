@@ -14,6 +14,7 @@ type Props = {
 
 export function QuestCard({ quest, questScore, onPress }: Props) {
   const score = questScore?.score ?? 0;
+  const score18mo = questScore?.score18mo ?? 0;
   const doubleDays = questScore?.doubleDays ?? 0;
   const categoryColor = QuestColors[quest.category] ?? QuestColors.custom;
 
@@ -24,6 +25,13 @@ export function QuestCard({ quest, questScore, onPress }: Props) {
         <ThemedText style={styles.name} numberOfLines={1}>
           {quest.name}
         </ThemedText>
+        {(quest.successLevel ?? 1) >= 2 && (
+          <View style={styles.levelBadge}>
+            <ThemedText style={styles.levelText}>
+              {quest.successLevel === 3 ? 'IDEAL' : 'GOAL'}
+            </ThemedText>
+          </View>
+        )}
         {quest.questType === 'reduce' && (
           <View style={styles.reduceBadge}>
             <ThemedText style={styles.reduceText}>REDUCE</ThemedText>
@@ -35,7 +43,18 @@ export function QuestCard({ quest, questScore, onPress }: Props) {
           </View>
         )}
       </View>
-      <ScoreBar score={score} height={5} />
+      <View style={styles.barRow}>
+        <ThemedText style={styles.barLabel}>30D</ThemedText>
+        <View style={styles.barFill}>
+          <ScoreBar score={score} height={5} />
+        </View>
+      </View>
+      <View style={styles.barRow}>
+        <ThemedText style={styles.barLabel}>18MO</ThemedText>
+        <View style={styles.barFill}>
+          <ScoreBar score={score18mo} height={5} color={QuestColors.gold} />
+        </View>
+      </View>
       <View style={styles.meta}>
         <ThemedText style={styles.metaText}>
           {quest.targetDaysPerWeek}×/wk · {CATEGORY_NAMES[quest.category]}
@@ -83,6 +102,18 @@ const styles = StyleSheet.create({
     color: QuestColors.reduce,
     letterSpacing: 0.5,
   },
+  levelBadge: {
+    backgroundColor: QuestColors.goldDim,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  levelText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: QuestColors.gold,
+    letterSpacing: 0.5,
+  },
   doubleBadge: {
     paddingHorizontal: 4,
     paddingVertical: 2,
@@ -91,6 +122,21 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: QuestColors.gold,
     fontWeight: '700',
+  },
+  barRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  barLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: QuestColors.textDim,
+    letterSpacing: 0.5,
+    width: 30,
+  },
+  barFill: {
+    flex: 1,
   },
   meta: {
     flexDirection: 'row',

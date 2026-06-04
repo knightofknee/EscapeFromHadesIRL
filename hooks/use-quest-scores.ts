@@ -7,7 +7,8 @@ import type { Habit, HabitRecord } from '@/types/habit';
 
 export type QuestScore = {
   questId: string;
-  // How many days completed in the window
+  // How many days completed in the window. For REDUCE quests this is instead
+  // the days the user ABSTAINED ("clean" days).
   completedDays: number;
   // How many days targeted in the window
   targetDays: number;
@@ -19,6 +20,11 @@ export type QuestScore = {
   idealDays: number;
   // Final score (0-100): execution + level bonus, capped at 100
   score: number;
+  // Same scoring over the FULL ~18-month window: days before the user started
+  // tracking count as "not done", so a few months of use out of 18 reads low
+  // — an honest long-term adherence number.
+  // Optional: scoreQuest (single-window) omits it; useQuestScores fills it in.
+  score18mo?: number;
 };
 
 export type QuestScores = {
@@ -30,11 +36,12 @@ export type QuestScores = {
 };
 
 const WINDOW_DAYS = 30;
+const WINDOW_DAYS_18MO = 548; // ~18 months
 
-function getWindowDates(): string[] {
+function getWindowDates(days: number): string[] {
   const dates: string[] = [];
   const d = new Date();
-  for (let i = 0; i < WINDOW_DAYS; i++) {
+  for (let i = 0; i < days; i++) {
     dates.unshift(formatDate(d));
     d.setDate(d.getDate() - 1);
   }
@@ -104,18 +111,18 @@ export function scoreQuest(
           case 'steps':
           case 'meditation':
           case 'creativeWriting':
-          case 'quad':
-            if (v === 'ideal') {
-              dayCompleted = true;
-              dayDouble = true;
-              dayIdeal = true;
-            } else if (v === 'goal') {
-              dayCompleted = true;
-              dayDouble = true;
-            } else if (v === 'yes') {
-              dayCompleted = true;
-            }
+          case 'quad': {
+            // This quest's required bar: 1 basic (yes), 2 goal, 3 ideal.
+            // Undefined defaults to 1, preserving the old "any completion
+            // counts" behavior for existing quests + base challenges.
+            const required = quest.successLevel ?? 1;
+            const level = v === 'ideal' ? 3 : v === 'goal' ? 2 : v === 'yes' ? 1 : 0;
+            if (level >= required) dayCompleted = true;
+            // "Extra effort" = exceeding this quest's required bar.
+            if (level > required) dayDouble = true;
+            if (level === 3 && required < 3) dayIdeal = true;
             break;
+          }
           case 'counter':
             if ((v as number) > 0) dayCompleted = true;
             break;
@@ -165,10 +172,21 @@ export function scoreQuest(
     }
   }
 
-  const executionPct =
-    quest.questType === 'positive'
-      ? Math.min(100, Math.round((completedDays / targetDays) * 100))
-      : Math.round((completedDays / windowDays) * 100);
+  let executionPct: number;
+  if (quest.questType === 'positive') {
+    executionPct = Math.min(100, Math.round((completedDays / targetDays) * 100));
+  } else {
+    // Reduce: targetDays is the MAX allowed "done" days in the window, and
+    // completedDays here is the days the user ABSTAINED. To stay within the
+    // allowance they must abstain at least (windowDays - allowed) days —
+    // hitting or beating that is 100%, degrading toward 0 as they exceed the
+    // cap. (Previously this ignored the cap and just scored % of days clean.)
+    const requiredAbstained = windowDays - targetDays;
+    executionPct =
+      requiredAbstained <= 0
+        ? 100 // allowance covers every day → nothing to fail
+        : Math.min(100, Math.round((completedDays / requiredAbstained) * 100));
+  }
 
   // Level bonus: goal days add 0.5 extra, ideal days add 1.0 extra (on top of goal bonus)
   let score = executionPct;
@@ -201,10 +219,10 @@ export function useQuestScores(
     // window length, so a 7-day vacation just shrinks the window from
     // 30 → 23 days; the user still has to hit their per-week rate on
     // active days.
-    const allDates = getWindowDates();
-    const dates = vacationSet
-      ? allDates.filter((d) => !vacationSet.has(d))
-      : allDates;
+    const filterVac = (ds: string[]) =>
+      vacationSet ? ds.filter((d) => !vacationSet.has(d)) : ds;
+    const dates30 = filterVac(getWindowDates(WINDOW_DAYS));
+    const dates18 = filterVac(getWindowDates(WINDOW_DAYS_18MO));
 
     // Build record index: habitId_date → record
     const recordIndex = new Map<string, HabitRecord>();
@@ -216,8 +234,13 @@ export function useQuestScores(
     let totalScore = 0;
 
     for (const quest of quests) {
-      const qs = scoreQuest(quest, habits, recordIndex, dates, winOnlyWeekends);
-      byQuest.set(quest.id, qs);
+      const qs = scoreQuest(quest, habits, recordIndex, dates30, winOnlyWeekends);
+      // 18-month score uses the FULL window — days before the user started
+      // tracking count as "not done", so the long-term bar honestly reflects
+      // adherence across the whole 18 months. A few months of use out of 18
+      // reads low, which is the point (it's a long-term, slow-moving number).
+      const qs18 = scoreQuest(quest, habits, recordIndex, dates18, winOnlyWeekends);
+      byQuest.set(quest.id, { ...qs, score18mo: qs18.score });
       totalScore += qs.score;
     }
 

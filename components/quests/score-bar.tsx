@@ -6,6 +6,9 @@ type Props = {
   score: number; // 0-100
   showLabel?: boolean;
   height?: number;
+  /** Override the score-based flame color. Used for the 18-month bar, whose
+   *  low values would otherwise render in flameLow (an unreadable dark red). */
+  color?: string;
 };
 
 function flameColor(score: number): string {
@@ -14,8 +17,8 @@ function flameColor(score: number): string {
   return QuestColors.flameLow;
 }
 
-export function ScoreBar({ score, showLabel = true, height = 6 }: Props) {
-  const color = flameColor(score);
+export function ScoreBar({ score, showLabel = true, height = 6, color: colorOverride }: Props) {
+  const color = colorOverride ?? flameColor(score);
   const pct = Math.max(0, Math.min(100, score));
 
   return (

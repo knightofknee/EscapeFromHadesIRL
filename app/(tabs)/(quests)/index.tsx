@@ -9,21 +9,25 @@ import { QuestCard } from '@/components/quests/quest-card';
 import { ScoreBar } from '@/components/quests/score-bar';
 import { useQuests } from '@/hooks/use-quests';
 import { useHabits } from '@/hooks/use-habits';
-import { useHabitRecords } from '@/hooks/use-habit-records';
 import { useQuestScores } from '@/hooks/use-quest-scores';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
+import { useRecordsSnapshot } from '@/hooks/use-records-snapshot';
 import { QuestColors } from '@/constants/theme';
-import { CATEGORY_NAMES, FOUNDATION_KEYS, TEMPLATE_BY_KEY } from '@/constants/quest-templates';
+import {
+  CATEGORY_NAMES,
+  QUEST_TEMPLATES,
+  type QuestTemplate,
+} from '@/constants/quest-templates';
 import { formatDate } from '@/lib/date-utils';
-import type { QuestCategory } from '@/types/quest';
 
-const CATEGORY_ORDER: QuestCategory[] = ['physical', 'mental', 'creative', 'wellness', 'custom'];
-
-function get30DayWindow() {
+// 18-month window for the long-term quest average. Fetched one-shot on focus
+// (not a live listener) — see useRecordsSnapshot. The 30-day score is derived
+// from the same data inside useQuestScores.
+function get18MonthWindow() {
   const end = new Date();
   const start = new Date();
-  start.setDate(start.getDate() - 29);
+  start.setDate(start.getDate() - 548);
   return { startDate: formatDate(start), endDate: formatDate(end) };
 }
 
@@ -31,28 +35,31 @@ export default function QuestsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
-  const { quests, isLoading: questsLoading, isOffline } = useQuests();
+  const { quests } = useQuests();
   const { habits } = useHabits();
-  const { startDate, endDate } = useMemo(get30DayWindow, []);
-  const { records } = useHabitRecords(startDate, endDate);
+  const { startDate, endDate } = useMemo(get18MonthWindow, []);
+  const records = useRecordsSnapshot(startDate, endDate, isFocused);
   const { dateSet: vacationSet } = useVacationDays();
   const { winOnlyWeekends } = useWinOnlyWeekends();
   const scores = useQuestScores(quests, habits, records, vacationSet, winOnlyWeekends, isFocused);
 
-  // Group quests by category, preserving order
-  const grouped = useMemo(() => {
-    const map = new Map<QuestCategory, typeof quests>();
-    for (const cat of CATEGORY_ORDER) map.set(cat, []);
-    for (const q of quests) {
-      map.get(q.category)?.push(q);
-    }
-    return map;
-  }, [quests]);
-
-  // Foundation status: which of the 3 are active
-  const activeTemplateKeys = useMemo(
-    () => new Set(quests.filter((q) => q.templateKey).map((q) => q.templateKey as string)),
+  // Base challenges: always shown, in template order. Each maps to its active
+  // quest (if started) or null (→ a "Begin" stub).
+  const baseChallenges = useMemo(
+    () =>
+      QUEST_TEMPLATES.map((t) => ({
+        template: t,
+        quest:
+          quests.find((q) => q.status === 'active' && q.templateKey === t.key) ?? null,
+      })),
     [quests],
+  );
+  // Everything that isn't a base challenge: custom quests + any legacy
+  // template quests whose template is no longer in the base set.
+  const baseKeys = useMemo(() => new Set(QUEST_TEMPLATES.map((t) => t.key)), []);
+  const otherQuests = useMemo(
+    () => quests.filter((q) => !(q.templateKey && baseKeys.has(q.templateKey))),
+    [quests, baseKeys],
   );
 
   return (
@@ -79,71 +86,79 @@ export default function QuestsScreen() {
         </Pressable>
       </View>
 
-      {/* Foundation row */}
-      <View style={styles.foundationRow}>
-        <ThemedText style={styles.foundationLabel}>FOUNDATION</ThemedText>
-        <View style={styles.foundationPips}>
-          {FOUNDATION_KEYS.map((key) => {
-            const active = activeTemplateKeys.has(key);
-            const template = TEMPLATE_BY_KEY[key];
-            return (
-              <View
-                key={key}
-                style={[styles.foundationPip, { borderColor: active ? QuestColors.gold : QuestColors.border }]}>
-                <ThemedText style={[styles.foundationPipText, { color: active ? QuestColors.gold : QuestColors.textDim }]}>
-                  {template?.name.split(' ')[0].toUpperCase()}
-                </ThemedText>
-              </View>
-            );
-          })}
-          {scores.foundationCount > 0 && (
-            <ThemedText style={styles.foundationBonus}>+{scores.foundationCount * 5}%</ThemedText>
-          )}
-        </View>
-      </View>
-
       <ScoreBar score={scores.runScore} showLabel={false} height={3} />
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-        {questsLoading ? (
-          <ThemedText style={styles.emptyText}>Loading...</ThemedText>
-        ) : quests.length === 0 ? (
-          <View style={styles.emptyState}>
-            {isOffline ? (
-              <ThemedText style={styles.emptyTitle}>No internet connection</ThemedText>
+        {/* Base challenges — always shown. Started ones show their score;
+            the rest show a "Begin" stub that links a habit + starts them. */}
+        <View style={styles.section}>
+          <ThemedText style={[styles.sectionHeader, { color: QuestColors.flameMid }]}>
+            CHALLENGES
+          </ThemedText>
+          {baseChallenges.map(({ template, quest }) =>
+            quest ? (
+              <QuestCard
+                key={template.key}
+                quest={quest}
+                questScore={scores.byQuest.get(quest.id)}
+                onPress={() => router.push(`/(tabs)/(quests)/${quest.id}`)}
+              />
             ) : (
-              <>
-                <ThemedText style={styles.emptyTitle}>No active quests.</ThemedText>
-                <ThemedText style={styles.emptyText}>
-                  Begin with the three foundations: walk, meditate, read. Each run starts anew. Link your
-                  existing habits to track progress.
-                </ThemedText>
-              </>
-            )}
+              <ChallengeStub
+                key={template.key}
+                template={template}
+                onPress={() => router.push(`/(tabs)/(quests)/create?templateKey=${template.key}`)}
+              />
+            ),
+          )}
+        </View>
+
+        {/* Custom pacts + any legacy quests */}
+        {otherQuests.length > 0 && (
+          <View style={styles.section}>
+            <ThemedText style={[styles.sectionHeader, { color: QuestColors.custom }]}>
+              YOUR PACTS
+            </ThemedText>
+            {otherQuests.map((q) => (
+              <QuestCard
+                key={q.id}
+                quest={q}
+                questScore={scores.byQuest.get(q.id)}
+                onPress={() => router.push(`/(tabs)/(quests)/${q.id}`)}
+              />
+            ))}
           </View>
-        ) : (
-          CATEGORY_ORDER.map((cat) => {
-            const catQuests = grouped.get(cat) ?? [];
-            if (catQuests.length === 0) return null;
-            return (
-              <View key={cat} style={styles.section}>
-                <ThemedText style={[styles.sectionHeader, { color: QuestColors[cat] }]}>
-                  {CATEGORY_NAMES[cat].toUpperCase()}
-                </ThemedText>
-                {catQuests.map((q) => (
-                  <QuestCard
-                    key={q.id}
-                    quest={q}
-                    questScore={scores.byQuest.get(q.id)}
-                    onPress={() => router.push(`/(tabs)/(quests)/${q.id}`)}
-                  />
-                ))}
-              </View>
-            );
-          })
         )}
       </ScrollView>
     </View>
+  );
+}
+
+// A not-yet-started base challenge: dashed/dimmed card with a "Begin" tap that
+// routes into the link-habit flow (with the template + matching auto-record
+// habit pre-selected).
+function ChallengeStub({
+  template,
+  onPress,
+}: {
+  template: QuestTemplate;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable style={styles.stubCard} onPress={onPress}>
+      <View style={styles.stubHeader}>
+        <ThemedText style={styles.stubName} numberOfLines={1}>
+          {template.name}
+        </ThemedText>
+        <ThemedText style={styles.beginText}>BEGIN ›</ThemedText>
+      </View>
+      <ThemedText style={styles.stubDesc} numberOfLines={1}>
+        {template.description}
+      </ThemedText>
+      <ThemedText style={styles.stubMeta}>
+        {template.targetDaysPerWeek}×/wk · {CATEGORY_NAMES[template.category]}
+      </ThemedText>
+    </Pressable>
   );
 }
 
@@ -201,40 +216,6 @@ const styles = StyleSheet.create({
     color: QuestColors.flameMid,
     letterSpacing: 1,
   },
-  foundationRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-    gap: 10,
-  },
-  foundationLabel: {
-    fontSize: 9,
-    color: QuestColors.textDim,
-    letterSpacing: 1.5,
-  },
-  foundationPips: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  foundationPip: {
-    borderWidth: 1,
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  foundationPipText: {
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  foundationBonus: {
-    fontSize: 11,
-    color: QuestColors.gold,
-    fontWeight: '700',
-    marginLeft: 4,
-  },
   scroll: {
     flex: 1,
     marginTop: 10,
@@ -253,18 +234,39 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
     marginBottom: 2,
   },
-  emptyState: {
-    paddingTop: 40,
-    gap: 12,
+  stubCard: {
+    backgroundColor: QuestColors.surface,
+    borderWidth: 1,
+    borderColor: QuestColors.border,
+    borderStyle: 'dashed',
+    borderRadius: 8,
+    padding: 12,
+    gap: 4,
   },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '700',
+  stubHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  stubName: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
     color: QuestColors.text,
   },
-  emptyText: {
-    fontSize: 14,
+  beginText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: QuestColors.flameMid,
+    letterSpacing: 0.5,
+  },
+  stubDesc: {
+    fontSize: 12,
     color: QuestColors.textDim,
-    lineHeight: 20,
+    fontStyle: 'italic',
+  },
+  stubMeta: {
+    fontSize: 11,
+    color: QuestColors.textDim,
   },
 });

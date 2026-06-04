@@ -32,7 +32,6 @@ type QuestsContextValue = {
     quest: Omit<Quest, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'activatedAt'>,
   ) => Promise<Quest | undefined>;
   updateQuest: (questId: string, updates: Partial<Quest>) => Promise<void>;
-  pauseQuest: (questId: string) => Promise<void>;
   deleteQuest: (questId: string) => Promise<void>;
 };
 
@@ -42,7 +41,6 @@ const QuestsContext = createContext<QuestsContextValue>({
   isOffline: false,
   createQuest: async () => undefined,
   updateQuest: async () => {},
-  pauseQuest: async () => {},
   deleteQuest: async () => {},
 });
 
@@ -125,13 +123,6 @@ export function QuestsProvider({ children }: { children: ReactNode }) {
     [user, requireOnline],
   );
 
-  const pauseQuest = useCallback(
-    async (questId: string) => {
-      await updateQuest(questId, { status: 'paused' });
-    },
-    [updateQuest],
-  );
-
   const deleteQuest = useCallback(
     async (questId: string) => {
       if (!user) return;
@@ -148,10 +139,9 @@ export function QuestsProvider({ children }: { children: ReactNode }) {
       isOffline,
       createQuest,
       updateQuest,
-      pauseQuest,
       deleteQuest,
     }),
-    [quests, isLoading, isOffline, createQuest, updateQuest, pauseQuest, deleteQuest],
+    [quests, isLoading, isOffline, createQuest, updateQuest, deleteQuest],
   );
 
   return <QuestsContext.Provider value={value}>{children}</QuestsContext.Provider>;
