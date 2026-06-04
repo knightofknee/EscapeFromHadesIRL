@@ -1,7 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useAuth } from '@/contexts/auth-context';
-import { useOfflineGuard } from '@/contexts/offline-context';
-import { db, doc, setDoc, onSnapshot } from '@/lib/firebase/firestore';
+import { useCallback } from 'react';
+import { useUserSettingsContext } from '@/contexts/user-settings-context';
 
 export type SuccessLevel = 'unrecorded' | 'recorded' | 'double' | 'triple';
 
@@ -26,49 +24,29 @@ export const DEFAULT_SUCCESS_COLORS = {
   dark: DEFAULT_COLORS_DARK,
 };
 
+/**
+ * Resolves the active success-color palette for the given scheme. The raw
+ * stored overrides + write paths live in the shared UserSettingsProvider (one
+ * `userSettings/{uid}` listener); this hook layers the scheme-specific default
+ * fallback on top. Return shape is unchanged so call sites don't change.
+ */
 export function useSuccessColors(colorScheme: 'light' | 'dark') {
-  const { user } = useAuth();
-  const { requireOnline } = useOfflineGuard();
-  const [customColors, setCustomColors] = useState<SuccessColors | null>(null);
-
-  useEffect(() => {
-    if (!user) {
-      setCustomColors(null);
-      return;
-    }
-
-    const ref = doc(db, 'userSettings', user.uid);
-    const unsubscribe = onSnapshot(ref, (snap) => {
-      const data = snap.data();
-      if (data?.successColors) {
-        setCustomColors(data.successColors as SuccessColors);
-      } else {
-        setCustomColors(null);
-      }
-    });
-
-    return unsubscribe;
-  }, [user]);
+  const { successColors: customColors, setSuccessColors } = useUserSettingsContext();
 
   const colors: SuccessColors = customColors ?? DEFAULT_SUCCESS_COLORS[colorScheme];
 
   const setSuccessColor = useCallback(
     (level: SuccessLevel, color: string) => {
-      if (!user) return;
-      if (!requireOnline()) return;
-      const next = { ...colors, [level]: color };
-      setCustomColors(next);
-      setDoc(doc(db, 'userSettings', user.uid), { successColors: next }, { merge: true });
+      // Seed from the currently-resolved palette so the first customization of
+      // any level keeps the other levels at their (scheme-appropriate) values.
+      setSuccessColors({ ...colors, [level]: color });
     },
-    [user, requireOnline, colors],
+    [colors, setSuccessColors],
   );
 
   const resetColors = useCallback(() => {
-    if (!user) return;
-    if (!requireOnline()) return;
-    setCustomColors(null);
-    setDoc(doc(db, 'userSettings', user.uid), { successColors: null }, { merge: true });
-  }, [user, requireOnline]);
+    setSuccessColors(null);
+  }, [setSuccessColors]);
 
   return { colors, setSuccessColor, resetColors, isCustom: customColors !== null };
 }

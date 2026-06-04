@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import { Alert, Platform } from 'react-native';
 import { router } from 'expo-router';
-import * as Crypto from 'expo-crypto';
 import * as WebBrowser from 'expo-web-browser';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { useIdTokenAuthRequest } from 'expo-auth-session/providers/google';
 import { AuthForm } from '@/components/auth/auth-form';
 import { signIn, signInWithGoogle, signInWithApple, sendPasswordReset, getAuthErrorMessage } from '@/lib/firebase/auth';
+import { generateNonce, sha256 } from '@/lib/crypto-nonce';
+import { GOOGLE_IOS_CLIENT_ID, GOOGLE_CLIENT_ID } from '@/constants/google-oauth';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -14,8 +15,8 @@ export default function SignInScreen() {
   const [error, setError] = useState('');
 
   const [googleRequest, googleResponse, promptGoogle] = useIdTokenAuthRequest({
-    iosClientId: '844071641525-l1v60tmbhjgsn0d5umogslp7r4ohbp9g.apps.googleusercontent.com',
-    clientId: '844071641525-gevfkii274b28110sib5pu16c80tm966.apps.googleusercontent.com',
+    iosClientId: GOOGLE_IOS_CLIENT_ID,
+    clientId: GOOGLE_CLIENT_ID,
   });
 
   // Handle Google response when it comes back
@@ -54,10 +55,19 @@ export default function SignInScreen() {
             if (!emailInput) return;
             try {
               await sendPasswordReset(emailInput);
-              Alert.alert('Check your email', 'A password reset link has been sent.');
             } catch (e: any) {
-              Alert.alert('Error', getAuthErrorMessage(e));
+              // Don't reveal whether the address is registered (account
+              // enumeration). Surface genuine problems (bad format, network),
+              // but treat "user not found" as the same neutral outcome.
+              if (e?.code !== 'auth/user-not-found') {
+                Alert.alert('Error', getAuthErrorMessage(e));
+                return;
+              }
             }
+            Alert.alert(
+              'Check your email',
+              'If an account exists for that address, a password reset link has been sent.',
+            );
           },
         },
       ],
@@ -81,11 +91,10 @@ export default function SignInScreen() {
         return;
       }
 
-      const nonce = Math.random().toString(36).substring(2, 10);
-      const hashedNonce = await Crypto.digestStringAsync(
-        Crypto.CryptoDigestAlgorithm.SHA256,
-        nonce,
-      );
+      // Cryptographically-random nonce — Apple uses it for replay
+      // protection, so it must not be predictable (was Math.random).
+      const nonce = await generateNonce();
+      const hashedNonce = await sha256(nonce);
 
       const credential = await AppleAuthentication.signInAsync({
         requestedScopes: [

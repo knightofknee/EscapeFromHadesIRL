@@ -86,6 +86,7 @@ export function TagPicker({
             style={[styles.input, { color: colors.text, borderColor: colors.tileBorder }]}
             value={newTagName}
             onChangeText={setNewTagName}
+            maxLength={50}
             placeholder="New tag name..."
             placeholderTextColor={colors.icon}
             keyboardAppearance={colorScheme === 'dark' ? 'dark' : 'light'}

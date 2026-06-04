@@ -25,6 +25,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAppearance } from '@/hooks/use-appearance';
 import { AuthProvider, useAuth } from '@/contexts/auth-context';
 import { OfflineProvider } from '@/contexts/offline-context';
+import { AppDataProviders } from '@/contexts/app-data-providers';
 import { getHomeScreen } from '@/hooks/use-home-screen';
 import { db, collection, doc, setDoc } from '@/lib/firebase/firestore';
 import type { User } from 'firebase/auth';
@@ -114,10 +115,12 @@ export default function RootLayout() {
       <KeyboardProvider>
         <AuthProvider>
           <OfflineProvider>
-            <ThemeProvider value={effectiveScheme === 'dark' ? DarkTheme : DefaultTheme}>
-              <RootNavigator />
-              <StatusBar style={effectiveScheme === 'dark' ? 'light' : 'dark'} />
-            </ThemeProvider>
+            <AppDataProviders>
+              <ThemeProvider value={effectiveScheme === 'dark' ? DarkTheme : DefaultTheme}>
+                <RootNavigator />
+                <StatusBar style={effectiveScheme === 'dark' ? 'light' : 'dark'} />
+              </ThemeProvider>
+            </AppDataProviders>
           </OfflineProvider>
         </AuthProvider>
       </KeyboardProvider>

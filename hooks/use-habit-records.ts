@@ -1,38 +1,31 @@
-import { useEffect, useState, useMemo } from 'react';
-import { useAuth } from '@/contexts/auth-context';
-import { db, collection, query, where, onSnapshot } from '@/lib/firebase/firestore';
+import { useEffect, useMemo } from 'react';
+import { useRecordsContext } from '@/contexts/records-context';
 import { formatDate } from '@/lib/date-utils';
 import type { HabitRecord } from '@/types/habit';
 
 export { formatDate } from '@/lib/date-utils';
 
+/**
+ * Records for a date range. Backed by the shared RecordsProvider's single
+ * union-window listener (see contexts/records-context.tsx): this hook
+ * registers its [startDate, endDate] and serves the result by in-memory
+ * filtering. Return shape is unchanged so call sites don't change.
+ */
 export function useHabitRecords(startDate: string, endDate: string) {
-  const { user } = useAuth();
-  const [records, setRecords] = useState<HabitRecord[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const { recordsMap, loadedRange, ensureRange } = useRecordsContext();
 
   useEffect(() => {
-    if (!user || !startDate || !endDate) {
-      setRecords([]);
-      setIsLoading(false);
-      return;
+    if (startDate && endDate) ensureRange(startDate, endDate);
+  }, [startDate, endDate, ensureRange]);
+
+  const records = useMemo(() => {
+    if (!startDate || !endDate) return [];
+    const out: HabitRecord[] = [];
+    for (const r of recordsMap.values()) {
+      if (r.date >= startDate && r.date <= endDate) out.push(r);
     }
-
-    const q = query(
-      collection(db, 'records'),
-      where('userId', '==', user.uid),
-      where('date', '>=', startDate),
-      where('date', '<=', endDate),
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as HabitRecord);
-      setRecords(data);
-      setIsLoading(false);
-    });
-
-    return unsubscribe;
-  }, [user, startDate, endDate]);
+    return out;
+  }, [recordsMap, startDate, endDate]);
 
   // Group by date (memoized to avoid new object on every render)
   const recordsByDate = useMemo(
@@ -47,6 +40,11 @@ export function useHabitRecords(startDate: string, endDate: string) {
       ),
     [records],
   );
+
+  const isLoading =
+    startDate && endDate
+      ? !(loadedRange && loadedRange.start <= startDate && loadedRange.end >= endDate)
+      : false;
 
   return { records, recordsByDate, isLoading };
 }

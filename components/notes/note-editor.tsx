@@ -18,19 +18,13 @@ type NoteEditorProps = {
   onOpenTagPicker?: () => void;
   onTouchStart?: (e: { nativeEvent: { pageY: number } }) => void;
   /**
-   * Fires whenever the content's measured height OR the cursor position
-   * changes. Used by the parent screen to scroll the page so the cursor
-   * stays visible while typing — without this, hitting Enter pushes the
-   * cursor below the keyboard with no auto-follow.
+   * Reports the window-Y of the caret's bottom edge, but only while the
+   * caret is at (or near) the end of the content. The parent uses it to
+   * scroll the page so the caret stays above the keyboard while typing.
+   * It fires only at the end because that's the one caret position we can
+   * reliably derive from the input's measured rect (its bottom edge).
    */
-  onContentMetricsChange?: (metrics: {
-    /** Pixel height of the multiline content TextInput. */
-    contentHeight: number;
-    /** Cursor's character position from the start of content. */
-    cursorPos: number;
-    /** True if the cursor is at (or within a few chars of) the end. */
-    cursorAtEnd: boolean;
-  }) => void;
+  onCaretBottom?: (windowY: number) => void;
 };
 
 export type NoteEditorHandle = {
@@ -144,7 +138,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     onBlur,
     onOpenTagPicker,
     onTouchStart,
-    onContentMetricsChange,
+    onCaretBottom,
   },
   ref,
 ) {
@@ -156,22 +150,20 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
   const colors = Colors[colorScheme ?? 'light'];
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const contentRef = useRef<TextInput>(null);
-  // Last measured pixel height of the content TextInput. Stored in a
-  // ref so the contentSizeChange and selectionChange handlers can both
-  // read the current value without scheduling re-renders.
-  const lastContentHeightRef = useRef(0);
   // Threshold (in chars) for "cursor is at end" — a small slack lets
   // typing past trailing whitespace still count as appending.
   const END_SLACK = 5;
-  function emitMetrics(opts: { contentHeight?: number; cursorPos?: number; contentLength?: number }) {
-    const contentHeight = opts.contentHeight ?? lastContentHeightRef.current;
-    const cursorPos = opts.cursorPos ?? selection.end;
-    const contentLength = opts.contentLength ?? content.length;
-    onContentMetricsChange?.({
-      contentHeight,
-      cursorPos,
-      cursorAtEnd: cursorPos >= contentLength - END_SLACK,
-    });
+  // When the caret is at (or near) the end of the content, measure the
+  // content input's on-screen rect and hand the parent the window-Y of
+  // its bottom edge — a close proxy for the caret's line when appending.
+  // The parent decides whether that point is hidden by the keyboard and
+  // scrolls if needed. We bail when the caret is mid-content: the bottom
+  // edge wouldn't be where the caret is, and following it would scroll
+  // the user away from their edit.
+  function reportCaretIfAtEnd(cursorPos: number, contentLength: number) {
+    if (!onCaretBottom) return;
+    if (cursorPos < contentLength - END_SLACK) return;
+    contentRef.current?.measureInWindow((_x, y, _w, h) => onCaretBottom(y + h));
   }
 
   useEffect(() => {
@@ -268,11 +260,10 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
   function handleSelectionChange(e: NativeSyntheticEvent<TextInputSelectionChangeEventData>) {
     const sel = e.nativeEvent.selection;
     setSelection(sel);
-    // Forward to parent so the page can scroll-follow the cursor while
-    // typing. Uses current `content.length` because contentChange may
-    // not have fired yet for this keystroke (selection often updates
-    // first on iOS).
-    emitMetrics({ cursorPos: sel.end, contentLength: content.length });
+    // Follow the caret while typing. Uses current `content.length`
+    // because onChangeText may not have fired yet for this keystroke
+    // (selection often updates first on iOS).
+    reportCaretIfAtEnd(sel.end, content.length);
   }
 
   function applyFormatting(result: { content: string; newSelection: { start: number; end: number } }) {
@@ -324,6 +315,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
         style={[styles.titleInput, { color: colors.text }]}
         value={title}
         onChangeText={handleTitleChange}
+        maxLength={200}
         placeholder="Note title..."
         placeholderTextColor={colors.icon}
         keyboardAppearance={colorScheme === 'dark' ? 'dark' : 'light'}
@@ -360,6 +352,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
         style={[styles.contentInput, { color: colors.text }]}
         value={content}
         onChangeText={handleContentChange}
+        maxLength={50000}
         onSelectionChange={handleSelectionChange}
         selection={pendingSelection ?? undefined}
         placeholder="Start writing..."
@@ -372,10 +365,10 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
         onFocus={onFocus}
         onBlur={onBlur}
         onTouchStart={onTouchStart}
-        onContentSizeChange={(e) => {
-          const h = e.nativeEvent.contentSize.height;
-          lastContentHeightRef.current = h;
-          emitMetrics({ contentHeight: h });
+        onContentSizeChange={() => {
+          // Content grew/shrank (Enter, wrap, paste). If the caret is at
+          // the end, re-follow so the new last line clears the keyboard.
+          reportCaretIfAtEnd(selection.end, content.length);
         }}
       />
     </View>

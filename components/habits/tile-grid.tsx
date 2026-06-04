@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo, memo } from 'react';
 import { StyleSheet, View, Pressable, Platform, LayoutChangeEvent } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '@/constants/theme';
@@ -18,7 +18,7 @@ function sizeWeight(size: number): number {
   return Math.max(1, Math.min(size, 100));
 }
 
-function MeasuredTile({
+const MeasuredTile = memo(function MeasuredTile({
   habit,
   record,
   flexWeight,
@@ -75,33 +75,37 @@ function MeasuredTile({
       )}
     </Pressable>
   );
-}
+});
 
 export function TileGrid({ habits, records, onTapHabit, onLongPressHabit }: TileGridProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
-  const sorted = [...habits].sort(
-    (a, b) => a.position.row * 100 + a.position.col - (b.position.row * 100 + b.position.col),
-  );
+  // Memoized on `habits` so a record change (a new Map every habit tap)
+  // doesn't recompute the entire grid layout on every render.
+  const { rows, rowWeights } = useMemo(() => {
+    const sorted = [...habits].sort(
+      (a, b) => a.position.row * 100 + a.position.col - (b.position.row * 100 + b.position.col),
+    );
+    const targetCols =
+      sorted.length <= 2 ? 1 : sorted.length <= 6 ? 2 : sorted.length <= 12 ? 3 : 4;
 
-  const n = sorted.length;
-  const targetCols = n <= 2 ? 1 : n <= 6 ? 2 : n <= 12 ? 3 : 4;
-
-  const rows: Habit[][] = [];
-  let currentRow: Habit[] = [];
-  for (const habit of sorted) {
-    currentRow.push(habit);
-    if (currentRow.length >= targetCols) {
-      rows.push(currentRow);
-      currentRow = [];
+    const builtRows: Habit[][] = [];
+    let currentRow: Habit[] = [];
+    for (const habit of sorted) {
+      currentRow.push(habit);
+      if (currentRow.length >= targetCols) {
+        builtRows.push(currentRow);
+        currentRow = [];
+      }
     }
-  }
-  if (currentRow.length > 0) rows.push(currentRow);
+    if (currentRow.length > 0) builtRows.push(currentRow);
 
-  const rowWeights = rows.map((row) =>
-    Math.max(...row.map((h) => sizeWeight(h.tileSize))),
-  );
+    const weights = builtRows.map((row) =>
+      Math.max(...row.map((h) => sizeWeight(h.tileSize))),
+    );
+    return { rows: builtRows, rowWeights: weights };
+  }, [habits]);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.gridBackground }]}>

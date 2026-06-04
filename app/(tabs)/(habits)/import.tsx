@@ -6,7 +6,7 @@ import { ThemedView } from '@/components/themed-view';
 import { useHabits } from '@/hooks/use-habits';
 import { useAuth } from '@/contexts/auth-context';
 import { useOfflineGuard } from '@/contexts/offline-context';
-import { db, doc, setDoc } from '@/lib/firebase/firestore';
+import { db, doc, writeBatch } from '@/lib/firebase/firestore';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { parseCalendarBlocks, type ParsedCalendar } from '@/lib/ocr/calendar-parser';
@@ -33,11 +33,22 @@ export default function ImportScreen() {
   });
 
   async function processImage(uri: string) {
+    // Guard the free-text month field before it becomes record doc IDs —
+    // an unvalidated parseInt here produces dates like "NaN-NaN-05".
+    if (!/^\d{4}-\d{2}$/.test(yearMonth)) {
+      Alert.alert('Invalid month', 'Enter the calendar month as YYYY-MM (e.g. 2026-06).');
+      return;
+    }
+    const [yearStr, monthStr] = yearMonth.split('-');
+    const monthNum = parseInt(monthStr, 10);
+    if (monthNum < 1 || monthNum > 12) {
+      Alert.alert('Invalid month', 'Month must be between 01 and 12.');
+      return;
+    }
     setStep('processing');
     try {
       const blocks = await extractTextFromImage(uri);
-      const [yearStr, monthStr] = yearMonth.split('-');
-      const parsed = parseCalendarBlocks(blocks, parseInt(yearStr), parseInt(monthStr) - 1);
+      const parsed = parseCalendarBlocks(blocks, parseInt(yearStr, 10), monthNum - 1);
       setParsedCalendar(parsed);
       setStep('review');
     } catch (e: any) {
@@ -87,7 +98,11 @@ export default function ImportScreen() {
       return;
     }
 
+    // One batched commit instead of a serial setDoc per mark (was N
+    // sequential round-trips). Chunk at Firestore's 500-write batch limit.
+    let batch = writeBatch(db);
     let imported = 0;
+    let pending = 0;
     for (const day of daysWithMarks) {
       for (const mark of day.marks) {
         const matchedHabit = habits.find(
@@ -106,11 +121,18 @@ export default function ImportScreen() {
             value: true,
             recordedAt: Date.now(),
           };
-          await setDoc(doc(db, 'records', docId), record, { merge: true });
+          batch.set(doc(db, 'records', docId), record, { merge: true });
           imported++;
+          pending++;
+          if (pending === 500) {
+            await batch.commit();
+            batch = writeBatch(db);
+            pending = 0;
+          }
         }
       }
     }
+    if (pending > 0) await batch.commit();
 
     Alert.alert('Import Complete', `Imported ${imported} records from ${daysWithMarks.length} days.`);
     setStep('done');

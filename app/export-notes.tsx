@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TagChip } from '@/components/notes/tag-chip';
-import { useNotes } from '@/hooks/use-notes';
+import { useAllNotes } from '@/hooks/use-notes';
 import { useTags } from '@/hooks/use-tags';
 import { allNotesToMarkdown } from '@/lib/export/markdown-export';
 import { saveAndShareFiles } from '@/lib/export/file-saver';
@@ -12,7 +12,8 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export default function ExportScreen() {
-  const { notes } = useNotes();
+  // Export needs EVERY note, so a one-time full fetch (not the paginated list).
+  const { notes, isLoading } = useAllNotes();
   const { tags } = useTags();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
@@ -68,7 +69,9 @@ export default function ExportScreen() {
         </View>
 
         <ThemedText style={styles.count}>
-          {filteredNotes.length} note{filteredNotes.length !== 1 ? 's' : ''} will be exported
+          {isLoading
+            ? 'Loading notes…'
+            : `${filteredNotes.length} note${filteredNotes.length !== 1 ? 's' : ''} will be exported`}
         </ThemedText>
 
         {/* Preview */}
@@ -84,12 +87,12 @@ export default function ExportScreen() {
         )}
 
         <Pressable
-          style={[styles.exportButton, { backgroundColor: colors.tint, opacity: exporting ? 0.6 : 1 }]}
+          style={[styles.exportButton, { backgroundColor: colors.tint, opacity: exporting || isLoading ? 0.6 : 1 }]}
           onPress={handleExport}
-          disabled={exporting}
+          disabled={exporting || isLoading}
         >
           <ThemedText style={styles.exportText}>
-            {exporting ? 'Exporting...' : 'Export as Markdown'}
+            {isLoading ? 'Loading…' : exporting ? 'Exporting...' : 'Export as Markdown'}
           </ThemedText>
         </Pressable>
 

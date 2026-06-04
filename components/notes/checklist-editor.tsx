@@ -26,105 +26,135 @@ import { ThemedText } from '@/components/themed-text';
 import { TagChip } from './tag-chip';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import type { ChecklistItem, Note, Tag, InlineTag } from '@/types/note';
+import type { ChecklistItemDoc, Note, Tag, InlineTag } from '@/types/note';
 
-const DESCRIPTION_COLLAPSED_LINES = 2;
+const DESCRIPTION_COLLAPSED_LINES = 3;
 const DESCRIPTION_LINE_HEIGHT = 24; // matches styles.descriptionInput.lineHeight
 const SAVE_DEBOUNCE_MS = 400;
 
 type ChecklistEditorProps = {
   note: Note;
   tags: Tag[];
+  /**
+   * Checklist items, sourced from the `notes/{id}/items` subcollection via
+   * useChecklistItems (display-sorted: uncompleted by order, then completed
+   * by completedAt desc). Each mutation below is one small per-item write.
+   */
+  items: ChecklistItemDoc[];
   onUpdateTitle: (title: string) => void;
   onUpdateDescription: (description: string) => void;
-  onUpdateChecklist: (items: ChecklistItem[]) => void;
   onUpdateTags: (tags: InlineTag[]) => void;
+  /** Create a blank item at the end; returns its new id (for focusing). */
+  onAddItem: () => string;
+  onToggleItem: (id: string) => void;
+  onSetItemText: (id: string, text: string) => void;
+  onDeleteItem: (id: string) => void;
+  /** Undo a delete by re-creating the item with its original fields. */
+  onRestoreItem: (item: ChecklistItemDoc) => void;
+  onReorderUncompleted: (newUncompleted: ChecklistItemDoc[]) => void;
   onFocus?: () => void;
   onBlur?: () => void;
   onOpenTagPicker?: () => void;
   onTouchStart?: (e: { nativeEvent: { pageY: number } }) => void;
+  /**
+   * Reports the window-Y of the focused input's caret bottom so the
+   * parent can keep it above the keyboard while typing — the same
+   * mechanism the text editor uses, applied to the description and to
+   * every checklist row (a freshly-added row is often focused right
+   * under the keyboard).
+   */
+  onCaretBottom?: (windowY: number) => void;
 };
 
 export type ChecklistEditorHandle = {
   /** Focus the first item (or create + focus one if list is empty). */
   focusFirstItem: () => void;
   /**
-   * Snapshot of the editor's *local* state — including any unsaved
+   * Snapshot of the editor's *local* description — including any unsaved
    * typing that hasn't yet been debounced into Firestore. The parent's
-   * `note` prop can lag this by up to SAVE_DEBOUNCE_MS, so callers
-   * (notably the text↔checklist toggle) should prefer this over
-   * `note.description` / `note.checklist` to avoid losing recent edits.
+   * `note` prop can lag this by up to SAVE_DEBOUNCE_MS, so the
+   * text↔checklist toggle should prefer this over `note.description` to
+   * avoid losing recent edits. (Items live in the subcollection and are
+   * read by the parent directly from the hook.)
    */
-  getLatestState: () => { description: string; items: ChecklistItem[] };
+  getLatestState: () => { description: string };
 };
-
-function makeId(): string {
-  return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
-}
 
 export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditorProps>(
   function ChecklistEditor(
     {
       note,
       tags,
+      items,
       onUpdateTitle,
       onUpdateDescription,
-      onUpdateChecklist,
       onUpdateTags,
+      onAddItem,
+      onToggleItem,
+      onSetItemText,
+      onDeleteItem,
+      onRestoreItem,
+      onReorderUncompleted,
       onFocus,
       onBlur,
       onOpenTagPicker,
       onTouchStart,
+      onCaretBottom,
     },
     ref,
   ) {
     const colorScheme = useColorScheme();
     const colors = Colors[colorScheme ?? 'light'];
 
+    // Ref to the description TextInput (distinct from `descriptionRef`
+    // below, which mirrors the description *string* for the unmount
+    // flush). Used to measure the caret for keyboard-follow.
+    const descriptionInputRef = useRef<TextInput>(null);
+    // Measure an input's on-screen rect and hand the parent the window-Y
+    // of its bottom edge, so the parent can lift it above the keyboard.
+    const reportCaret = useCallback(
+      (inputRef: { current: TextInput | null }) => {
+        if (!onCaretBottom) return;
+        inputRef.current?.measureInWindow((_x, y, _w, h) => onCaretBottom(y + h));
+      },
+      [onCaretBottom],
+    );
+
     const [title, setTitle] = useState(note.title);
     const [description, setDescription] = useState(note.description ?? '');
-    const [items, setItems] = useState<ChecklistItem[]>(note.checklist ?? []);
     const [descriptionFocused, setDescriptionFocused] = useState(false);
     const [descriptionExpanded, setDescriptionExpanded] = useState(false);
     const [descriptionLineCount, setDescriptionLineCount] = useState(0);
     // Single-step undo for the most recent item delete. We only retain
     // ONE — a second delete overwrites the buffer; an undo clears it.
-    // Stores the item plus its original index so re-insertion lands in
-    // the same canonical position.
-    const [lastDeleted, setLastDeleted] = useState<{
-      item: ChecklistItem;
-      index: number;
-    } | null>(null);
+    // Stores the full item doc so re-creation restores its original
+    // order/completion exactly.
+    const [lastDeleted, setLastDeleted] = useState<ChecklistItemDoc | null>(null);
 
-    // Local state owns title/description/items while the editor is
-    // mounted. We do NOT sync from prop on every snapshot — that would
-    // let in-flight Firestore round-trips clobber mid-typing keystrokes
-    // (the classic optimistic-write race). Instead we re-init whenever
-    // the *note id* changes, so navigating to a different note still
-    // shows fresh data.
+    // Local state owns title/description while the editor is mounted. We do
+    // NOT sync from prop on every snapshot — that would let in-flight
+    // Firestore round-trips clobber mid-typing keystrokes. Instead we
+    // re-init whenever the *note id* changes, so navigating to a different
+    // note still shows fresh data. (Items are owned by the parent hook and
+    // arrive via the `items` prop with their own optimistic overlay.)
     const lastNoteId = useRef(note.id);
     useEffect(() => {
       if (note.id !== lastNoteId.current) {
         lastNoteId.current = note.id;
         setTitle(note.title);
         setDescription(note.description ?? '');
-        setItems(note.checklist ?? []);
       }
-    }, [note.id, note.title, note.description, note.checklist]);
+    }, [note.id, note.title, note.description]);
 
     // Keep refs synced for the unmount-flush below (need latest values).
     const titleRef = useRef(title);
     const descriptionRef = useRef(description);
-    const itemsRef = useRef(items);
     useEffect(() => {
       titleRef.current = title;
     }, [title]);
     useEffect(() => {
       descriptionRef.current = description;
     }, [description]);
-    useEffect(() => {
-      itemsRef.current = items;
-    }, [items]);
 
     // Refs to each item input for focus management. Keyed by item id.
     const inputRefs = useRef<Map<string, TextInput | null>>(new Map());
@@ -132,48 +162,15 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
     // the next render focuses that input.
     const pendingFocusId = useRef<string | null>(null);
 
-    // Debounced save timers — title, description, and item-text edits.
-    // Discrete item actions (toggle, add, delete) bypass the debounce
-    // and flush immediately because they're intentional state changes
-    // the user expects to be persisted right away.
+    // Debounced save timers — title and description only. Item edits are
+    // debounced inside useChecklistItems (per-item writes).
     const titleSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const descSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const itemsSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Cancels the pending items save and writes the latest array now.
-    const flushItemsSave = useCallback(
-      (next: ChecklistItem[]) => {
-        if (itemsSaveTimer.current) {
-          clearTimeout(itemsSaveTimer.current);
-          itemsSaveTimer.current = null;
-        }
-        onUpdateChecklist(next);
-      },
-      [onUpdateChecklist],
-    );
-
-    // Debounces the items save (used by typing in item text only).
-    const scheduleItemsSave = useCallback(
-      (next: ChecklistItem[]) => {
-        if (itemsSaveTimer.current) clearTimeout(itemsSaveTimer.current);
-        itemsSaveTimer.current = setTimeout(() => {
-          itemsSaveTimer.current = null;
-          onUpdateChecklist(next);
-        }, SAVE_DEBOUNCE_MS);
-      },
-      [onUpdateChecklist],
-    );
-
-    // On unmount: flush any pending debounced saves so we don't lose
-    // the last few keystrokes the user typed before navigating away.
-    // (Earlier version only cleared the timers, silently dropping data.)
+    // On unmount: flush any pending debounced title/description saves so we
+    // don't lose the last few keystrokes before navigating away.
     useEffect(() => {
       return () => {
-        if (itemsSaveTimer.current) {
-          clearTimeout(itemsSaveTimer.current);
-          itemsSaveTimer.current = null;
-          onUpdateChecklist(itemsRef.current);
-        }
         if (titleSaveTimer.current) {
           clearTimeout(titleSaveTimer.current);
           titleSaveTimer.current = null;
@@ -201,128 +198,49 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
       descSaveTimer.current = setTimeout(() => onUpdateDescription(text), SAVE_DEBOUNCE_MS);
     }
 
-    // Display order: uncompleted in canonical order, then completed sorted
-    // by completedAt desc (most recent at top of completed group).
-    // Separate arrays — uncompleted goes through DraggableFlatList for
-    // drag-to-reorder; completed are rendered normally (no reorder, since
-    // they're sorted by recency).
+    // Display order is owned by the parent (items prop is already sorted:
+    // uncompleted by `order`, then completed by completedAt desc). Split
+    // for rendering — uncompleted go through DraggableFlatList for
+    // drag-to-reorder; completed render below as a normal map.
     const uncompletedItems = useMemo(
       () => items.filter((i) => !i.completed),
       [items],
     );
     const completedItems = useMemo(
-      () =>
-        items
-          .filter((i) => i.completed)
-          .slice()
-          .sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0)),
+      () => items.filter((i) => i.completed),
       [items],
     );
 
-    // User dragged uncompleted items into a new order. Rebuild the
-    // canonical `items` array as new-uncompleted-order ++ completed.
-    // (Completed items keep their relative array order; their display
-    // order is independently driven by completedAt.)
-    //
-    // Note (here and in the item callbacks below): we compute `next`
-    // OUTSIDE the setItems call and trigger the save as a separate
-    // statement. Calling `flushItemsSave` (which calls `setNotes` in
-    // useNotes) from inside a setItems updater would be a setState-in-
-    // render violation, since React can invoke updater functions during
-    // reconciliation. Doing it after the setItems statement keeps the
-    // side effect cleanly in the event-handler phase.
-    const handleReorderUncompleted = useCallback(
-      (newUncompleted: ChecklistItem[]) => {
-        const completed = items.filter((it) => it.completed);
-        const next = [...newUncompleted, ...completed];
-        setItems(next);
-        flushItemsSave(next);
-      },
-      [items, flushItemsSave],
-    );
-
     // ----- Item operations -----
-    //
-    // Discrete actions (toggle, add, delete) flush the save immediately —
-    // these are intentional state changes the user expects persisted.
-    //
-    // Continuous actions (typing in an item) schedule a debounced save.
-    // This avoids one Firestore write per keystroke (which would also
-    // cause a snapshot/sync race where in-flight server data overwrites
-    // mid-typing local state — see Bug 2 in the audit).
-
-    const setItemText = useCallback(
-      (id: string, text: string) => {
-        const next = items.map((it) => (it.id === id ? { ...it, text } : it));
-        setItems(next);
-        scheduleItemsSave(next);
-      },
-      [items, scheduleItemsSave],
-    );
-
-    const toggleItem = useCallback(
-      (id: string) => {
-        const next = items.map((it) => {
-          if (it.id !== id) return it;
-          if (it.completed) {
-            // Uncompleting → return a clean item WITHOUT a completedAt
-            // field. Firestore rejects `undefined` field values, so we
-            // can't just set `completedAt: undefined`. Omitting the key
-            // entirely is the supported "delete this field" pattern
-            // when sending the whole checklist array.
-            return { id: it.id, text: it.text, completed: false };
-          }
-          return { ...it, completed: true, completedAt: Date.now() };
-        });
-        setItems(next);
-        flushItemsSave(next);
-      },
-      [items, flushItemsSave],
-    );
+    // All per-item writes happen in useChecklistItems; the editor only
+    // dispatches intent + owns focus/undo UI state.
 
     const addNewItem = useCallback(
       (focus = true): string => {
-        // Always create a new item — the user is in control. If they
-        // want a stack of blank rows, that's their call. They can swipe
-        // to delete or fill them in.
-        const id = makeId();
-        const newItem: ChecklistItem = { id, text: '', completed: false };
+        const id = onAddItem();
         if (focus) pendingFocusId.current = id;
-        const next = [...items, newItem];
-        setItems(next);
-        flushItemsSave(next);
         return id;
       },
-      [items, flushItemsSave],
+      [onAddItem],
     );
 
-    const deleteItem = useCallback(
-      (id: string) => {
-        const idx = items.findIndex((it) => it.id === id);
-        if (idx === -1) return;
-        // Snapshot the item + its original canonical index so the undo
-        // button can put it back exactly where it was.
-        setLastDeleted({ item: items[idx], index: idx });
-        const next = items.filter((it) => it.id !== id);
-        setItems(next);
-        flushItemsSave(next);
-        inputRefs.current.delete(id);
+    const handleDelete = useCallback(
+      (item: ChecklistItemDoc) => {
+        // Snapshot the full item so undo can re-create it exactly.
+        setLastDeleted(item);
+        onDeleteItem(item.id);
+        inputRefs.current.delete(item.id);
       },
-      [items, flushItemsSave],
+      [onDeleteItem],
     );
 
-    // Restore the most recently deleted item at its original position
-    // (clamped to the current list length in case the array shrank).
-    // Single-shot — clears the buffer so the button hides after use.
+    // Restore the most recently deleted item (its original `order` puts it
+    // back in place). Single-shot — clears the buffer so the button hides.
     const undoDelete = useCallback(() => {
       if (!lastDeleted) return;
-      const { item, index } = lastDeleted;
-      const idx = Math.min(index, items.length);
-      const next = [...items.slice(0, idx), item, ...items.slice(idx)];
-      setItems(next);
-      flushItemsSave(next);
+      onRestoreItem(lastDeleted);
       setLastDeleted(null);
-    }, [items, lastDeleted, flushItemsSave]);
+    }, [lastDeleted, onRestoreItem]);
 
     // Apply pending focus after items render.
     useEffect(() => {
@@ -341,16 +259,14 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
         if (items.length === 0) {
           addNewItem(true);
         } else {
-          // Focus the first displayed (uncompleted) item directly via
-          // its ref. No setState here — the existing input is already
-          // mounted; nothing about state needs to change.
-          const first = uncompletedItems[0] ?? completedItems[0];
+          // Focus the first displayed item directly via its ref. No
+          // setState here — the existing input is already mounted.
+          const first = items[0];
           if (first) inputRefs.current.get(first.id)?.focus();
         }
       },
       getLatestState: () => ({
         description: descriptionRef.current,
-        items: itemsRef.current,
       }),
     }));
 
@@ -427,6 +343,7 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
             ]}
           >
             <TextInput
+              ref={descriptionInputRef}
               style={[styles.descriptionInput, { color: colors.text }]}
               value={description}
               onChangeText={handleDescriptionChange}
@@ -443,6 +360,13 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
                 onBlur?.();
               }}
               onTouchStart={onTouchStart}
+              onSelectionChange={(e) => {
+                // Follow the caret while typing at the end of the
+                // description (mid-edits shouldn't yank the page).
+                if (e.nativeEvent.selection.end >= description.length - 5) {
+                  reportCaret(descriptionInputRef);
+                }
+              }}
               keyboardAppearance={colorScheme === 'dark' ? 'dark' : 'light'}
               // Track total line count for the "more"-toggle decision. RN
               // doesn't expose line count directly; estimate from layout.
@@ -451,6 +375,8 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
                   e.nativeEvent.contentSize.height / DESCRIPTION_LINE_HEIGHT,
                 );
                 setDescriptionLineCount(lines);
+                // Description grew while focused — keep the caret in view.
+                if (descriptionFocused) reportCaret(descriptionInputRef);
               }}
             />
           </View>
@@ -475,20 +401,20 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
           <DraggableFlatList
             data={uncompletedItems}
             keyExtractor={(item) => item.id}
-            onDragEnd={({ data }) => handleReorderUncompleted(data)}
+            onDragEnd={({ data }) => onReorderUncompleted(data)}
             // Inner FlatList shouldn't scroll — the parent ScrollView
             // owns scroll. The library still handles long-press-and-drag
             // for reorder gesture inside this flat list.
             scrollEnabled={false}
             activationDistance={5}
-            renderItem={({ item, drag, isActive }: RenderItemParams<ChecklistItem>) => (
+            renderItem={({ item, drag, isActive }: RenderItemParams<ChecklistItemDoc>) => (
               <ScaleDecorator>
                 <ChecklistRow
                   item={item}
                   colors={colors}
                   registerRef={(t) => inputRefs.current.set(item.id, t)}
-                  onToggle={() => toggleItem(item.id)}
-                  onChangeText={(text) => setItemText(item.id, text)}
+                  onToggle={() => onToggleItem(item.id)}
+                  onChangeText={(text) => onSetItemText(item.id, text)}
                   onSubmitEditing={() => {
                     if (item.text.trim().length > 0) {
                       addNewItem(true);
@@ -496,10 +422,11 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
                       Keyboard.dismiss();
                     }
                   }}
-                  onDelete={() => deleteItem(item.id)}
+                  onDelete={() => handleDelete(item)}
                   onFocus={onFocus}
                   onBlur={onBlur}
                   onTouchStart={onTouchStart}
+                  onCaretBottom={onCaretBottom}
                   drag={drag}
                   isActive={isActive}
                 />
@@ -513,8 +440,8 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
               item={item}
               colors={colors}
               registerRef={(t) => inputRefs.current.set(item.id, t)}
-              onToggle={() => toggleItem(item.id)}
-              onChangeText={(text) => setItemText(item.id, text)}
+              onToggle={() => onToggleItem(item.id)}
+              onChangeText={(text) => onSetItemText(item.id, text)}
               onSubmitEditing={() => {
                 if (item.text.trim().length > 0) {
                   addNewItem(true);
@@ -522,10 +449,11 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
                   Keyboard.dismiss();
                 }
               }}
-              onDelete={() => deleteItem(item.id)}
+              onDelete={() => handleDelete(item)}
               onFocus={onFocus}
               onBlur={onBlur}
               onTouchStart={onTouchStart}
+              onCaretBottom={onCaretBottom}
               // No drag/isActive — completed items aren't user-reorderable.
             />
           ))}
@@ -567,7 +495,7 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
 // ---------- Single checklist row (with checkbox + swipe-to-delete) ----------
 
 type ChecklistRowProps = {
-  item: ChecklistItem;
+  item: ChecklistItemDoc;
   colors: (typeof Colors)['light'];
   registerRef: (t: TextInput | null) => void;
   onToggle: () => void;
@@ -577,6 +505,8 @@ type ChecklistRowProps = {
   onFocus?: () => void;
   onBlur?: () => void;
   onTouchStart?: (e: { nativeEvent: { pageY: number } }) => void;
+  /** Reports this row's caret-bottom window-Y for keyboard-follow. */
+  onCaretBottom?: (windowY: number) => void;
   /** Provided by DraggableFlatList for uncompleted items only. When
    *  present, a drag handle is rendered on the right; long-pressing it
    *  initiates the row drag. Completed items don't pass this. */
@@ -596,9 +526,19 @@ function ChecklistRow({
   onFocus,
   onBlur,
   onTouchStart,
+  onCaretBottom,
   drag,
   isActive,
 }: ChecklistRowProps) {
+  // Local handle on this row's input so we can measure its caret. We also
+  // forward it up via registerRef (the parent keeps a map for focus mgmt).
+  const itemInputRef = useRef<TextInput>(null);
+  // Single-line row, so the input's bottom edge IS the caret's line —
+  // report it so the parent can keep a freshly-focused row above the
+  // keyboard.
+  const measureCaret = () => {
+    itemInputRef.current?.measureInWindow((_x, y, _w, h) => onCaretBottom?.(y + h));
+  };
   // Swipe-to-delete renders a red "Delete" action behind the row that
   // becomes visible as the user swipes left. Tapping it triggers delete.
   const renderRightActions = () => (
@@ -624,7 +564,10 @@ function ChecklistRow({
           />
         </Pressable>
         <TextInput
-          ref={registerRef}
+          ref={(t) => {
+            itemInputRef.current = t;
+            registerRef(t);
+          }}
           style={[
             styles.itemInput,
             { color: item.completed ? colors.icon : colors.text },
@@ -633,8 +576,14 @@ function ChecklistRow({
           value={item.text}
           onChangeText={onChangeText}
           onSubmitEditing={onSubmitEditing}
-          onFocus={onFocus}
+          onFocus={() => {
+            onFocus?.();
+            // A newly-created row is often focused below the keyboard;
+            // lift it into view as soon as it gains focus.
+            measureCaret();
+          }}
           onBlur={onBlur}
+          onSelectionChange={measureCaret}
           onTouchStart={onTouchStart}
           placeholder=""
           // Single line per item so Enter triggers onSubmitEditing.

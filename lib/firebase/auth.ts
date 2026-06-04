@@ -5,6 +5,8 @@ import {
   signOut as firebaseSignOut,
   onAuthStateChanged,
   signInWithCredential,
+  reauthenticateWithCredential,
+  EmailAuthProvider,
   sendPasswordResetEmail as firebaseSendPasswordResetEmail,
   GoogleAuthProvider,
   OAuthProvider,
@@ -55,6 +57,29 @@ export function signInWithApple(idToken: string, nonce: string) {
 
 export function sendPasswordReset(email: string) {
   return firebaseSendPasswordResetEmail(auth, email);
+}
+
+// ----- Reauthentication (required before destructive ops like account
+// deletion; Firebase rejects deleteUser with auth/requires-recent-login
+// when the last sign-in isn't recent). -----
+
+/** The user's primary sign-in provider: 'password' | 'google.com' | 'apple.com'. */
+export function primaryProviderId(user: User): string | null {
+  return user.providerData[0]?.providerId ?? null;
+}
+
+export function reauthenticateWithPassword(user: User, password: string) {
+  const credential = EmailAuthProvider.credential(user.email ?? '', password);
+  return reauthenticateWithCredential(user, credential);
+}
+
+export function reauthenticateWithGoogleToken(user: User, idToken: string) {
+  return reauthenticateWithCredential(user, GoogleAuthProvider.credential(idToken));
+}
+
+export function reauthenticateWithAppleToken(user: User, idToken: string, rawNonce: string) {
+  const provider = new OAuthProvider('apple.com');
+  return reauthenticateWithCredential(user, provider.credential({ idToken, rawNonce }));
 }
 
 const AUTH_ERROR_MESSAGES: Record<string, string> = {

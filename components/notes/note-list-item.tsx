@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { memo, useRef } from 'react';
 import { StyleSheet, Pressable, View, Alert, Animated } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { ThemedText } from '@/components/themed-text';
@@ -11,12 +11,12 @@ import type { Note, Tag } from '@/types/note';
 type NoteListItemProps = {
   note: Note;
   tags: Tag[];
-  onPress: () => void;
+  onPress: (noteId: string) => void;
   onDelete?: (noteId: string) => void;
   onTogglePin?: (noteId: string, pinned: boolean) => void;
 };
 
-export function NoteListItem({ note, tags, onPress, onDelete, onTogglePin }: NoteListItemProps) {
+export const NoteListItem = memo(function NoteListItem({ note, tags, onPress, onDelete, onTogglePin }: NoteListItemProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const swipeableRef = useRef<Swipeable>(null);
@@ -41,17 +41,32 @@ export function NoteListItem({ note, tags, onPress, onDelete, onTogglePin }: Not
 
   if (isChecklist) {
     const desc = (note.description ?? '').trim();
-    const items = note.checklist ?? [];
-    const firstUncompleted = items.find((i) => !i.completed && i.text.trim().length > 0);
-    const hasAnyItem = items.some((i) => i.text.trim().length > 0);
-    const allDone = hasAnyItem && items.every((i) => i.completed || !i.text.trim());
+    // Prefer the denormalized summary (no per-note items read). Notes that
+    // predate the items-subcollection migration and haven't been opened
+    // since have no summary yet — fall back to the legacy `checklist`
+    // array so their preview still renders.
+    const summary = note.checklistSummary;
+    let firstUncompletedText: string;
+    let hasAnyItem: boolean;
+    let allDone: boolean;
+    if (summary) {
+      firstUncompletedText = summary.firstUncompleted;
+      hasAnyItem = summary.total > 0;
+      allDone = hasAnyItem && summary.firstUncompleted === '';
+    } else {
+      const items = note.checklist ?? [];
+      firstUncompletedText =
+        items.find((i) => !i.completed && i.text.trim().length > 0)?.text ?? '';
+      hasAnyItem = items.some((i) => i.text.trim().length > 0);
+      allDone = hasAnyItem && items.every((i) => i.completed || !i.text.trim());
+    }
 
     if (hasTitle) {
       displayTitle = note.title;
     } else if (desc.length > 0) {
       displayTitle = desc.split('\n')[0]!;
-    } else if (firstUncompleted) {
-      displayTitle = firstUncompleted.text;
+    } else if (firstUncompletedText) {
+      displayTitle = firstUncompletedText;
     } else if (hasAnyItem) {
       displayTitle = '✓';
     } else {
@@ -61,13 +76,13 @@ export function NoteListItem({ note, tags, onPress, onDelete, onTogglePin }: Not
     if (hasTitle) {
       // Title is the explicit one; preview is description or first task.
       if (desc.length > 0) preview = desc.split('\n')[0]!;
-      else if (firstUncompleted) preview = firstUncompleted.text;
+      else if (firstUncompletedText) preview = firstUncompletedText;
       else if (allDone) preview = '✓';
       else preview = '';
     } else {
       // displayTitle already consumed the best preview slot; secondary
       // preview line shows the next-most-relevant string, if any.
-      if (desc.length > 0 && firstUncompleted) preview = firstUncompleted.text;
+      if (desc.length > 0 && firstUncompletedText) preview = firstUncompletedText;
       else preview = '';
     }
     preview = preview.slice(0, 100);
@@ -131,7 +146,7 @@ export function NoteListItem({ note, tags, onPress, onDelete, onTogglePin }: Not
     >
       <Pressable
         style={[styles.container, { backgroundColor: colors.noteBackground, borderColor: colors.noteBorder }]}
-        onPress={onPress}
+        onPress={() => onPress(note.id)}
       >
         <View style={styles.leftColumn}>
           <ThemedText type="defaultSemiBold" style={styles.title} numberOfLines={1} ellipsizeMode="tail">
@@ -168,7 +183,7 @@ export function NoteListItem({ note, tags, onPress, onDelete, onTogglePin }: Not
       </Pressable>
     </Swipeable>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: {

@@ -17,6 +17,10 @@ import type { CompletionChecker } from '@/lib/habit-scoring';
 import { computeStreak } from '@/lib/habit-streaks';
 import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
 
+// How far back Stats loads records for streak scans. Bounds the per-visit
+// read cost; also the maximum detectable streak length. ~3 years.
+const STREAK_HISTORY_DAYS = 1095;
+
 function getLevelLabel(habit: Habit, levelIndex: number): string {
   if (levelIndex === 0) return habit.name;
   if (levelIndex === 1) return `${habit.name} — Goal`;
@@ -81,21 +85,29 @@ function computeMonthlyRates(
     allRates.push({ date: label, rate });
   }
 
-  // Return last displayMonths with rolling average (average of all months up to and including current)
+  // Return last displayMonths with rolling average (average of all months
+  // up to and including the current one). Single O(n) forward pass with a
+  // running sum — equivalent to the old nested loop, which was O(n²).
+  //
+  // Semantics preserved exactly: months BEFORE the display window only
+  // count toward the average if their rate > 0 (skips pre-habit-creation
+  // months); every month WITHIN the window counts (even 0%).
   const result: { date: string; value: number; avg: number }[] = [];
   const startIdx = totalMonths - displayMonths;
 
+  let sum = 0;
+  let count = 0;
+  for (let j = 0; j < startIdx; j++) {
+    if (allRates[j].rate > 0) {
+      sum += allRates[j].rate;
+      count++;
+    }
+  }
+
   for (let i = startIdx; i < totalMonths; i++) {
     const { date, rate } = allRates[i];
-    // Rolling average: average of all months from start up to this one
-    let sum = 0;
-    let count = 0;
-    for (let j = 0; j <= i; j++) {
-      if (allRates[j].rate > 0 || j >= startIdx) {
-        sum += allRates[j].rate;
-        count++;
-      }
-    }
+    sum += rate;
+    count++;
     const avg = count > 0 ? Math.round(sum / count) : 0;
     result.push({ date, value: rate, avg });
   }
@@ -325,13 +337,16 @@ export default function StatsScreen() {
   const { dateSet: vacationSet } = useVacationDays();
   const { winOnlyWeekends } = useWinOnlyWeekends();
 
-  // Load every record the user has so streaks can scan all the way back.
-  // The chart still windows itself to 18 display months internally — this
-  // wider load only affects the streak calculation, which scans the full
-  // history. 2000-01-01 is comfortably before any user could have started.
+  // Streak scans need history, but loading from 2000-01-01 meant every
+  // Stats visit re-read the user's ENTIRE records collection (one doc per
+  // habit per day → thousands of reads, unbounded as history grows). Cap
+  // the load to a fixed window: bounds the read cost, at the price of
+  // capping the maximum *detectable* streak to this many days.
   const dateRange = useMemo(() => {
     const end = new Date();
-    return { startDate: '2000-01-01', endDate: formatDate(end) };
+    const start = new Date();
+    start.setDate(start.getDate() - STREAK_HISTORY_DAYS);
+    return { startDate: formatDate(start), endDate: formatDate(end) };
   }, []);
 
   const { records } = useHabitRecords(dateRange.startDate, dateRange.endDate);

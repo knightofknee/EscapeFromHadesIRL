@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { useAuth } from '@/contexts/auth-context';
-import { db, doc, setDoc, query, collection, where, onSnapshot } from '@/lib/firebase/firestore';
+import { useCallback, useEffect, useMemo } from 'react';
+import { useRecordsContext } from '@/contexts/records-context';
 import { useTodayDate } from '@/hooks/use-today-date';
 import type { HabitRecord, TripleValue, QuadValue } from '@/types/habit';
 
@@ -8,52 +7,32 @@ import type { HabitRecord, TripleValue, QuadValue } from '@/types/habit';
  * Loads/edits habit records for a specific date. Defaults to today, which
  * auto-advances on midnight/foreground. Pass a date string to pin to a
  * specific day (used by the day navigator in the habits screen).
+ *
+ * Backed by the shared RecordsProvider (see contexts/records-context.tsx):
+ * the day's records are an in-memory slice of the union window, so swiping
+ * between days already inside the window no longer tears down and reopens a
+ * listener. Return shape is unchanged so call sites don't change.
  */
 export function useTodayRecords(dateStr?: string) {
-  const { user } = useAuth();
-  const [records, setRecords] = useState<Map<string, HabitRecord>>(new Map());
-  const localCache = useRef<Map<string, HabitRecord>>(new Map());
+  const { recordsMap, ensureRange, getRecordForDay, recordHabit: ctxRecordHabit } =
+    useRecordsContext();
   const { todayStr } = useTodayDate();
   const effectiveDate = dateStr ?? todayStr;
-  const activeDate = useRef(effectiveDate);
 
-  // Keep ref in sync with the effective date (pinned or today rollover)
-  const [dateKey, setDateKey] = useState(effectiveDate);
   useEffect(() => {
-    if (effectiveDate !== activeDate.current) {
-      activeDate.current = effectiveDate;
-      setDateKey(effectiveDate);
+    ensureRange(effectiveDate, effectiveDate);
+  }, [effectiveDate, ensureRange]);
+
+  const records = useMemo(() => {
+    const out = new Map<string, HabitRecord>();
+    for (const r of recordsMap.values()) {
+      if (r.date === effectiveDate) out.set(r.habitId, r);
     }
-  }, [effectiveDate]);
-
-  useEffect(() => {
-    if (!user) return;
-
-    activeDate.current = effectiveDate;
-
-    const q = query(
-      collection(db, 'records'),
-      where('userId', '==', user.uid),
-      where('date', '==', activeDate.current),
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const map = new Map<string, HabitRecord>();
-      snapshot.docs.forEach((d) => {
-        const record = { id: d.id, ...d.data() } as HabitRecord;
-        map.set(record.habitId, record);
-      });
-      localCache.current = map;
-      setRecords(new Map(map));
-    });
-
-    return unsubscribe;
-  }, [user, dateKey]);
+    return out;
+  }, [recordsMap, effectiveDate]);
 
   const getRecord = useCallback(
-    (habitId: string): HabitRecord | undefined => {
-      return records.get(habitId);
-    },
+    (habitId: string): HabitRecord | undefined => records.get(habitId),
     [records],
   );
 
@@ -63,71 +42,57 @@ export function useTodayRecords(dateStr?: string) {
       value: boolean | TripleValue | QuadValue | number | string,
       extra?: { source?: 'auto' | 'manual'; steps?: number },
     ) => {
-      if (!user) return;
-
-      const docId = `${habitId}_${activeDate.current}`;
-      const record: HabitRecord = {
-        id: docId,
-        habitId,
-        userId: user.uid,
-        date: activeDate.current,
-        value,
-        recordedAt: Date.now(),
-        ...(extra?.source !== undefined ? { source: extra.source } : {}),
-        ...(extra?.steps !== undefined ? { steps: extra.steps } : {}),
-      };
-
-      // Optimistic local update — instant feel
-      localCache.current.set(habitId, record);
-      setRecords(new Map(localCache.current));
-
-      // Background Firestore write — no await, but catch errors
-      const ref = doc(db, 'records', docId);
-      setDoc(ref, record).catch((err) => {
-        console.error('Failed to save habit record:', err);
-      });
+      ctxRecordHabit(habitId, effectiveDate, value, extra);
     },
-    [user],
+    [ctxRecordHabit, effectiveDate],
   );
 
+  // Cycle/toggle helpers read the latest value via getRecordForDay (synchronous
+  // off the ref) so rapid taps compose correctly before the next render.
   const toggleBoolean = useCallback(
     (habitId: string) => {
-      const current = localCache.current.get(habitId);
+      const current = getRecordForDay(habitId, effectiveDate);
       const newValue = current ? !current.value : true;
       recordHabit(habitId, newValue);
     },
-    [recordHabit],
+    [getRecordForDay, effectiveDate, recordHabit],
   );
 
   const cycleTriple = useCallback(
     (habitId: string) => {
-      const current = localCache.current.get(habitId);
+      const current = getRecordForDay(habitId, effectiveDate);
       const currentVal = (current?.value as TripleValue) ?? 'no';
       const next: TripleValue =
         currentVal === 'no' ? 'yes' : currentVal === 'yes' ? 'double' : 'no';
       recordHabit(habitId, next);
     },
-    [recordHabit],
+    [getRecordForDay, effectiveDate, recordHabit],
   );
 
   const cycleQuad = useCallback(
     (habitId: string) => {
-      const current = localCache.current.get(habitId);
+      const current = getRecordForDay(habitId, effectiveDate);
       const currentVal = (current?.value as QuadValue) ?? 'no';
       const next: QuadValue =
-        currentVal === 'no' ? 'yes' : currentVal === 'yes' ? 'goal' : currentVal === 'goal' ? 'ideal' : 'no';
+        currentVal === 'no'
+          ? 'yes'
+          : currentVal === 'yes'
+            ? 'goal'
+            : currentVal === 'goal'
+              ? 'ideal'
+              : 'no';
       recordHabit(habitId, next);
     },
-    [recordHabit],
+    [getRecordForDay, effectiveDate, recordHabit],
   );
 
   const incrementCounter = useCallback(
     (habitId: string) => {
-      const current = localCache.current.get(habitId);
+      const current = getRecordForDay(habitId, effectiveDate);
       const currentVal = (current?.value as number) ?? 0;
       recordHabit(habitId, currentVal + 1);
     },
-    [recordHabit],
+    [getRecordForDay, effectiveDate, recordHabit],
   );
 
   const resetCounter = useCallback(

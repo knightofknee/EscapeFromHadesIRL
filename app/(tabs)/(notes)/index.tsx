@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import { StyleSheet, FlatList, TextInput, View, Pressable, Keyboard } from 'react-native';
+import { StyleSheet, FlatList, TextInput, View, Pressable, Keyboard, ActivityIndicator } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
@@ -18,8 +18,8 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 const DISMISS_BAR_HEIGHT = 40;
 
 export default function NotesListScreen() {
-  const { notes, isLoading, isOffline, createNote, deleteNote, togglePinNote } = useNotes();
-  const { tags, deleteTag } = useTags();
+  const { notes, isLoading, isOffline, createNote, deleteNote, togglePinNote, loadMore, loadAll, allLoaded, isLoadingMore } = useNotes();
+  const { tags, deleteTags } = useTags();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const tabBarHeight = useBottomTabBarHeight();
@@ -49,17 +49,22 @@ export default function NotesListScreen() {
   useFocusEffect(
     useCallback(() => {
       if (isLoading) return;
+      // Only GC once we hold the COMPLETE note set. On a partial page we can't
+      // tell a truly-orphaned tag from one still referenced by an unloaded
+      // note — deleting the latter would lose that reference. So defer GC
+      // until everything is loaded ("load all", or a library small enough to
+      // fit one page) rather than risk a wrong delete.
+      if (!allLoaded) return;
       const timer = setTimeout(() => {
         const inUse = new Set<string>();
         for (const n of notes) {
           for (const t of n.tags) inUse.add(t.tagId);
         }
-        for (const tag of tags) {
-          if (!inUse.has(tag.id)) deleteTag(tag.id);
-        }
+        const orphans = tags.filter((t) => !inUse.has(t.id)).map((t) => t.id);
+        if (orphans.length > 0) deleteTags(orphans);
       }, 500);
       return () => clearTimeout(timer);
-    }, [notes, tags, isLoading, deleteTag]),
+    }, [notes, tags, isLoading, allLoaded, deleteTags]),
   );
 
   // Drop the active filter if its tag is no longer in use.
@@ -68,6 +73,12 @@ export default function NotesListScreen() {
       setSelectedTagId(null);
     }
   }, [selectedTagId, visibleTags]);
+
+  // Stable so the memoized NoteListItem rows don't re-render on every
+  // keystroke/pin toggle (router is a module singleton, no deps needed).
+  const handleOpenNote = useCallback((noteId: string) => {
+    router.push(`/(tabs)/(notes)/${noteId}`);
+  }, []);
 
   const filteredNotes = useMemo(() => {
     let result = notes;
@@ -94,6 +105,10 @@ export default function NotesListScreen() {
       return b.updatedAt - a.updatedAt;
     });
   }, [notes, searchQuery, selectedTagId]);
+
+  // A search query or tag filter only covers the loaded window; "load all"
+  // (the affordance below) extends coverage to every note on demand.
+  const isFiltering = searchQuery.trim().length > 0 || selectedTagId !== null;
 
   const handleCreateNote = useCallback(() => {
     const note = createNote('');
@@ -141,21 +156,43 @@ export default function NotesListScreen() {
         </View>
       )}
 
+      {/* Search-all affordance: search/tag filter only covers the loaded
+          window until the user opts to load everything. */}
+      {isFiltering && !allLoaded && !isLoadingMore && (
+        <Pressable style={styles.loadAllButton} onPress={loadAll}>
+          <ThemedText style={[styles.loadAllText, { color: colors.tint }]}>
+            {searchQuery.trim() ? 'Search all notes' : 'Load all notes'}
+          </ThemedText>
+        </Pressable>
+      )}
+
       {/* Notes list */}
       <FlatList
         data={filteredNotes}
         keyExtractor={(item) => item.id}
         style={styles.list}
         contentContainerStyle={styles.listContent}
+        // Infinite scroll while browsing. Disabled while filtering so a short
+        // filtered list doesn't silently page through everything — the
+        // "load all" button above is the explicit path for full coverage.
+        onEndReached={isFiltering ? undefined : loadMore}
+        onEndReachedThreshold={0.5}
         renderItem={({ item }) => (
           <NoteListItem
             note={item}
             tags={tags}
-            onPress={() => router.push(`/(tabs)/(notes)/${item.id}`)}
-            onDelete={(noteId) => deleteNote(noteId)}
-            onTogglePin={(noteId, pinned) => togglePinNote(noteId, pinned)}
+            onPress={handleOpenNote}
+            onDelete={deleteNote}
+            onTogglePin={togglePinNote}
           />
         )}
+        ListFooterComponent={
+          isLoadingMore ? (
+            <View style={styles.footer}>
+              <ActivityIndicator color={colors.tint} />
+            </View>
+          ) : null
+        }
         ListEmptyComponent={
           <View style={styles.empty}>
             <ThemedText style={styles.emptyText}>
@@ -231,6 +268,20 @@ const styles = StyleSheet.create({
   listContent: {
     padding: 16,
     gap: 10,
+  },
+  loadAllButton: {
+    marginHorizontal: 16,
+    marginBottom: 4,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  loadAllText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  footer: {
+    paddingVertical: 16,
+    alignItems: 'center',
   },
   empty: {
     paddingVertical: 60,

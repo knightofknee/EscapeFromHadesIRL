@@ -37,7 +37,7 @@ export default function QuestsScreen() {
   const { records } = useHabitRecords(startDate, endDate);
   const { dateSet: vacationSet } = useVacationDays();
   const { winOnlyWeekends } = useWinOnlyWeekends();
-  const scores = useQuestScores(quests, habits, records, vacationSet, winOnlyWeekends);
+  const scores = useQuestScores(quests, habits, records, vacationSet, winOnlyWeekends, isFocused);
 
   // Group quests by category, preserving order
   const grouped = useMemo(() => {

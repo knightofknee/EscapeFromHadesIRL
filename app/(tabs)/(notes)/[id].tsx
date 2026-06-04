@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, View, Pressable, Keyboard, ActivityIndicator, useWindowDimensions } from 'react-native';
+import { Alert, StyleSheet, View, Pressable, Keyboard, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { useLocalSearchParams, useNavigation, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
@@ -20,16 +20,19 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { NoteEditor, type NoteEditorHandle } from '@/components/notes/note-editor';
 import { ChecklistEditor, type ChecklistEditorHandle } from '@/components/notes/checklist-editor';
 import { TagPicker } from '@/components/notes/tag-picker';
-import { useNotes } from '@/hooks/use-notes';
+import { useNotes, useNote } from '@/hooks/use-notes';
 import { useTags } from '@/hooks/use-tags';
 import { useOfflineGuard } from '@/contexts/offline-context';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import type { ChecklistItem, InlineTag } from '@/types/note';
+import type { InlineTag } from '@/types/note';
 import {
   formatChecklistAsText,
   parseChecklistFromText,
 } from '@/lib/checklist-format';
+import { useAuth } from '@/contexts/auth-context';
+import { useChecklistItems } from '@/hooks/use-checklist-items';
+import { toItemDoc, summaryOf, makeItemId } from '@/lib/firebase/checklist-items';
 
 const DISMISS_BAR_HEIGHT = 40;
 // Two-line clearance below the cursor, above the dismiss bar.
@@ -38,7 +41,11 @@ const BUFFER_ABOVE_BAR = 60;
 export default function NoteEditorScreen() {
   const { id, new: isNewParam } = useLocalSearchParams<{ id: string; new?: string }>();
   const isNew = isNewParam === '1';
-  const { notes, isLoading: notesLoading, updateNote, deleteNote } = useNotes();
+  // Mutations come from useNotes(); the displayed note is resolved by id via
+  // useNote() so it opens correctly even when it's outside the paginated list
+  // window. (useNotes' own window still backs updateNote's no-op/creative-
+  // writing context for recently-edited notes.)
+  const { updateNote, deleteNote } = useNotes();
   const { tags, createTag } = useTags();
   const { isOffline } = useOfflineGuard();
   const colorScheme = useColorScheme();
@@ -67,10 +74,6 @@ export default function NoteEditorScreen() {
   const scrollDelta = useSharedValue(0);
   const targetKbHeight = useSharedValue(0);
   const keyboardIsOpen = useSharedValue(0); // 0 closed, 1 opening/open
-  // Last reported pixel height of the editor's content TextInput.
-  // Used by the cursor-follow logic to detect content growth (Enter
-  // adds a line height; typing wraps at line ends).
-  const lastContentHeight = useSharedValue(0);
 
   const scrollHandler = useAnimatedScrollHandler({
     onScroll: (e) => {
@@ -121,45 +124,47 @@ export default function NoteEditorScreen() {
     tapY.value = e.nativeEvent.pageY;
   }, [tapY]);
 
-  // Cursor-follow while typing. Fires on every contentSize change (Enter,
-  // wrap, paste) and every selection change (cursor move). When the
-  // content grows AND the cursor is at/near the end, scroll the page by
-  // the growth delta — this is what keeps the cursor visible while you
-  // type instead of letting it slide below the keyboard.
+  // Keep the caret visible while typing. Every editable input (the note
+  // body, the checklist description, each checklist row) reports the
+  // window-Y of its caret's bottom edge whenever its selection or content
+  // size changes. If that point would sit behind the keyboard + dismiss
+  // bar + buffer, we scroll the page just enough to lift it back into the
+  // clear zone — a true scroll-into-view, not an incremental delta nudge.
   //
-  // CRITICAL: Reanimated's `scrollTo` worklet only works from the UI
-  // thread. This callback runs on JS, so we call the ScrollView's
-  // imperative `scrollTo` method via the ref instead. (Earlier version
-  // called `scrollTo(ref, ...)` from JS — silently no-op'd.)
+  // Why measure in window coordinates instead of tracking content-height
+  // deltas: the delta approach only ever moved the caret one line per
+  // event, so a caret that was already several lines under the keyboard
+  // would inch up forever without clearing it (the reported bug). The
+  // measured window-Y tells us exactly how far the caret actually is from
+  // the keyboard top, so one scroll fully reveals it.
   //
-  // We only follow when cursor is at the end because mid-content edits
-  // also grow content but should NOT scroll the user away from where
-  // they're editing.
-  const handleContentMetrics = useCallback(
-    (m: { contentHeight: number; cursorPos: number; cursorAtEnd: boolean }) => {
-      // First measurement after mount — record the height, never scroll.
-      // Otherwise the initial 0 → real-height delta would scroll a lot.
-      if (lastContentHeight.value === 0 || m.contentHeight === 0) {
-        lastContentHeight.value = m.contentHeight;
-        return;
-      }
-      // Keyboard not up → just track height. Nothing to follow.
-      if (keyboardIsOpen.value !== 1) {
-        lastContentHeight.value = m.contentHeight;
-        return;
-      }
-      const delta = m.contentHeight - lastContentHeight.value;
-      lastContentHeight.value = m.contentHeight;
-      if (delta > 0 && m.cursorAtEnd) {
-        const next = scrollOffset.value + delta;
-        // ScrollView's native imperative scrollTo — JS-callable. The
-        // useAnimatedRef returns an object whose .current is the actual
-        // ScrollView instance, so this hits the same RCT method as a
-        // regular ref would.
-        scrollRef.current?.scrollTo({ y: next, animated: false });
+  // CRITICAL: Reanimated's `scrollTo` worklet only runs on the UI thread.
+  // This callback runs on JS, so we use the ScrollView's imperative
+  // `scrollTo` via the ref. animated:false is deliberate — an instant
+  // reposition reads as "the line stays put under my finger"; an animated
+  // catch-up would visibly lag the caret on every keystroke.
+  //
+  // Gate on the canonical Reanimated `progress` (never the custom
+  // keyboardIsOpen flag, which goes stale — see memory). We only act once
+  // the keyboard is FULLY open (progress === 1): while it's still
+  // animating open, the useKeyboardHandler worklet owns the scroll offset
+  // and fighting it from JS causes jitter. progress < 1 also covers the
+  // closed (0) and closing cases.
+  const ensureCaretVisible = useCallback(
+    (caretBottomWindowY: number) => {
+      if (progress.value < 1) return;
+      const keyboardPx = Math.abs(kbHeight.value); // height is signed; magnitude only
+      const desiredCaretY =
+        screenHeight - keyboardPx - DISMISS_BAR_HEIGHT - BUFFER_ABOVE_BAR;
+      const overflow = caretBottomWindowY - desiredCaretY;
+      if (overflow > 0) {
+        scrollRef.current?.scrollTo({
+          y: scrollOffset.value + overflow,
+          animated: false,
+        });
       }
     },
-    [keyboardIsOpen, lastContentHeight, scrollOffset, scrollRef],
+    [progress, kbHeight, screenHeight, scrollOffset, scrollRef],
   );
 
   // Dismiss bar slides with keyboard via Reanimated
@@ -169,9 +174,23 @@ export default function NoteEditorScreen() {
     }],
   }));
 
-  const note = notes.find((n) => n.id === id);
+  const { note, isLoading: noteLoading } = useNote(id);
   const noteRef = useRef(note);
   noteRef.current = note;
+
+  const { user } = useAuth();
+  // Checklist items now live in the `notes/{id}/items` subcollection. This
+  // hook owns the live listener, per-item writes, optimistic state, and the
+  // one-time legacy-array migration. It's a no-op for text notes (enabled
+  // gates the subscription/migration).
+  const checklist = useChecklistItems({
+    noteId: id ?? '',
+    userId: user?.uid,
+    enabled: note?.type === 'checklist',
+    legacyChecklist: note?.checklist,
+    itemsMigrated: note?.itemsMigrated,
+    initialSummary: note?.checklistSummary,
+  });
 
   const navigation = useNavigation();
 
@@ -219,13 +238,6 @@ export default function NoteEditorScreen() {
     [id, updateNote],
   );
 
-  const handleUpdateChecklist = useCallback(
-    (checklist: ChecklistItem[]) => {
-      if (id) updateNote(id, { checklist });
-    },
-    [id, updateNote],
-  );
-
   // Toggle between text and checklist modes. Round-trip is data-preserving:
   //   text → checklist: parse the bottom of `content` for markdown checkbox
   //                     lines as items; everything above becomes description.
@@ -241,21 +253,25 @@ export default function NoteEditorScreen() {
     Keyboard.dismiss();
     const isChecklist = note.type === 'checklist';
     if (isChecklist) {
-      // Going checklist → text. Pull the freshest description + items
-      // from the editor's local state — the `note` prop can lag by up
-      // to the save-debounce window, and reading the prop here would
-      // silently lose any in-flight typing. Falls back to prop values
-      // if the editor handle isn't available yet.
-      const latest = checklistEditorRef.current?.getLatestState();
-      const desc = latest?.description ?? note.description ?? '';
-      const items = latest?.items ?? note.checklist ?? [];
+      // Going checklist → text. Description comes from the editor's local
+      // state (the `note` prop can lag by the save-debounce window); items
+      // come straight from the subcollection hook, which already reflects
+      // any not-yet-flushed typing via its optimistic overlay. Read items
+      // BEFORE clearing the subcollection.
+      const desc = checklistEditorRef.current?.getLatestState()?.description ?? note.description ?? '';
+      const items = checklist.getItems();
       const dumped = formatChecklistAsText(desc, items);
+      // Flip first (optimistic — unmounts the checklist editor), then drop
+      // the item docs in the background. The dumped content is the backstop
+      // if the delete is interrupted.
       updateNote(id, {
         type: 'text',
         content: dumped,
         description: '',
-        checklist: [],
       });
+      checklist.clearItems().catch((e) =>
+        console.error('handleToggleType: clearItems failed', e),
+      );
     } else {
       // Going text → checklist. Pull the freshest content from the
       // editor's local state — `note.content` (the prop) can lag by up
@@ -263,11 +279,18 @@ export default function NoteEditorScreen() {
       // any in-flight typing. Falls back to the prop value if the
       // editor handle isn't available yet.
       const latestContent = noteEditorRef.current?.getLatestContent() ?? note.content ?? '';
-      const { description, items } = parseChecklistFromText(latestContent);
+      const { description, items: parsed } = parseChecklistFromText(latestContent, makeItemId);
+      const now = Date.now();
+      const itemDocs = parsed.map((it, idx) => toItemDoc(it, idx, user?.uid ?? '', now));
+      const summary = summaryOf(itemDocs);
+      // Seed the subcollection (the hook also shows them optimistically so
+      // the editor isn't briefly empty), then flip the note doc.
+      checklist.seedItems(itemDocs, summary);
       updateNote(id, {
         type: 'checklist',
         description,
-        checklist: items,
+        checklistSummary: summary,
+        itemsMigrated: true,
         // Leave content as-is for safety. Active rendering branches on
         // type, so the stale content is harmless until re-toggled.
       });
@@ -277,7 +300,26 @@ export default function NoteEditorScreen() {
       // mounted — a fixed-delay setTimeout was unreliable here.
       justToggledToChecklist.current = true;
     }
-  }, [id, note, updateNote]);
+  }, [id, note, updateNote, checklist, user?.uid]);
+
+  // Going text → checklist is one tap (non-destructive). The reverse
+  // ("Undo Checklist") discards every checkbox's completed state, so gate
+  // that direction behind a confirm — it's a top-center button that's
+  // easy to hit by accident, and the loss isn't recoverable.
+  const confirmToggleType = useCallback(() => {
+    if (note?.type !== 'checklist') {
+      handleToggleType();
+      return;
+    }
+    Alert.alert(
+      'Convert to text?',
+      "This removes the checklist's completed states. The text is preserved.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Convert', style: 'destructive', onPress: handleToggleType },
+      ],
+    );
+  }, [note?.type, handleToggleType]);
 
   // Focus first item once ChecklistEditor has actually mounted following
   // a text→checklist toggle. requestAnimationFrame defers one render
@@ -331,7 +373,7 @@ export default function NoteEditorScreen() {
     // Still loading notes — show spinner. Only show "not found" once loading is done.
     return (
       <ThemedView style={styles.centered}>
-        {notesLoading ? (
+        {noteLoading ? (
           <ActivityIndicator size="large" color={colors.tint} />
         ) : (
           <ThemedText>Note not found</ThemedText>
@@ -344,14 +386,18 @@ export default function NoteEditorScreen() {
     <ThemedView style={styles.container}>
       <SafeAreaView edges={['top']}>
         <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={styles.headerButton} hitSlop={8}>
+          <Pressable
+            onPress={() => router.replace('/(tabs)/(notes)')}
+            style={styles.headerButton}
+            hitSlop={8}
+          >
             <IconSymbol name="chevron.left" size={22} color={'#3B82F6'} />
             <ThemedText style={[styles.headerButtonText, { color: '#3B82F6' }]}>Notes</ThemedText>
           </Pressable>
           {/* Centered toggle: text ↔ checklist. Always visible — round-trip
               is data-preserving via the markdown dump format. */}
           <Pressable
-            onPress={handleToggleType}
+            onPress={confirmToggleType}
             style={styles.headerCenterButton}
             hitSlop={8}
             accessibilityLabel={
@@ -404,14 +450,21 @@ export default function NoteEditorScreen() {
             ref={checklistEditorRef}
             note={note}
             tags={tags}
+            items={checklist.items}
             onUpdateTitle={handleUpdateTitle}
             onUpdateDescription={handleUpdateDescription}
-            onUpdateChecklist={handleUpdateChecklist}
             onUpdateTags={handleUpdateTags}
+            onAddItem={checklist.addItem}
+            onToggleItem={checklist.toggleItem}
+            onSetItemText={checklist.setItemText}
+            onDeleteItem={checklist.deleteItem}
+            onRestoreItem={checklist.restoreItem}
+            onReorderUncompleted={checklist.reorderUncompleted}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
             onOpenTagPicker={() => setTagPickerOpen(true)}
             onTouchStart={handleTouchStart}
+            onCaretBottom={ensureCaretVisible}
           />
         ) : (
           <NoteEditor
@@ -426,7 +479,7 @@ export default function NoteEditorScreen() {
             onBlur={() => setIsFocused(false)}
             onOpenTagPicker={() => setTagPickerOpen(true)}
             onTouchStart={handleTouchStart}
-            onContentMetricsChange={handleContentMetrics}
+            onCaretBottom={ensureCaretVisible}
           />
         )}
       </Animated.ScrollView>

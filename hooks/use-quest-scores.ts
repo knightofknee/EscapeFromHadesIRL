@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { formatDate } from '@/lib/date-utils';
 import { shouldSkipWeekend } from '@/lib/habit-scoring';
 import { FOUNDATION_KEYS } from '@/constants/quest-templates';
@@ -187,8 +187,14 @@ export function useQuestScores(
   records: HabitRecord[],
   vacationSet?: Set<string>,
   winOnlyWeekends: boolean = false,
+  // When false (screen not focused), reuse the last result instead of
+  // recomputing — tabs stay mounted, so without this the score loop re-runs
+  // on every records delta even when the user isn't on the quests screen.
+  enabled: boolean = true,
 ): QuestScores {
+  const cacheRef = useRef<QuestScores | null>(null);
   return useMemo(() => {
+    if (!enabled && cacheRef.current) return cacheRef.current;
     // Vacation days are removed from the timeline before scoring — the
     // user "wasn't tracking" those days, so they shouldn't count for or
     // against the quest. scoreQuest scales targetDays to the active
@@ -226,6 +232,8 @@ export function useQuestScores(
     const multiplier = 1 + foundationCount * 0.05;
     const runScore = Math.round(totalScore * multiplier);
 
-    return { byQuest, foundationCount, runScore };
-  }, [quests, habits, records, vacationSet, winOnlyWeekends]);
+    const result = { byQuest, foundationCount, runScore };
+    cacheRef.current = result;
+    return result;
+  }, [quests, habits, records, vacationSet, winOnlyWeekends, enabled]);
 }

@@ -10,6 +10,7 @@ import {
   doc,
   setDoc,
   deleteDoc,
+  writeBatch,
 } from '@/lib/firebase/firestore';
 import { stripUndefined } from '@/lib/firebase/clean';
 import type { Tag } from '@/types/note';
@@ -65,5 +66,26 @@ export function useTags() {
     [user],
   );
 
-  return { tags, createTag, deleteTag };
+  // Batched delete for the orphan-tag GC sweep — one commit instead of N
+  // individual deletes. Chunks at Firestore's 500-write batch limit.
+  const deleteTags = useCallback(
+    async (tagIds: string[]) => {
+      if (!user || tagIds.length === 0) return;
+      let batch = writeBatch(db);
+      let n = 0;
+      for (const id of tagIds) {
+        batch.delete(doc(db, 'tags', id));
+        n++;
+        if (n === 500) {
+          await batch.commit();
+          batch = writeBatch(db);
+          n = 0;
+        }
+      }
+      if (n > 0) await batch.commit();
+    },
+    [user],
+  );
+
+  return { tags, createTag, deleteTag, deleteTags };
 }
