@@ -59,7 +59,8 @@ export default function WeekViewScreen() {
           newValue = cur === 'no' ? 'yes' : cur === 'yes' ? 'double' : 'no';
           break;
         }
-        case 'quad': {
+        case 'quad':
+        case 'creativeWriting': {
           const cur = (existing?.value as QuadValue) ?? 'no';
           newValue = cur === 'no' ? 'yes' : cur === 'yes' ? 'goal' : cur === 'goal' ? 'ideal' : 'no';
           break;

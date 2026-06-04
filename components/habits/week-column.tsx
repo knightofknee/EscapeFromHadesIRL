@@ -35,6 +35,7 @@ function getStateColor(
     }
     case 'steps':
     case 'meditation':
+    case 'creativeWriting':
     case 'quad': {
       const q = record.value as QuadValue;
       return q === 'ideal' ? successColors.triple : q === 'goal' ? successColors.double : q === 'yes' ? successColors.recorded : successColors.unrecorded;

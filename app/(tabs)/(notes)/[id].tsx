@@ -362,7 +362,7 @@ export default function NoteEditorScreen() {
             accessibilityRole="button"
           >
             <ThemedText style={[styles.headerButtonText, { color: colors.tint }]}>
-              {note.type === 'checklist' ? 'Undo Checklist' : 'Checklist'}
+              {note.type === 'checklist' ? 'Undo Checklist' : 'Create Checklist'}
             </ThemedText>
           </Pressable>
           <Pressable

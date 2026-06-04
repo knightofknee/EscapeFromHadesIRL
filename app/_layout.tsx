@@ -6,6 +6,20 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef } from 'react';
 import { View, Image, StyleSheet } from 'react-native';
 import 'react-native-reanimated';
+import * as Notifications from 'expo-notifications';
+
+// Set the notification handler ONCE at app startup so that meditation-timer
+// completion notifications still play the default sound + show a banner
+// when the app is in the foreground. Without this, iOS silently swallows
+// notifications that fire while the app is open.
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAppearance } from '@/hooks/use-appearance';

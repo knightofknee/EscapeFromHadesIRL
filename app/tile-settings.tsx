@@ -12,6 +12,11 @@ import { useHabits } from '@/hooks/use-habits';
 import { useTodayRecords } from '@/hooks/use-today-records';
 import { consumePendingHabitCallback, clearPendingHabitCallback } from '@/lib/pending-habit-link';
 import type { RecordingMode, GlyphData } from '@/types/habit';
+import { requestStepsPermission } from '@/lib/steps-health';
+import {
+  getNotificationPermissionBucket,
+  requestNotificationPermission,
+} from '@/lib/meditation-notifications';
 
 type ModeOption = { value: RecordingMode; label: string; description: string; auto?: boolean };
 
@@ -23,6 +28,7 @@ const RECORDING_MODES: ModeOption[] = [
   { value: 'value', label: 'Value', description: 'Enter a value' },
   { value: 'steps', label: 'Steps Counter', description: 'Auto-filled from your step count', auto: true },
   { value: 'meditation', label: 'Meditation', description: 'Tap to start a timer; pause/resume, log sessions', auto: true },
+  { value: 'creativeWriting', label: 'Creative Writing', description: "Auto-bumps to 'yes' the first time you write a note today", auto: true },
 ];
 
 const MANUAL_MODES = RECORDING_MODES.filter((m) => !m.auto);
@@ -107,7 +113,10 @@ export default function TileSettingsModal() {
 
   // After the user taps an auto mode, wait for the reorder to land in
   // layout, then scroll so the selected tile is positioned with the
-  // next-to-last auto tile half-visible above it.
+  // next-to-last auto tile half-visible above it. Also fire the auto
+  // mode's required permission request here — declaring intent (picking
+  // the type) is the right moment to ask, not later when they tap the
+  // tile.
   useEffect(() => {
     if (!userTappedAutoRef.current) return;
     userTappedAutoRef.current = false;
@@ -115,15 +124,33 @@ export default function TileSettingsModal() {
     if (!selectedIsAuto) return;
     const tid = setTimeout(() => {
       const selectedPos = autoTileLayouts.current.get(recordingMode);
-      if (!selectedPos) return;
-      const selectedIdx = sortedAutoModes.findIndex((m) => m.value === recordingMode);
-      const prevMode = selectedIdx > 0 ? sortedAutoModes[selectedIdx - 1].value : null;
-      const prevHeight = prevMode ? autoTileLayouts.current.get(prevMode)?.height ?? 0 : 0;
-      const targetY = autoSectionYRef.current + selectedPos.y - prevHeight * 0.5;
-      scrollRef.current?.scrollTo({ y: Math.max(0, targetY), animated: true });
+      if (selectedPos) {
+        const selectedIdx = sortedAutoModes.findIndex((m) => m.value === recordingMode);
+        const prevMode = selectedIdx > 0 ? sortedAutoModes[selectedIdx - 1].value : null;
+        const prevHeight = prevMode ? autoTileLayouts.current.get(prevMode)?.height ?? 0 : 0;
+        const targetY = autoSectionYRef.current + selectedPos.y - prevHeight * 0.5;
+        scrollRef.current?.scrollTo({ y: Math.max(0, targetY), animated: true });
+      }
     }, 60);
+    // Permission prompts:
+    //  - Steps: straight to the iOS Health system sheet (it explains itself).
+    //  - Meditation: gate on a status check first. Only show our in-app
+    //    pre-prompt when the system permission is `undetermined`. If the
+    //    user already granted or denied, skip — iOS won't re-prompt anyway.
+    if (recordingMode === 'steps') {
+      void requestStepsPermission();
+    } else if (recordingMode === 'meditation') {
+      void (async () => {
+        const bucket = await getNotificationPermissionBucket();
+        if (bucket === 'undetermined') setNotifPrePromptVisible(true);
+      })();
+    }
     return () => clearTimeout(tid);
   }, [recordingMode, sortedAutoModes]);
+
+  // Visibility of the in-app pre-prompt that explains our limited use of
+  // notifications BEFORE the iOS system sheet is shown.
+  const [notifPrePromptVisible, setNotifPrePromptVisible] = useState<boolean>(false);
 
   // Clear pending habit callback if user leaves without saving
   useEffect(() => {
@@ -598,6 +625,17 @@ export default function TileSettingsModal() {
           </>
         )}
 
+        {/* Creative Writing — no goals to configure, just an explanation of
+            how the auto-bump behaves. Wording locked with the user. */}
+        {recordingMode === 'creativeWriting' && (
+          <ThemedText style={styles.hint}>
+            Writing or editing the first non-checklist note of the day marks
+            this tile &quot;yes.&quot; After that we don&apos;t touch it again today —
+            even if you tap it back to zero. Tap the tile yourself for goal
+            or ideal. Checklists don&apos;t count toward this habit.
+          </ThemedText>
+        )}
+
         {/* Counter direct edit (only for existing counter habits) */}
         {!isCreating && recordingMode === 'counter' && (
           <>
@@ -766,6 +804,51 @@ export default function TileSettingsModal() {
           onCancel={() => setShowGlyphEditor(false)}
         />
       </Modal>
+
+      {/* Notification pre-prompt — shown only when the user picks Meditation
+          for the first time (system permission undetermined). Wording is
+          locked with the user; "Continue" triggers the iOS system sheet,
+          "Not now" closes without ever calling iOS so the system prompt is
+          preserved for next time. */}
+      <Modal
+        visible={notifPrePromptVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setNotifPrePromptVisible(false)}
+      >
+        <Pressable style={styles.notifOverlay} onPress={() => setNotifPrePromptVisible(false)}>
+          <Pressable
+            style={[styles.notifSheet, { backgroundColor: colors.tileBackground }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <ThemedText type="defaultSemiBold" style={styles.notifTitle}>
+              Allow meditation alarm?
+            </ThemedText>
+            <ThemedText style={styles.notifBody}>
+              Notifications let your timer ring on time — even when the app
+              is closed or your phone is locked. That&apos;s the only thing we
+              use them for. We won&apos;t send anything else.
+            </ThemedText>
+            <View style={styles.notifButtons}>
+              <Pressable
+                style={[styles.notifSecondary, { borderColor: colors.tileBorder }]}
+                onPress={() => setNotifPrePromptVisible(false)}
+              >
+                <ThemedText style={styles.notifSecondaryText}>Not now</ThemedText>
+              </Pressable>
+              <Pressable
+                style={[styles.notifPrimary, { backgroundColor: colors.tint }]}
+                onPress={async () => {
+                  setNotifPrePromptVisible(false);
+                  await requestNotificationPermission();
+                }}
+              >
+                <ThemedText style={styles.notifPrimaryText}>Continue</ThemedText>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ThemedView>
   );
 }
@@ -881,6 +964,59 @@ const styles = StyleSheet.create({
     opacity: 0.6,
     lineHeight: 16,
     marginTop: 4,
+  },
+  notifOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    paddingHorizontal: 16,
+  },
+  notifSheet: {
+    width: '100%',
+    maxWidth: 360,
+    borderRadius: 12,
+    padding: 20,
+    gap: 14,
+  },
+  notifTitle: {
+    fontSize: 17,
+    textAlign: 'center',
+  },
+  notifBody: {
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+    opacity: 0.85,
+  },
+  notifButtons: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 4,
+  },
+  notifSecondary: {
+    flex: 1,
+    height: 44,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  notifSecondaryText: {
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  notifPrimary: {
+    flex: 1,
+    height: 44,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  notifPrimaryText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 15,
   },
   optionButton: {
     padding: 12,

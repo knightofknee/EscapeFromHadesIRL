@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { useOfflineGuard } from '@/contexts/offline-context';
 import {
@@ -12,14 +12,32 @@ import {
   deleteDoc,
 } from '@/lib/firebase/firestore';
 import { subscribeWithOfflineState } from '@/lib/firebase/subscribe';
+import { maybeBumpCreativeWriting } from '@/lib/creative-writing';
+import { useHabits } from '@/hooks/use-habits';
+import { useTodayDate } from '@/hooks/use-today-date';
 import type { Note } from '@/types/note';
 
 export function useNotes() {
   const { user } = useAuth();
   const { requireOnline } = useOfflineGuard();
+  const { habits } = useHabits();
+  const { todayStr } = useTodayDate();
+  // Stale-closure proof: refs that callbacks read instead of values, so the
+  // Creative Writing bump always sees the latest habit list + today's date
+  // without bloating the callback's dep array (and thus invalidating its
+  // identity every render).
+  const habitsRef = useRef(habits);
+  habitsRef.current = habits;
+  const todayRef = useRef(todayStr);
+  todayRef.current = todayStr;
+  const notesRef = useRef<Note[]>([]);
   const [notes, setNotes] = useState<Note[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
+
+  // Keep notesRef in lockstep with state so updateNote can read the
+  // pre-patch note synchronously when deciding whether to bump.
+  notesRef.current = notes;
 
   useEffect(() => {
     if (!user) {
@@ -95,6 +113,14 @@ export function useNotes() {
       setDoc(ref, newNote).catch((err) => {
         console.error('createNote: Firestore write failed', err);
       });
+      // Creative Writing auto-bump (fire-and-forget). New notes default to
+      // text (no `type` field) → not a checklist → bump-eligible.
+      void maybeBumpCreativeWriting({
+        habits: habitsRef.current,
+        userId: user.uid,
+        todayStr: todayRef.current,
+        isChecklist: false,
+      });
       return newNote;
     },
     [user, requireOnline],
@@ -128,6 +154,19 @@ export function useNotes() {
         // are visible. UI is already optimistic — user sees success.
         console.error('updateNote: Firestore write failed', err);
       }
+      // Creative Writing auto-bump. The note's checklist status after this
+      // patch determines whether it counts — `updates.type` wins if it
+      // changed; otherwise we fall back to the existing note's type from
+      // the pre-patch snapshot. Pre-existing notes with no type field
+      // count as text (default).
+      const existing = notesRef.current.find((n) => n.id === noteId);
+      const resultingType = updates.type ?? existing?.type ?? 'text';
+      void maybeBumpCreativeWriting({
+        habits: habitsRef.current,
+        userId: user.uid,
+        todayStr: todayRef.current,
+        isChecklist: resultingType === 'checklist',
+      });
     },
     [user],
   );

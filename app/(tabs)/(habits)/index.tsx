@@ -25,6 +25,7 @@ import { VacationEditModal } from '@/components/habits/vacation-edit-modal';
 import { useAuth } from '@/contexts/auth-context';
 import { useOfflineGuard } from '@/contexts/offline-context';
 import { useVacationDays } from '@/hooks/use-vacation-days';
+import { useStepsBackfill } from '@/hooks/use-steps-backfill';
 import {
   buildDateRange,
   createVacationDays,
@@ -60,6 +61,9 @@ export default function HabitsDayScreen() {
   const { user } = useAuth();
   const { requireOnline } = useOfflineGuard();
   const { days: vacationDays, dateSet: vacationDateSet, getContiguousBlock } = useVacationDays();
+  // Foreground sync: re-fetch today's steps for every Steps Counter habit
+  // on mount + when the app foregrounds, so tiles stay fresh without taps.
+  useStepsBackfill();
   const viewedVacation = vacationDays.get(viewedDate);
   const isVacationDay = viewedVacation != null;
 
@@ -191,6 +195,10 @@ export default function HabitsDayScreen() {
           cycleTriple(habitId);
           break;
         case 'quad':
+        case 'creativeWriting':
+          // Creative Writing reuses the quad cycle for tile taps; the auto
+          // bump only writes 'yes' once per day, never overwrites a higher
+          // tier and never lowers, so user taps stay fully in control.
           cycleQuad(habitId);
           break;
         case 'counter':

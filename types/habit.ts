@@ -6,7 +6,7 @@ export type GridPosition = {
 /** Relative size weight for tile layout. Default 1, max 100. Higher = bigger tile. */
 export type TileSize = number;
 
-export type RecordingMode = 'boolean' | 'triple' | 'quad' | 'counter' | 'value' | 'steps' | 'meditation';
+export type RecordingMode = 'boolean' | 'triple' | 'quad' | 'counter' | 'value' | 'steps' | 'meditation' | 'creativeWriting';
 
 /** A single meditation session, recorded by the timer or entered manually. */
 export type MeditationSession = {

@@ -1,14 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  AppState,
   Modal,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   TextInput,
-  View,
   Vibration,
+  View,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { ThemedText } from '@/components/themed-text';
@@ -20,6 +21,17 @@ import {
   formatTimerDuration,
   getMeditationQualifyingCount,
 } from '@/lib/meditation';
+import {
+  cancelMeditationAlarm,
+  scheduleMeditationAlarm,
+} from '@/lib/meditation-notifications';
+import {
+  clearTimerState,
+  computeRemainingSec,
+  isStaleForDay,
+  loadTimerState,
+  saveTimerState,
+} from '@/lib/meditation-timer-storage';
 import { useTodayDate } from '@/hooks/use-today-date';
 import type { Habit, HabitRecord, MeditationSession } from '@/types/habit';
 
@@ -35,15 +47,22 @@ type MeditationTimerModalProps = {
 /**
  * Per-day meditation timer + session list.
  *
- * Phase A: foreground-only timer. The countdown ticks via setInterval while
- * the modal is open; pause/resume work locally. On natural completion (or
- * "Log Session"), a session is appended to `record.sessions` and the tier
- * (record.value as QuadValue) is recomputed via computeMeditationTier.
- *
- * Phase B will add: AsyncStorage persistence so paused state survives app
- * close, scheduled local notifications so the alarm fires when the app is
- * backgrounded/killed, a bundled bell sound for the permission-denied case,
- * and day-rollover reset to the habit's configured default.
+ * Phase B in place:
+ * - AsyncStorage persists in-flight timer state per-habit, so paused or
+ *   running timers survive app close and modal close.
+ * - Scheduled local notifications fire the completion alarm with the
+ *   default system sound + vibration even when the app is backgrounded
+ *   or killed. The notification handler in app/_layout.tsx makes them
+ *   ring in the foreground too. If notification permission is denied,
+ *   the foreground tick still detects completion and just vibrates.
+ * - Day-cross attribution: the persisted state records the START day, and
+ *   the resulting session logs to that day even if completion happens
+ *   after midnight.
+ * - Day rollover: a stale persisted state from a previous local day is
+ *   discarded on load (and any pending completion is logged to its start
+ *   day before clearing), so users start each day with a fresh timer.
+ * - AppState 'active' re-syncs the visible modal from AsyncStorage so
+ *   backgrounded completions land immediately when the user reopens.
  */
 export function MeditationTimerModal({
   visible,
@@ -69,6 +88,12 @@ export function MeditationTimerModal({
   const [remainingSec, setRemainingSec] = useState<number>(defaultDurationSec);
   const [running, setRunning] = useState<boolean>(false);
   const startRef = useRef<{ at: number; remainingAtStart: number } | null>(null);
+  // Day-cross attribution: the START day for the active timer. Sessions get
+  // logged to this date even if completion happens after midnight.
+  const activeDateRef = useRef<string>(date);
+  // Currently-scheduled completion notification id (so we can cancel on
+  // pause/reset).
+  const notificationIdRef = useRef<string | null>(null);
 
   // Sub-modal for "Log Session" — small minutes-input prompt so the user
   // explicitly picks how long the manually-logged session is. Prefilled to
@@ -79,16 +104,159 @@ export function MeditationTimerModal({
   const sessions = record?.sessions ?? [];
   const qualifying = getMeditationQualifyingCount(sessions, targetMinutes);
 
-  // When the modal opens or the habit's default changes, reset to the
-  // configured duration (Phase B will instead restore any persisted state).
-  useEffect(() => {
-    if (visible) {
+  const persistSession = useCallback(
+    async (newSession: MeditationSession, sessionDate: string) => {
+      if (!habit) return;
+      // Re-read the latest record from this render — `sessions` from props
+      // (above) may be stale across long-running awaits, but for the
+      // single-write case here it's fine: we read once, append, write back.
+      // (Concurrent edits on the same day are exceedingly rare.)
+      const existing = record?.sessions ?? [];
+      const nextSessions = [...existing, newSession];
+      const value = computeMeditationTier(nextSessions, targetSessions, targetMinutes);
+      const docId = `${habit.id}_${sessionDate}`;
+      const next: HabitRecord = {
+        id: docId,
+        habitId: habit.id,
+        userId,
+        date: sessionDate,
+        value,
+        recordedAt: Date.now(),
+        sessions: nextSessions,
+      };
+      try {
+        await setDoc(doc(db, 'records', docId), next);
+      } catch (err) {
+        console.error('Failed to save meditation session:', err);
+      }
+    },
+    [habit, record?.sessions, targetSessions, targetMinutes, userId],
+  );
+
+  const removeSession = useCallback(
+    async (index: number) => {
+      if (!habit) return;
+      const nextSessions = sessions.filter((_, i) => i !== index);
+      const value = computeMeditationTier(nextSessions, targetSessions, targetMinutes);
+      const docId = `${habit.id}_${date}`;
+      const next: HabitRecord = {
+        id: docId,
+        habitId: habit.id,
+        userId,
+        date,
+        value,
+        recordedAt: Date.now(),
+        sessions: nextSessions,
+      };
+      try {
+        await setDoc(doc(db, 'records', docId), next);
+      } catch (err) {
+        console.error('Failed to remove meditation session:', err);
+      }
+    },
+    [habit, sessions, targetSessions, targetMinutes, userId, date],
+  );
+
+  // Re-sync UI state from whatever's in AsyncStorage. Handles: fresh state,
+  // stale (prior-day) state, completed-while-backgrounded state, and
+  // currently-running/paused state. Called on visible→true and on each
+  // AppState 'active' transition.
+  const syncFromPersisted = useCallback(async () => {
+    if (!habit) return;
+    const persisted = await loadTimerState(habit.id);
+
+    const resetFresh = () => {
       setTotalSec(defaultDurationSec);
       setRemainingSec(defaultDurationSec);
       setRunning(false);
       startRef.current = null;
+      notificationIdRef.current = null;
+      activeDateRef.current = date;
+    };
+
+    if (!persisted) {
+      resetFresh();
+      return;
     }
-  }, [visible, defaultDurationSec]);
+
+    if (isStaleForDay(persisted, todayStr)) {
+      // Yesterday's timer (or older). If it completed offline, log the
+      // session to its start day, then clear and show today fresh.
+      if (persisted.startedAt != null) {
+        const remaining = computeRemainingSec(persisted, Date.now());
+        if (remaining === 0) {
+          await persistSession(
+            {
+              durationSec: persisted.totalSec,
+              source: 'timer',
+              loggedAt: Date.now(),
+            },
+            persisted.date,
+          );
+        }
+      }
+      await cancelMeditationAlarm(persisted.notificationId);
+      await clearTimerState(habit.id);
+      resetFresh();
+      return;
+    }
+
+    // Same-day persisted state.
+    notificationIdRef.current = persisted.notificationId;
+    activeDateRef.current = persisted.date;
+    setTotalSec(persisted.totalSec);
+
+    if (persisted.startedAt != null) {
+      // Was running when last saved. May have completed while we were away.
+      const remaining = computeRemainingSec(persisted, Date.now());
+      if (remaining === 0) {
+        await persistSession(
+          {
+            durationSec: persisted.totalSec,
+            source: 'timer',
+            loggedAt: Date.now(),
+          },
+          persisted.date,
+        );
+        await cancelMeditationAlarm(persisted.notificationId);
+        await clearTimerState(habit.id);
+        setRemainingSec(persisted.totalSec);
+        setRunning(false);
+        startRef.current = null;
+        notificationIdRef.current = null;
+        activeDateRef.current = date;
+      } else {
+        // Still running — restore the tick anchor.
+        setRemainingSec(remaining);
+        startRef.current = {
+          at: persisted.startedAt,
+          remainingAtStart: persisted.remainingAtStart,
+        };
+        setRunning(true);
+      }
+    } else {
+      // Paused.
+      setRemainingSec(persisted.remainingAtStart);
+      setRunning(false);
+      startRef.current = null;
+    }
+  }, [habit, todayStr, defaultDurationSec, date, persistSession]);
+
+  // Sync on open.
+  useEffect(() => {
+    if (!visible) return;
+    void syncFromPersisted();
+  }, [visible, syncFromPersisted]);
+
+  // Re-sync whenever the app foregrounds (the modal could be visible and the
+  // timer could have completed in the background).
+  useEffect(() => {
+    if (!visible) return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void syncFromPersisted();
+    });
+    return () => sub.remove();
+  }, [visible, syncFromPersisted]);
 
   // Ticking. We compute remaining from start timestamps so render drift
   // doesn't accumulate; the interval just nudges React to re-render.
@@ -101,7 +269,8 @@ export function MeditationTimerModal({
       const next = Math.max(0, s.remainingAtStart - Math.floor(elapsedMs / 1000));
       setRemainingSec(next);
       if (next === 0) {
-        // Natural completion — log a session of the original full length.
+        // Natural completion. The session is logged to activeDateRef
+        // (the start day), so cross-midnight runs attribute correctly.
         clearInterval(id);
         setRunning(false);
         startRef.current = null;
@@ -109,11 +278,21 @@ export function MeditationTimerModal({
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         }
         Vibration.vibrate([0, 400, 200, 400]);
-        void persistSession({
-          durationSec: totalSec,
-          source: 'timer',
-          loggedAt: Date.now(),
-        });
+        const sessionDate = activeDateRef.current;
+        const sessionTotal = totalSec;
+        const fireId = notificationIdRef.current;
+        void (async () => {
+          await persistSession(
+            { durationSec: sessionTotal, source: 'timer', loggedAt: Date.now() },
+            sessionDate,
+          );
+          // The notification may fire ~simultaneously — cancelling is a
+          // no-op if it already did. Clearing persisted state prevents
+          // double-logging on next open.
+          await cancelMeditationAlarm(fireId);
+          if (habit) await clearTimerState(habit.id);
+          notificationIdRef.current = null;
+        })();
         // Reset display ready for another run.
         setRemainingSec(totalSec);
       }
@@ -123,76 +302,68 @@ export function MeditationTimerModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running]);
 
-  async function persistSession(newSession: MeditationSession) {
+  async function handleStart() {
     if (!habit) return;
-    const nextSessions = [...sessions, newSession];
-    const value = computeMeditationTier(nextSessions, targetSessions, targetMinutes);
-    const docId = `${habit.id}_${date}`;
-    const next: HabitRecord = {
-      id: docId,
-      habitId: habit.id,
-      userId,
-      date,
-      value,
-      recordedAt: Date.now(),
-      sessions: nextSessions,
-    };
-    try {
-      await setDoc(doc(db, 'records', docId), next);
-    } catch (err) {
-      console.error('Failed to save meditation session:', err);
-    }
-  }
-
-  async function removeSession(index: number) {
-    if (!habit) return;
-    const nextSessions = sessions.filter((_, i) => i !== index);
-    const value = computeMeditationTier(nextSessions, targetSessions, targetMinutes);
-    const docId = `${habit.id}_${date}`;
-    const next: HabitRecord = {
-      id: docId,
-      habitId: habit.id,
-      userId,
-      date,
-      value,
-      recordedAt: Date.now(),
-      sessions: nextSessions,
-    };
-    try {
-      await setDoc(doc(db, 'records', docId), next);
-    } catch (err) {
-      console.error('Failed to remove meditation session:', err);
-    }
-  }
-
-  function handleStart() {
     if (Platform.OS === 'ios' && !Platform.isPad) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     }
-    startRef.current = { at: Date.now(), remainingAtStart: remainingSec };
+    const now = Date.now();
+    const remainAtStart = remainingSec;
+    startRef.current = { at: now, remainingAtStart: remainAtStart };
+    activeDateRef.current = date;
     setRunning(true);
+
+    // Schedule completion alarm (best-effort; null if perms denied).
+    const endTime = new Date(now + remainAtStart * 1000);
+    const newId = await scheduleMeditationAlarm(endTime, habit.name);
+    notificationIdRef.current = newId;
+
+    await saveTimerState({
+      habitId: habit.id,
+      date,
+      totalSec,
+      startedAt: now,
+      remainingAtStart: remainAtStart,
+      notificationId: newId,
+    });
   }
 
-  function handlePause() {
+  async function handlePause() {
+    if (!habit) return;
     if (Platform.OS === 'ios' && !Platform.isPad) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     }
+    const currentRemaining = remainingSec;
     startRef.current = null;
     setRunning(false);
+
+    await cancelMeditationAlarm(notificationIdRef.current);
+    notificationIdRef.current = null;
+
+    await saveTimerState({
+      habitId: habit.id,
+      date,
+      totalSec,
+      startedAt: null,
+      remainingAtStart: currentRemaining,
+      notificationId: null,
+    });
   }
 
-  function handleReset() {
+  async function handleReset() {
+    if (!habit) return;
     if (Platform.OS === 'ios' && !Platform.isPad) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     }
     startRef.current = null;
     setRunning(false);
     setRemainingSec(totalSec);
+    await cancelMeditationAlarm(notificationIdRef.current);
+    notificationIdRef.current = null;
+    await clearTimerState(habit.id);
   }
 
   function handleLogSession() {
-    // Open the minutes-input sub-modal, prefilled with the current timer
-    // setting so the connection between the button and the value is obvious.
     setLogMinutes(String(Math.floor(totalSec / 60)));
     setLogModalVisible(true);
   }
@@ -203,11 +374,12 @@ export function MeditationTimerModal({
       setLogModalVisible(false);
       return;
     }
-    void persistSession({
-      durationSec: mins * 60,
-      source: 'manual',
-      loggedAt: Date.now(),
-    });
+    // Manual logs are always attributed to the modal's viewed date — they're
+    // a user action *for that day*, not tied to any cross-midnight clock.
+    void persistSession(
+      { durationSec: mins * 60, source: 'manual', loggedAt: Date.now() },
+      date,
+    );
     if (Platform.OS === 'ios' && !Platform.isPad) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     }
@@ -326,7 +498,7 @@ export function MeditationTimerModal({
             {isToday && !running && (
               <Pressable
                 style={[styles.primary, { backgroundColor: tint }]}
-                onPress={handleStart}
+                onPress={() => void handleStart()}
               >
                 <ThemedText style={styles.primaryText}>
                   {remainingSec === totalSec ? 'Start' : 'Resume'}
@@ -336,14 +508,14 @@ export function MeditationTimerModal({
             {isToday && running && (
               <Pressable
                 style={[styles.primary, { backgroundColor: tint }]}
-                onPress={handlePause}
+                onPress={() => void handlePause()}
               >
                 <ThemedText style={styles.primaryText}>Pause</ThemedText>
               </Pressable>
             )}
             <Pressable
               style={[styles.secondary, { borderColor: colors.tileBorder }]}
-              onPress={handleReset}
+              onPress={() => void handleReset()}
             >
               <ThemedText style={styles.secondaryText}>Reset</ThemedText>
             </Pressable>
@@ -577,6 +749,25 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     gap: 12,
   },
+  sessionDuration: {
+    fontSize: 15,
+    fontWeight: '600',
+    width: 70,
+    fontVariant: ['tabular-nums'],
+  },
+  sessionMeta: {
+    fontSize: 13,
+    opacity: 0.6,
+    flex: 1,
+  },
+  removeBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  removeBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
   logSheet: {
     width: '100%',
     maxWidth: 360,
@@ -610,24 +801,5 @@ const styles = StyleSheet.create({
   logActions: {
     flexDirection: 'row',
     gap: 8,
-  },
-  sessionDuration: {
-    fontSize: 15,
-    fontWeight: '600',
-    width: 70,
-    fontVariant: ['tabular-nums'],
-  },
-  sessionMeta: {
-    fontSize: 13,
-    opacity: 0.6,
-    flex: 1,
-  },
-  removeBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  removeBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
   },
 });

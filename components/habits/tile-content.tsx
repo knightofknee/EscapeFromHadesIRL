@@ -91,7 +91,8 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
         break;
       case 'quad':
       case 'steps':
-      case 'meditation': {
+      case 'meditation':
+      case 'creativeWriting': {
         const s = getQuadState(record);
         show = s === 'goal' || s === 'ideal';
         break;
@@ -173,7 +174,8 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
         break;
       }
 
-      case 'meditation': {
+      case 'meditation':
+      case 'creativeWriting': {
         const state = getQuadState(record);
         const opacity = state === 'no' ? 0.35 : 1;
         const gStarSize = Math.max(18, smallerDim * 0.15);
@@ -182,7 +184,7 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
           ? gSpaceAbove / 2 - gStarSize / 2
           : gSpaceAbove + gStarSize * 0.3;
         // No subtitle on the tile itself — the tier (bright/circle/star)
-        // speaks for itself; the qualifying/target count lives in the modal.
+        // speaks for itself; details live in the modal / editor.
         content = (
           <>
             {state === 'ideal' && (
@@ -372,7 +374,8 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
         break;
       }
 
-      case 'meditation': {
+      case 'meditation':
+      case 'creativeWriting': {
         const state = getQuadState(record);
         // No subtitle on the tile — circles/stars communicate the tier.
         content = renderLetter(

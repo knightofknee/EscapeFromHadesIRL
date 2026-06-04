@@ -103,6 +103,7 @@ export function scoreQuest(
             break;
           case 'steps':
           case 'meditation':
+          case 'creativeWriting':
           case 'quad':
             if (v === 'ideal') {
               dayCompleted = true;
@@ -148,6 +149,7 @@ export function scoreQuest(
             break;
           case 'steps':
           case 'meditation':
+          case 'creativeWriting':
           case 'quad':
             if (v === 'yes' || v === 'goal' || v === 'ideal') anyDone = true;
             break;

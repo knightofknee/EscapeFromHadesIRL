@@ -29,6 +29,9 @@ function getPageCount(habit: Habit): number {
   // Meditation always has 3 reachable tiers (yes/goal/ideal) since ideal is
   // a universal threshold independent of the user's per-session config.
   if (habit.recordingMode === 'meditation') return 3;
+  // Creative Writing reuses the quad tiers; auto-bumps to yes, user taps
+  // for goal/ideal.
+  if (habit.recordingMode === 'creativeWriting') return 3;
   if (habit.recordingMode === 'triple') return 2;
   return 1;
 }
