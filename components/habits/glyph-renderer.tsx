@@ -23,13 +23,15 @@ export function GlyphRenderer({ glyph, width, height, opacity = 1 }: GlyphRender
     const erase: { path: any; strokeWidth: number }[] = [];
 
     for (const sp of glyph.paths) {
-      const path = Skia.Path.MakeFromSVGString(sp.points);
-      if (!path) continue;
+      const parsed = Skia.Path.MakeFromSVGString(sp.points);
+      if (!parsed) continue;
 
       const matrix = Skia.Matrix();
       matrix.translate(offsetX, offsetY);
       matrix.scale(scale, scale);
-      path.transform(matrix);
+      // SkPath.transform() is deprecated in skia 2.6 (slated for removal) —
+      // apply the matrix through the PathBuilder pipeline instead.
+      const path = Skia.PathBuilder.MakeFromPath(parsed).transform(matrix).build();
 
       const isEraser = sp.color === '__eraser__';
       if (isEraser) {
