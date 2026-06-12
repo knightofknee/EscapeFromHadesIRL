@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { ActivityIndicator, ScrollView, View, Pressable, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useIsFocused } from '@react-navigation/native';
+import { useIsFocused } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';

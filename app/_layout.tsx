@@ -1,7 +1,9 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
-import { Stack, useRouter, useSegments } from 'expo-router';
+// Theme symbols come from expo-router (it vendors react-navigation as of
+// SDK 56) — the @react-navigation/native copies would feed a theme context
+// the vendored navigators never read.
+import { DarkTheme, DefaultTheme, ThemeProvider, Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef } from 'react';
 import { View, Image, StyleSheet } from 'react-native';

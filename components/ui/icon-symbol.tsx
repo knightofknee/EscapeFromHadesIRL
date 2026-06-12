@@ -31,7 +31,9 @@ const MAPPING = {
   'list.bullet': 'format-list-bulleted',
   'list.number': 'format-list-numbered',
 } satisfies Partial<
-  Record<SymbolViewProps['name'], ComponentProps<typeof MaterialIcons>['name']>
+  // SDK 56's SymbolViewProps['name'] is a union that includes a per-platform
+  // object form — only the plain SF-name strings can key this map.
+  Record<Extract<SymbolViewProps['name'], string>, ComponentProps<typeof MaterialIcons>['name']>
 >;
 
 /**

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, StyleSheet, View, Pressable, Keyboard, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { useLocalSearchParams, useNavigation, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
+import { useBottomTabBarHeight } from 'expo-router/js-tabs';
 import {
   useReanimatedKeyboardAnimation,
   useKeyboardHandler,

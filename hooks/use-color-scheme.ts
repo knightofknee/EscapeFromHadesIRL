@@ -8,5 +8,7 @@ export function useColorScheme(): 'light' | 'dark' {
   if (appearance === 'light' || appearance === 'dark') {
     return appearance;
   }
-  return systemScheme ?? 'dark';
+  // RN 0.85's ColorSchemeName adds 'unspecified' — fold it into the same
+  // dark default null always had.
+  return systemScheme === 'light' || systemScheme === 'dark' ? systemScheme : 'dark';
 }

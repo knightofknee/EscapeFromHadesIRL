@@ -7,7 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "escapefromhadesirl",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.briancarlisle.escapefromhadesirl",
@@ -26,7 +25,6 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "package": "com.briancarlisle.escapefromhadesirl",
-      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.health.READ_STEPS"
@@ -47,12 +45,11 @@
         }
       ],
       "expo-web-browser",
-      "./plugins/ios-build-settings",
       [
         "expo-build-properties",
         {
           "ios": {
-            "deploymentTarget": "16.0",
+            "deploymentTarget": "16.4",
             "excludedArchitectures": {
               "iphonesimulator": [
                 "x86_64"
