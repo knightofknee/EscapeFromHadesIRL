@@ -97,6 +97,18 @@ export function StepsModal({
     setStatus({ kind: 'ready', steps });
   }, [date, habit, persist]);
 
+  // The recovery button must re-REQUEST permission, not just retry the read —
+  // on Android a denied Health Connect grant is re-promptable, and a bare
+  // read would just fail again.
+  const connectAndFetch = useCallback(async () => {
+    const ok = await requestStepsPermission();
+    if (!ok) {
+      setStatus({ kind: 'needs-permission' });
+      return;
+    }
+    await fetchAndPersist();
+  }, [fetchAndPersist]);
+
   // On open: check availability → request permission if needed → fetch.
   useEffect(() => {
     if (!visible || !habit) return;
@@ -106,14 +118,7 @@ export function StepsModal({
       const available = await isStepsHealthAvailable();
       if (cancelled) return;
       if (!available) {
-        if (Platform.OS !== 'ios') {
-          setStatus({
-            kind: 'unavailable',
-            // Reusing the 'unavailable' kind for both cases.
-          } as Status);
-        } else {
-          setStatus({ kind: 'unavailable' });
-        }
+        setStatus({ kind: 'unavailable' });
         return;
       }
       // We don't have a way on iOS to check if read permission is already
@@ -136,6 +141,7 @@ export function StepsModal({
   if (!habit) return null;
 
   const tint = colors.tint;
+  const healthAppName = Platform.OS === 'android' ? 'Health Connect' : 'Apple Health';
   // Prefer the just-fetched count when ready; fall back to the last
   // persisted record so the modal still says something useful on errors.
   const displaySteps =
@@ -173,11 +179,11 @@ export function StepsModal({
             {status.kind === 'checking' || status.kind === 'loading' ? (
               <View style={styles.center}>
                 <ActivityIndicator color={tint} />
-                <ThemedText style={styles.hint}>Reading from Apple Health…</ThemedText>
+                <ThemedText style={styles.hint}>Reading from {healthAppName}…</ThemedText>
               </View>
             ) : status.kind === 'unavailable' ? (
               <ThemedText style={styles.hint}>
-                Apple Health isn’t available on this device.
+                {healthAppName} isn’t available on this device.
               </ThemedText>
             ) : status.kind === 'needs-permission' ? (
               <View style={styles.center}>
@@ -186,9 +192,9 @@ export function StepsModal({
                 </ThemedText>
                 <Pressable
                   style={[styles.primary, { backgroundColor: tint }]}
-                  onPress={() => void fetchAndPersist()}
+                  onPress={() => void connectAndFetch()}
                 >
-                  <ThemedText style={styles.primaryText}>Connect Apple Health</ThemedText>
+                  <ThemedText style={styles.primaryText}>Connect {healthAppName}</ThemedText>
                 </Pressable>
               </View>
             ) : status.kind === 'error' ? (
@@ -248,7 +254,7 @@ export function StepsModal({
                   onPress={() => void fetchAndPersist()}
                 >
                   <ThemedText style={[styles.secondaryText, { color: tint }]}>
-                    Refresh from Apple Health
+                    Refresh from {healthAppName}
                   </ThemedText>
                 </Pressable>
               </>

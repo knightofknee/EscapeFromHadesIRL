@@ -1,9 +1,9 @@
 import type { MeditationSession, QuadValue } from '@/types/habit';
 
 /** Minutes a single session must last to count as one "long" session for the ideal tier. */
-export const IDEAL_SESSION_MIN_MINUTES = 15;
+const IDEAL_SESSION_MIN_MINUTES = 15;
 /** How many "long" sessions in a day earn the ideal tier (independent of the habit's config). */
-export const IDEAL_SESSION_MIN_COUNT = 2;
+const IDEAL_SESSION_MIN_COUNT = 2;
 
 const IDEAL_DURATION_SEC = IDEAL_SESSION_MIN_MINUTES * 60;
 
@@ -50,12 +50,6 @@ export function getMeditationQualifyingCount(
   if (!sessions || sessions.length === 0) return 0;
   const targetDurationSec = targetMinutes * 60;
   return sessions.filter((s) => s.durationSec >= targetDurationSec).length;
-}
-
-/** Total seconds of meditation logged on a day. */
-export function getMeditationTotalSeconds(sessions: MeditationSession[] | undefined): number {
-  if (!sessions || sessions.length === 0) return 0;
-  return sessions.reduce((sum, s) => sum + s.durationSec, 0);
 }
 
 /** Format mm:ss for a number of seconds, e.g. 65 → "1:05", 3725 → "62:05". */

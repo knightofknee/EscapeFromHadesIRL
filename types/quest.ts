@@ -18,6 +18,14 @@ export type Quest = {
   // goal, 3 = ideal. Lets two quests on one habit set different bars.
   // Undefined = 1 (basic); ignored for non-quad habits.
   successLevel?: 1 | 2 | 3;
+  // Which rolling average this quest targets and earns points from.
+  // '30d' / '18mo' = that single window only; 'both' (or undefined, for
+  // legacy quests) = the original dual-window behavior.
+  scoreWindow?: '30d' | '18mo' | 'both';
+  // True = the quest tracks EVERY habit automatically (no linking): a day
+  // counts when ANY habit reaches the required success level. linkedHabitIds
+  // stays [] for these.
+  allHabits?: boolean;
   status: 'active' | 'paused';
   activatedAt: number;
   createdAt: number;

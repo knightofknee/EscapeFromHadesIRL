@@ -3,9 +3,11 @@ import { StyleSheet, ScrollView, Pressable, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
+import { LoadingScreen } from '@/components/ui/loading-screen';
 import { ThemedView } from '@/components/themed-view';
 import { useHabits } from '@/hooks/use-habits';
 import { useHabitRecords, formatDate } from '@/hooks/use-habit-records';
+import { useTodayDate } from '@/hooks/use-today-date';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
 import { shouldSkipWeekend } from '@/lib/habit-scoring';
@@ -41,15 +43,19 @@ const MONTH_NAMES = [
 ];
 
 export default function MonthViewScreen() {
-  const { habits, isOffline } = useHabits();
+  const { habits, isLoading: habitsLoading, isOffline } = useHabits();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const [monthOffset, setMonthOffset] = useState(0);
-  const { days: vacationDays, dateSet: vacationSet } = useVacationDays();
+  const { days: vacationDays, dateSet: vacationSet, isLoading: vacationLoading } = useVacationDays();
   const { winOnlyWeekends } = useWinOnlyWeekends();
 
+  // todayDate keeps "this month" / "yesterday" live across midnight and
+  // foreground returns — a bare new Date() here would freeze at mount.
+  const { todayDate } = useTodayDate();
+
   const { year, month, daysInMonth, startDate, endDate, monthLabel } = useMemo(() => {
-    const now = new Date();
+    const now = todayDate;
     const target = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
     const y = target.getFullYear();
     const m = target.getMonth();
@@ -62,9 +68,9 @@ export default function MonthViewScreen() {
       endDate: formatDate(new Date(y, m, dim)),
       monthLabel: `${MONTH_NAMES[m]} ${y}`,
     };
-  }, [monthOffset]);
+  }, [monthOffset, todayDate]);
 
-  const { records } = useHabitRecords(startDate, endDate);
+  const { records, isLoading: recordsLoading } = useHabitRecords(startDate, endDate);
 
   // Index records by habitId_date for O(1) lookups
   const recordIndex = useMemo(() => {
@@ -95,14 +101,16 @@ export default function MonthViewScreen() {
     return weeks;
   }, [year, month, daysInMonth]);
 
-  // For current month, only count up to yesterday (today still in progress)
+  // For current month, only count up to yesterday (today still in progress).
+  // On the 1st this is 0 — no countable days yet, rendered as "—" rather
+  // than a false 0%.
   const countDays = useMemo(() => {
-    const now = new Date();
+    const now = todayDate;
     if (year === now.getFullYear() && month === now.getMonth()) {
-      return Math.max(1, now.getDate() - 1);
+      return now.getDate() - 1;
     }
     return daysInMonth;
-  }, [year, month, daysInMonth]);
+  }, [year, month, daysInMonth, todayDate]);
 
   // Per-habit completion rate for the month — vacation days and weekend
   // non-completions are excluded from both numerator and denominator. With
@@ -121,7 +129,7 @@ export default function MonthViewScreen() {
         activeDays++;
         if (isCompleted(habit, record)) completed++;
       }
-      const rate = activeDays > 0 ? Math.round((completed / activeDays) * 100) : 0;
+      const rate = activeDays > 0 ? Math.round((completed / activeDays) * 100) : null;
       return { habit, completed, activeDays, rate };
     });
   }, [habits, recordIndex, year, month, countDays, vacationSet, winOnlyWeekends]);
@@ -166,6 +174,12 @@ export default function MonthViewScreen() {
     return `${colors.tileRecorded}${opacity.toString(16).padStart(2, '0').toUpperCase()}`;
   }
 
+  // Hold until habits and this month's records arrive — otherwise the
+  // heatmap renders all-empty and then pops to the real data.
+  if (habitsLoading || ((recordsLoading || vacationLoading) && !isOffline)) {
+    return <LoadingScreen />;
+  }
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <ThemedView style={styles.container}>
@@ -181,7 +195,9 @@ export default function MonthViewScreen() {
           </Pressable>
         </View>
 
-        <Pressable style={styles.backLink} onPress={() => router.back()}>
+        {/* replace, not back(): history-walking lands on surprising siblings
+            after deep links — see the back-to-parent invariant. */}
+        <Pressable style={styles.backLink} onPress={() => router.replace('/(tabs)/(habits)')}>
           <ThemedText style={[styles.backText, { color: colors.tint }]}>← Day View</ThemedText>
         </Pressable>
 
@@ -254,14 +270,14 @@ export default function MonthViewScreen() {
                 <ThemedText style={styles.habitName}>{habit.name}</ThemedText>
               </View>
               <View style={styles.habitStats}>
-                <ThemedText style={styles.rateText}>{rate}%</ThemedText>
+                <ThemedText style={styles.rateText}>{rate == null ? '—' : `${rate}%`}</ThemedText>
                 <ThemedText style={styles.countText}>
                   {completed}/{activeDays}
                 </ThemedText>
               </View>
               <View style={[styles.rateBar, { backgroundColor: colors.tileUnrecorded }]}>
                 <View
-                  style={[styles.rateFill, { width: `${rate}%`, backgroundColor: habit.color }]}
+                  style={[styles.rateFill, { width: `${rate ?? 0}%`, backgroundColor: habit.color }]}
                 />
               </View>
             </View>

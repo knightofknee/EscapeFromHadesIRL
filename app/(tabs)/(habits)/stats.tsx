@@ -1,19 +1,26 @@
 import { useState, useMemo, useCallback } from 'react';
-import { StyleSheet, ScrollView, View, Pressable, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, ScrollView, View, Pressable, useWindowDimensions } from 'react-native';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS, Easing } from 'react-native-reanimated';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { LoadingScreen } from '@/components/ui/loading-screen';
 import { StatsCard } from '@/components/habits/stats-card';
 import { StatsChart } from '@/components/habits/stats-chart';
 import { useHabits } from '@/hooks/use-habits';
 import { useHabitRecords, formatDate } from '@/hooks/use-habit-records';
+import { useTodayDate } from '@/hooks/use-today-date';
+import { parseDate } from '@/lib/date-utils';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { Habit, HabitRecord } from '@/types/habit';
-import { LEVEL_CHECKERS, shouldSkipWeekend } from '@/lib/habit-scoring';
+import { LEVEL_CHECKERS } from '@/lib/habit-scoring';
 import type { CompletionChecker } from '@/lib/habit-scoring';
+import { computeRates, computeMonthlyRates, getStatsPageCount, STATS_DISPLAY_MONTHS } from '@/lib/habit-stats';
+import { buildStatsHtml } from '@/lib/stats-pdf';
 import { computeStreak } from '@/lib/habit-streaks';
 import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
 
@@ -25,129 +32,6 @@ function getLevelLabel(habit: Habit, levelIndex: number): string {
   if (levelIndex === 0) return habit.name;
   if (levelIndex === 1) return `${habit.name} — Goal`;
   return `${habit.name} — Ideal`;
-}
-
-function getPageCount(habit: Habit): number {
-  if (habit.recordingMode === 'quad') return 3;
-  if (habit.recordingMode === 'steps') return Math.min(3, Math.max(1, habit.stepGoals?.length ?? 1));
-  // Meditation always has 3 reachable tiers (yes/goal/ideal) since ideal is
-  // a universal threshold independent of the user's per-session config.
-  if (habit.recordingMode === 'meditation') return 3;
-  // Creative Writing reuses the quad tiers; auto-bumps to yes, user taps
-  // for goal/ideal.
-  if (habit.recordingMode === 'creativeWriting') return 3;
-  if (habit.recordingMode === 'triple') return 2;
-  return 1;
-}
-
-function computeMonthlyRates(
-  habit: Habit,
-  recordIndex: Map<string, HabitRecord>,
-  displayMonths: number,
-  checker: CompletionChecker,
-  vacationSet: Set<string>,
-  winOnlyWeekends: boolean,
-): { date: string; value: number; avg: number }[] {
-  const now = new Date();
-  const todayDate = now.getDate();
-  const todayMonth = now.getMonth();
-  const todayYear = now.getFullYear();
-
-  // Compute 36 months of raw rates for rolling average calculation
-  const totalMonths = 36;
-  const allRates: { date: string; rate: number }[] = [];
-
-  for (let m = totalMonths - 1; m >= 0; m--) {
-    const monthDate = new Date(todayYear, todayMonth - m, 1);
-    const year = monthDate.getFullYear();
-    const month = monthDate.getMonth();
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-
-    const isCurrentMonth = year === todayYear && month === todayMonth;
-    const countDays = isCurrentMonth ? Math.max(1, todayDate - 1) : daysInMonth;
-
-    // Both numerator and denominator exclude vacation days and any weekend
-    // day that the user didn't complete (when "Win only Weekends" is on) —
-    // they're removed from the timeline, "as if they didn't happen".
-    let completed = 0;
-    let activeDays = 0;
-    for (let d = 1; d <= countDays; d++) {
-      const dateStr = formatDate(new Date(year, month, d));
-      if (vacationSet.has(dateStr)) continue;
-      const record = recordIndex.get(`${habit.id}_${dateStr}`);
-      if (shouldSkipWeekend(habit, record, dateStr, winOnlyWeekends, checker)) continue;
-      activeDays++;
-      if (checker(habit, record)) completed++;
-    }
-
-    const rate = activeDays > 0 ? Math.round((completed / activeDays) * 100) : 0;
-    const label = `${year}-${String(month + 1).padStart(2, '0')}`;
-    allRates.push({ date: label, rate });
-  }
-
-  // Return last displayMonths with rolling average (average of all months
-  // up to and including the current one). Single O(n) forward pass with a
-  // running sum — equivalent to the old nested loop, which was O(n²).
-  //
-  // Semantics preserved exactly: months BEFORE the display window only
-  // count toward the average if their rate > 0 (skips pre-habit-creation
-  // months); every month WITHIN the window counts (even 0%).
-  const result: { date: string; value: number; avg: number }[] = [];
-  const startIdx = totalMonths - displayMonths;
-
-  let sum = 0;
-  let count = 0;
-  for (let j = 0; j < startIdx; j++) {
-    if (allRates[j].rate > 0) {
-      sum += allRates[j].rate;
-      count++;
-    }
-  }
-
-  for (let i = startIdx; i < totalMonths; i++) {
-    const { date, rate } = allRates[i];
-    sum += rate;
-    count++;
-    const avg = count > 0 ? Math.round(sum / count) : 0;
-    result.push({ date, value: rate, avg });
-  }
-
-  return result;
-}
-
-function computeRates(
-  habit: Habit,
-  recordIndex: Map<string, HabitRecord>,
-  checker: CompletionChecker,
-  vacationSet: Set<string>,
-  winOnlyWeekends: boolean,
-): { week: number; month: number; quarter: number } {
-  const now = new Date();
-  const rates = { week: 0, month: 0, quarter: 0 };
-
-  for (const [period, days] of [
-    ['week', 7],
-    ['month', 30],
-    ['quarter', 90],
-  ] as const) {
-    let completed = 0;
-    let active = 0;
-    for (let d = 1; d <= days; d++) {
-      const checkDate = new Date(now);
-      checkDate.setDate(now.getDate() - d);
-      const dateStr = formatDate(checkDate);
-      // Vacation days and weekend non-completions are removed from
-      // numerator AND denominator.
-      if (vacationSet.has(dateStr)) continue;
-      const record = recordIndex.get(`${habit.id}_${dateStr}`);
-      if (shouldSkipWeekend(habit, record, dateStr, winOnlyWeekends, checker)) continue;
-      active++;
-      if (checker(habit, record)) completed++;
-    }
-    rates[period] = active > 0 ? Math.round((completed / active) * 100) : 0;
-  }
-
-  return rates;
 }
 
 // --- Swipeable habit stats section ---
@@ -183,7 +67,7 @@ function StatsPageContent({
     [habit, recordIndex, checker, vacationSet, winOnlyWeekends],
   );
   const monthlyData = useMemo(
-    () => computeMonthlyRates(habit, recordIndex, 18, checker, vacationSet, winOnlyWeekends),
+    () => computeMonthlyRates(habit, recordIndex, STATS_DISPLAY_MONTHS, checker, vacationSet, winOnlyWeekends),
     [habit, recordIndex, checker, vacationSet, winOnlyWeekends],
   );
 
@@ -210,7 +94,7 @@ function StatsPageContent({
 function HabitStatsSection({ habit, recordIndex, vacationSet, winOnlyWeekends }: HabitStatsSectionProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
-  const pageCount = getPageCount(habit);
+  const pageCount = getStatsPageCount(habit);
   const [pageIndex, setPageIndex] = useState(0);
 
   const translateX = useSharedValue(0);
@@ -279,9 +163,16 @@ function HabitStatsSection({ habit, recordIndex, vacationSet, winOnlyWeekends }:
   for (let i = 0; i < pageCount; i++) {
     pages.push(
       <View key={i} style={{ width: contentWidth }}>
-        <View style={styles.statsContent}>
-          <StatsPageContent habit={habit} recordIndex={recordIndex} checker={LEVEL_CHECKERS[i]} colors={colors} vacationSet={vacationSet} winOnlyWeekends={winOnlyWeekends} />
-        </View>
+        {/* Mount only the active page and its immediate neighbors. Each page
+            carries a Skia chart canvas plus a 3-year streak scan — mounting
+            every page of every habit eagerly was the stats tab's dominant
+            first-paint cost. The width-fixed wrapper keeps the swipe-row
+            translate math identical for unmounted pages. */}
+        {Math.abs(i - pageIndex) <= 1 && (
+          <View style={styles.statsContent}>
+            <StatsPageContent habit={habit} recordIndex={recordIndex} checker={LEVEL_CHECKERS[i]} colors={colors} vacationSet={vacationSet} winOnlyWeekends={winOnlyWeekends} />
+          </View>
+        )}
       </View>,
     );
   }
@@ -333,23 +224,29 @@ function HabitStatsSection({ habit, recordIndex, vacationSet, winOnlyWeekends }:
 // --- Main screen ---
 
 export default function StatsScreen() {
-  const { habits, isOffline } = useHabits();
-  const { dateSet: vacationSet } = useVacationDays();
+  const { habits, isLoading: habitsLoading, isOffline } = useHabits();
+  const { dateSet: vacationSet, isLoading: vacationLoading } = useVacationDays();
   const { winOnlyWeekends } = useWinOnlyWeekends();
+  const colorScheme = useColorScheme();
+  const colors = Colors[colorScheme ?? 'light'];
+  const [exporting, setExporting] = useState(false);
 
   // Streak scans need history, but loading from 2000-01-01 meant every
   // Stats visit re-read the user's ENTIRE records collection (one doc per
   // habit per day → thousands of reads, unbounded as history grows). Cap
   // the load to a fixed window: bounds the read cost, at the price of
   // capping the maximum *detectable* streak to this many days.
+  // Keyed on todayStr so the window advances across midnight — frozen at
+  // mount, records written after midnight would vanish from recordIndex and
+  // every current streak would read as broken.
+  const { todayStr } = useTodayDate();
   const dateRange = useMemo(() => {
-    const end = new Date();
-    const start = new Date();
+    const start = parseDate(todayStr);
     start.setDate(start.getDate() - STREAK_HISTORY_DAYS);
-    return { startDate: formatDate(start), endDate: formatDate(end) };
-  }, []);
+    return { startDate: formatDate(start), endDate: todayStr };
+  }, [todayStr]);
 
-  const { records } = useHabitRecords(dateRange.startDate, dateRange.endDate);
+  const { records, isLoading: recordsLoading } = useHabitRecords(dateRange.startDate, dateRange.endDate);
 
   const recordIndex = useMemo(() => {
     const map = new Map<string, HabitRecord>();
@@ -359,10 +256,65 @@ export default function StatsScreen() {
     return map;
   }, [records]);
 
+  // Confirm, then render every habit × success level into a PDF (same
+  // computations as the on-screen sections) and hand it to the share sheet.
+  const handleExportPdf = useCallback(() => {
+    Alert.alert('Export PDF?', 'Generate a PDF of all habit statistics?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Export',
+        onPress: async () => {
+          setExporting(true);
+          try {
+            // Yield a frame so the spinner actually paints before the
+            // synchronous HTML build blocks the JS thread.
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            const html = buildStatsHtml({ habits, recordIndex, vacationSet, winOnlyWeekends });
+            // A4 landscape (points) — fits the 3 success-level columns.
+            const { uri } = await Print.printToFileAsync({ html, width: 842, height: 595 });
+            if (await Sharing.isAvailableAsync()) {
+              await Sharing.shareAsync(uri, {
+                mimeType: 'application/pdf',
+                UTI: 'com.adobe.pdf',
+                dialogTitle: 'Habit Statistics',
+              });
+            }
+          } catch (e) {
+            console.error('PDF export failed:', e);
+            Alert.alert('Export failed', 'Could not generate the PDF.');
+          } finally {
+            setExporting(false);
+          }
+        },
+      },
+    ]);
+  }, [habits, recordIndex, vacationSet, winOnlyWeekends]);
+
+  // Hold until habits and the streak history arrive — otherwise every habit
+  // section renders zeroed streaks and then pops to the real numbers.
+  if (habitsLoading || ((recordsLoading || vacationLoading) && !isOffline)) {
+    return <LoadingScreen />;
+  }
+
   return (
     <ThemedView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        <ThemedText style={styles.subtitle}>18-month rolling view</ThemedText>
+        <View style={styles.subtitleRow}>
+          <ThemedText style={styles.subtitle}>18-month rolling view</ThemedText>
+          <Pressable
+            onPress={handleExportPdf}
+            disabled={exporting || habits.length === 0}
+            style={[styles.pdfButton, { borderColor: colors.tileBorder }]}
+            hitSlop={6}
+            accessibilityLabel="Export statistics as PDF"
+          >
+            {exporting ? (
+              <ActivityIndicator size="small" color={colors.icon} />
+            ) : (
+              <ThemedText style={[styles.pdfButtonText, { color: colors.icon }]}>PDF</ThemedText>
+            )}
+          </Pressable>
+        </View>
 
         {habits.length === 0 ? (
           <ThemedText style={styles.empty}>
@@ -387,9 +339,28 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
     gap: 24,
   },
+  subtitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: -16,
+  },
   subtitle: {
     opacity: 0.5,
-    marginTop: -16,
+  },
+  // Low-key by design: hairline border + gray text so it reads as a button
+  // without competing with the stats content.
+  pdfButton: {
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    minWidth: 44,
+    alignItems: 'center',
+  },
+  pdfButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   empty: {
     textAlign: 'center',

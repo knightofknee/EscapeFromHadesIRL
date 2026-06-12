@@ -66,10 +66,16 @@ export function HabitsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!user) {
       setHabits([]);
-      setIsLoading(false);
+      // Signed out — or auth still restoring on cold start. Stay "loading"
+      // so screens don't flash their empty states in the gap before the
+      // user arrives; the auth gate owns all signed-out UI.
+      setIsLoading(true);
       setIsOffline(false);
       return;
     }
+
+    // User changed: anything held is stale until the first snapshot.
+    setIsLoading(true);
 
     const q = query(
       collection(db, 'habits'),
@@ -101,7 +107,12 @@ export function HabitsProvider({ children }: { children: ReactNode }) {
           console.error('[useHabits] snapshot error:', error);
           setIsLoading(false);
         },
-        setOffline: setIsOffline,
+        setOffline: (offline) => {
+          setIsOffline(offline);
+          // Offline with nothing delivered: stop loading so screens show
+          // their offline state instead of spinning forever.
+          if (offline) setIsLoading(false);
+        },
       },
     );
   }, [user]);

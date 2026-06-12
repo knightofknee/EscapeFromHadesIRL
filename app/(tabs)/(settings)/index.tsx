@@ -66,7 +66,7 @@ export default function SettingsScreen() {
             <View style={{ flex: 1 }}>
               <ThemedText style={styles.label}>Open to Notes</ThemedText>
               <ThemedText style={[styles.value, { opacity: 0.5, fontSize: 12, marginTop: 2 }]}>
-                Opens to your most recent note, or a new one if none recent
+                Opens the app to a fresh note, ready to write
               </ThemedText>
             </View>
             {homeScreen === 'notes' && <ThemedText style={{ color: colors.tint }}>✓</ThemedText>}
@@ -79,14 +79,14 @@ export default function SettingsScreen() {
         </ThemedText>
         <View style={[styles.card, { backgroundColor: colors.tileBackground, borderColor: colors.tileBorder }]}>
           <Pressable
-            style={[styles.row, appearance === 'light' && styles.selectedRow]}
+            style={styles.row}
             onPress={() => setAppearance('light')}
           >
             <ThemedText style={styles.label}>Light</ThemedText>
             {appearance === 'light' && <ThemedText style={{ color: colors.tint }}>✓</ThemedText>}
           </Pressable>
           <Pressable
-            style={[styles.row, appearance === 'dark' && styles.selectedRow]}
+            style={styles.row}
             onPress={() => setAppearance('dark')}
           >
             <ThemedText style={styles.label}>Dark</ThemedText>
@@ -99,13 +99,6 @@ export default function SettingsScreen() {
           Data
         </ThemedText>
         <View style={[styles.card, { backgroundColor: colors.tileBackground, borderColor: colors.tileBorder }]}>
-          <Pressable
-            style={styles.row}
-            onPress={() => router.push('/(tabs)/(habits)/import')}
-          >
-            <ThemedText style={styles.label}>Import Calendar</ThemedText>
-            <ThemedText style={styles.chevron}>›</ThemedText>
-          </Pressable>
           <Pressable
             style={styles.row}
             onPress={() => router.push('/export-notes')}
@@ -152,7 +145,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: 'rgba(128,128,128,0.15)',
   },
-  selectedRow: { opacity: 1 },
   label: { fontSize: 15 },
   value: { fontSize: 15, opacity: 0.6 },
   chevron: { fontSize: 20, opacity: 0.3, fontWeight: '300' },

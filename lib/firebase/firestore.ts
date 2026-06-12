@@ -14,8 +14,6 @@ import {
   limit,
   onSnapshot,
   writeBatch,
-  type DocumentData,
-  type QueryConstraint,
 } from 'firebase/firestore';
 import { app } from './app';
 
@@ -37,4 +35,3 @@ export {
   onSnapshot,
   writeBatch,
 };
-export type { DocumentData, QueryConstraint };

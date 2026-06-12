@@ -4,6 +4,7 @@ import { ThemedText } from '@/components/themed-text';
 import { TagChip } from './tag-chip';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { UndoHistory, caretAfterRestore } from '@/lib/undo-history';
 import type { Note, Tag, InlineTag } from '@/types/note';
 
 type NoteEditorProps = {
@@ -25,12 +26,20 @@ type NoteEditorProps = {
    * reliably derive from the input's measured rect (its bottom edge).
    */
   onCaretBottom?: (windowY: number) => void;
+  /**
+   * Fires when undo/redo availability flips, so the parent can enable/
+   * disable its toolbar buttons without re-rendering on every keystroke.
+   */
+  onHistoryChange?: (canUndo: boolean, canRedo: boolean) => void;
 };
 
 export type NoteEditorHandle = {
   applyStrikethrough: () => void;
   applyBullets: () => void;
   applyNumberedList: () => void;
+  /** Step the title+content back/forward one history chunk. */
+  undo: () => void;
+  redo: () => void;
   /**
    * Snapshot of the editor's *local* content — including any unsaved
    * typing that hasn't yet been debounced into Firestore. The parent's
@@ -39,6 +48,8 @@ export type NoteEditorHandle = {
    * prefer this over `note.content` to avoid losing recent edits.
    */
   getLatestContent: () => string;
+  /** Same as getLatestContent, for the title field. */
+  getLatestTitle: () => string;
 };
 
 // U+0336 is the Unicode combining long stroke overlay — visually strikes through
@@ -139,16 +150,45 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     onOpenTagPicker,
     onTouchStart,
     onCaretBottom,
+    onHistoryChange,
   },
   ref,
 ) {
   const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
+  // Chunked undo/redo for title+content. Lives for the editing session of
+  // one note; reset when the note id changes. See lib/undo-history.ts for
+  // the chunk-boundary policy (deletes always seal the pre-delete state).
+  const historyRef = useRef<UndoHistory | null>(null);
+  if (historyRef.current === null) historyRef.current = new UndoHistory();
+  const history = historyRef.current;
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const [pendingSelection, setPendingSelection] = useState<{ start: number; end: number } | null>(null);
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
+  // Separate debounce timers: with a single shared timer, a title keystroke
+  // cancelled a still-pending content save (and vice versa) — the cancelled
+  // edit then never persisted unless that field was typed in again.
+  const titleSaveTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Values sitting in those debounce windows, so unmount can flush them —
+  // navigating away within 500ms of the last keystroke must not drop it.
+  const pendingTitleRef = useRef<string | null>(null);
+  const pendingContentRef = useRef<string | null>(null);
+  const onUpdateTitleRef = useRef(onUpdateTitle);
+  const onUpdateContentRef = useRef(onUpdateContent);
+  useEffect(() => {
+    onUpdateTitleRef.current = onUpdateTitle;
+    onUpdateContentRef.current = onUpdateContent;
+  });
+  useEffect(() => {
+    return () => {
+      clearTimeout(titleSaveTimeout.current);
+      clearTimeout(saveTimeout.current);
+      if (pendingTitleRef.current != null) onUpdateTitleRef.current(pendingTitleRef.current);
+      if (pendingContentRef.current != null) onUpdateContentRef.current(pendingContentRef.current);
+    };
+  }, []);
   const contentRef = useRef<TextInput>(null);
   // Threshold (in chars) for "cursor is at end" — a small slack lets
   // typing past trailing whitespace still count as appending.
@@ -169,8 +209,12 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
   useEffect(() => {
     setTitle(note.title);
     setContent(note.content);
+    history.reset();
+    onHistoryChange?.(false, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-sync when switching notes, not on every content change
   }, [note.id]);
+
+  const notifyHistory = () => onHistoryChange?.(history.canUndo, history.canRedo);
 
   // Release controlled selection after it's applied so the user can move the cursor freely
   useEffect(() => {
@@ -181,14 +225,73 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
   }, [pendingSelection]);
 
   function handleTitleChange(text: string) {
+    history.record({ title, content }, { title: text, content });
+    notifyHistory();
     setTitle(text);
-    clearTimeout(saveTimeout.current);
-    saveTimeout.current = setTimeout(() => onUpdateTitle(text), 500);
+    clearTimeout(titleSaveTimeout.current);
+    pendingTitleRef.current = text;
+    titleSaveTimeout.current = setTimeout(() => {
+      pendingTitleRef.current = null;
+      onUpdateTitle(text);
+    }, 500);
   }
 
   function scheduleSave(text: string) {
     clearTimeout(saveTimeout.current);
-    saveTimeout.current = setTimeout(() => onUpdateContent(text), 500);
+    pendingContentRef.current = text;
+    saveTimeout.current = setTimeout(() => {
+      pendingContentRef.current = null;
+      onUpdateContent(text);
+    }, 500);
+  }
+
+  // Single commit path for every content mutation (typing, auto-list
+  // continuation, list exit) so history records each one exactly once.
+  function commitContent(next: string, caret?: number) {
+    history.record({ title, content }, { title, content: next });
+    notifyHistory();
+    setContent(next);
+    scheduleSave(next);
+    if (caret != null) setPendingSelection({ start: caret, end: caret });
+  }
+
+  // Restore a history snapshot: move the caret to the edge of the restored
+  // region, swap the fields, and persist immediately — an undo/redo is an
+  // explicit action, so it shouldn't sit in the debounce window where a
+  // pending autosave could race it.
+  function applySnapshot(snap: { title: string; content: string }) {
+    if (snap.content !== content) {
+      const caret = caretAfterRestore(content, snap.content);
+      setSelection({ start: caret, end: caret });
+      setPendingSelection({ start: caret, end: caret });
+    }
+    clearTimeout(saveTimeout.current);
+    clearTimeout(titleSaveTimeout.current);
+    pendingTitleRef.current = null;
+    pendingContentRef.current = null;
+    if (snap.title !== title) {
+      setTitle(snap.title);
+      onUpdateTitle(snap.title);
+    }
+    if (snap.content !== content) {
+      setContent(snap.content);
+      onUpdateContent(snap.content);
+    }
+    notifyHistory();
+  }
+
+  function handleUndo() {
+    const snap = history.undo({ title, content });
+    if (snap) applySnapshot(snap);
+    // A null result still mutates the stacks (snapshots identical to the
+    // live state are popped and discarded) — keep the buttons honest.
+    else notifyHistory();
+  }
+
+  function handleRedo() {
+    const snap = history.redo({ title, content });
+    if (snap) applySnapshot(snap);
+    else notifyHistory();
   }
 
   function handleContentChange(text: string) {
@@ -217,17 +320,12 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
           if (itemText.trim().length === 0) {
             // Empty bullet — exit list: remove the prefix line entirely
             const newContent = text.slice(0, prevLineStart) + text.slice(nlPos + 1);
-            setContent(newContent);
-            scheduleSave(newContent);
-            setPendingSelection({ start: prevLineStart, end: prevLineStart });
+            commitContent(newContent, prevLineStart);
             return;
           }
           const insert = BULLET_PREFIX;
           const newContent = text.slice(0, nlPos + 1) + insert + text.slice(nlPos + 1);
-          setContent(newContent);
-          scheduleSave(newContent);
-          const caret = nlPos + 1 + insert.length;
-          setPendingSelection({ start: caret, end: caret });
+          commitContent(newContent, nlPos + 1 + insert.length);
           return;
         }
 
@@ -237,24 +335,18 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
           const itemText = nm[3];
           if (itemText.trim().length === 0) {
             const newContent = text.slice(0, prevLineStart) + text.slice(nlPos + 1);
-            setContent(newContent);
-            scheduleSave(newContent);
-            setPendingSelection({ start: prevLineStart, end: prevLineStart });
+            commitContent(newContent, prevLineStart);
             return;
           }
           const insert = `  ${num + 1}. `;
           const newContent = text.slice(0, nlPos + 1) + insert + text.slice(nlPos + 1);
-          setContent(newContent);
-          scheduleSave(newContent);
-          const caret = nlPos + 1 + insert.length;
-          setPendingSelection({ start: caret, end: caret });
+          commitContent(newContent, nlPos + 1 + insert.length);
           return;
         }
       }
     }
 
-    setContent(text);
-    scheduleSave(text);
+    commitContent(text);
   }
 
   function handleSelectionChange(e: NativeSyntheticEvent<TextInputSelectionChangeEventData>) {
@@ -267,8 +359,18 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
   }
 
   function applyFormatting(result: { content: string; newSelection: { start: number; end: number } }) {
+    // A no-op (e.g. strikethrough with nothing selected) must not pollute
+    // history — it would light the undo button with nothing to undo.
+    if (result.content === content) {
+      contentRef.current?.focus();
+      return;
+    }
+    // One formatting tap = one undo step.
+    history.recordAction({ title, content });
+    notifyHistory();
     setContent(result.content);
     clearTimeout(saveTimeout.current);
+    pendingContentRef.current = null;
     onUpdateContent(result.content); // save immediately on formatting
     setSelection(result.newSelection);
     setPendingSelection(result.newSelection);
@@ -276,19 +378,24 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     contentRef.current?.focus();
   }
 
-  // Mirror `content` into a ref so `getLatestContent()` always returns
+  // Mirror `title`/`content` into refs so `getLatest*()` always returns
   // the latest committed state, even when the imperative handle's
   // closure was created on an earlier render.
   const contentValueRef = useRef(content);
+  const titleValueRef = useRef(title);
   useEffect(() => {
     contentValueRef.current = content;
-  }, [content]);
+    titleValueRef.current = title;
+  }, [content, title]);
 
   useImperativeHandle(ref, () => ({
     applyStrikethrough: () => applyFormatting(formatStrikethrough(content, selection)),
     applyBullets: () => applyFormatting(toggleList(content, selection, 'bullet')),
     applyNumberedList: () => applyFormatting(toggleList(content, selection, 'number')),
+    undo: handleUndo,
+    redo: handleRedo,
     getLatestContent: () => contentValueRef.current,
+    getLatestTitle: () => titleValueRef.current,
   }));
 
   const noteTagIds = [...new Set(note.tags.map((t) => t.tagId))];

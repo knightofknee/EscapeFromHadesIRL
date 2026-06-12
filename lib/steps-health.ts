@@ -1,22 +1,26 @@
 import { Platform } from 'react-native';
-// `@kingstinct/react-native-healthkit` is iOS-only at the native layer but
-// ships a JS stub that no-ops on Android, so this import is safe on both
-// platforms. Every iOS-branched call gates on Platform.OS === 'ios'.
-import {
-  isHealthDataAvailableAsync,
-  queryQuantitySamples,
-  requestAuthorization,
-} from '@kingstinct/react-native-healthkit';
-// `react-native-health-connect` is Android-only. Importing on iOS is safe at
-// JS-bundle time (it's just function refs); calling any function on iOS
-// would throw, so we gate every Android call on Platform.OS === 'android'.
-import {
-  aggregateRecord,
-  getSdkStatus,
-  initialize,
-  requestPermission,
-  SdkAvailabilityStatus,
-} from 'react-native-health-connect';
+
+// Both health modules load LAZILY inside their platform branches.
+// `@kingstinct/react-native-healthkit` v14 is Nitro-based and constructs its
+// native hybrid objects at module-evaluation time — a static import gets
+// bundled and EVALUATED on Android too, where the Nitro object doesn't
+// exist, so app launch itself can throw. Dynamic import() defers module
+// evaluation to first use on the platform that actually has the native side.
+// `react-native-health-connect` gets the mirror treatment on iOS.
+type HealthKitModule = typeof import('@kingstinct/react-native-healthkit');
+type HealthConnectModule = typeof import('react-native-health-connect');
+
+let healthKitPromise: Promise<HealthKitModule> | null = null;
+function healthKit(): Promise<HealthKitModule> {
+  healthKitPromise ??= import('@kingstinct/react-native-healthkit');
+  return healthKitPromise;
+}
+
+let healthConnectPromise: Promise<HealthConnectModule> | null = null;
+function healthConnect(): Promise<HealthConnectModule> {
+  healthConnectPromise ??= import('react-native-health-connect');
+  return healthConnectPromise;
+}
 
 /** HealthKit identifier for cumulative daily step count (iOS). */
 const HK_STEPS_ID = 'HKQuantityTypeIdentifierStepCount' as const;
@@ -25,7 +29,8 @@ const HK_STEPS_ID = 'HKQuantityTypeIdentifierStepCount' as const;
 export async function isStepsHealthAvailable(): Promise<boolean> {
   if (Platform.OS === 'ios') {
     try {
-      return await isHealthDataAvailableAsync();
+      const hk = await healthKit();
+      return await hk.isHealthDataAvailableAsync();
     } catch (e) {
       console.error('isStepsHealthAvailable iOS failed:', e);
       return false;
@@ -33,8 +38,9 @@ export async function isStepsHealthAvailable(): Promise<boolean> {
   }
   if (Platform.OS === 'android') {
     try {
-      const status = await getSdkStatus();
-      return status === SdkAvailabilityStatus.SDK_AVAILABLE;
+      const hc = await healthConnect();
+      const status = await hc.getSdkStatus();
+      return status === hc.SdkAvailabilityStatus.SDK_AVAILABLE;
     } catch (e) {
       console.error('isStepsHealthAvailable Android failed:', e);
       return false;
@@ -52,7 +58,8 @@ export async function isStepsHealthAvailable(): Promise<boolean> {
 export async function requestStepsPermission(): Promise<boolean> {
   if (Platform.OS === 'ios') {
     try {
-      return await requestAuthorization({ toShare: [], toRead: [HK_STEPS_ID] });
+      const hk = await healthKit();
+      return await hk.requestAuthorization({ toShare: [], toRead: [HK_STEPS_ID] });
     } catch (e) {
       console.error('requestStepsPermission iOS failed:', e);
       return false;
@@ -60,9 +67,10 @@ export async function requestStepsPermission(): Promise<boolean> {
   }
   if (Platform.OS === 'android') {
     try {
-      const ok = await initialize();
+      const hc = await healthConnect();
+      const ok = await hc.initialize();
       if (!ok) return false;
-      const granted = await requestPermission([
+      const granted = await hc.requestPermission([
         { accessType: 'read', recordType: 'Steps' },
       ]);
       return granted.some(
@@ -88,13 +96,14 @@ export async function getStepsForDay(dateStr: string): Promise<number | null> {
 
   if (Platform.OS === 'ios') {
     try {
-      const samples = await queryQuantitySamples(HK_STEPS_ID, {
+      const hk = await healthKit();
+      // Must be a statistics query: iPhone and Apple Watch write overlapping
+      // step samples, and HealthKit de-duplicates them only in statistics.
+      // Summing raw queryQuantitySamples double-counts watch wearers.
+      const stats = await hk.queryStatisticsForQuantity(HK_STEPS_ID, ['cumulativeSum'], {
         filter: { date: { startDate, endDate } },
-        limit: 0,
       });
-      return Math.round(
-        samples.reduce((sum, s) => sum + (s.quantity ?? 0), 0),
-      );
+      return Math.round(stats.sumQuantity?.quantity ?? 0);
     } catch (e) {
       console.error('getStepsForDay iOS failed:', e);
       return null;
@@ -102,7 +111,8 @@ export async function getStepsForDay(dateStr: string): Promise<number | null> {
   }
   if (Platform.OS === 'android') {
     try {
-      const result = await aggregateRecord({
+      const hc = await healthConnect();
+      const result = await hc.aggregateRecord({
         recordType: 'Steps',
         timeRangeFilter: {
           operator: 'between',

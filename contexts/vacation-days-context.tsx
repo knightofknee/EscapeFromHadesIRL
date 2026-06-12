@@ -8,7 +8,8 @@ import {
   type ReactNode,
 } from 'react';
 import { useAuth } from '@/contexts/auth-context';
-import { db, collection, query, where, onSnapshot } from '@/lib/firebase/firestore';
+import { db, collection, query, where } from '@/lib/firebase/firestore';
+import { subscribeWithOfflineState } from '@/lib/firebase/subscribe';
 import {
   VACATION_COLLECTION,
   getContiguousBlock as getContiguousBlockPure,
@@ -18,6 +19,9 @@ import type { VacationDay } from '@/types/habit';
 type VacationDaysContextValue = {
   days: Map<string, VacationDay>;
   dateSet: Set<string>;
+  /** True until the first snapshot delivers — the habits home gates on this
+   * so a vacation day shows the V tile directly instead of flashing the grid. */
+  isLoading: boolean;
   isVacation: (dateStr: string) => boolean;
   getContiguousBlock: (dateStr: string) => string[];
 };
@@ -28,6 +32,7 @@ const EMPTY_SET: Set<string> = new Set();
 const VacationDaysContext = createContext<VacationDaysContextValue>({
   days: EMPTY_DAYS,
   dateSet: EMPTY_SET,
+  isLoading: true,
   isVacation: () => false,
   getContiguousBlock: () => [],
 });
@@ -42,28 +47,49 @@ const VacationDaysContext = createContext<VacationDaysContextValue>({
 export function VacationDaysProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const [days, setDays] = useState<Map<string, VacationDay>>(new Map());
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     if (!user) {
       setDays(new Map());
+      // Stay "loading" while signed out / auth restoring — see HabitsProvider.
+      setIsLoading(true);
       return;
     }
+
+    setIsLoading(true);
 
     const q = query(
       collection(db, VACATION_COLLECTION),
       where('userId', '==', user.uid),
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const next = new Map<string, VacationDay>();
-      snapshot.docs.forEach((d) => {
-        const v = { id: d.id, ...d.data() } as VacationDay;
-        next.set(v.date, v);
-      });
-      setDays(next);
-    });
-
-    return unsubscribe;
+    // Through the shared offline-aware subscriber so this listener gets the
+    // same cold-cache suppression as every other provider — a raw onSnapshot
+    // could deliver an empty first snapshot and flash the grid on a vacation
+    // day, the exact boot flash the loading architecture exists to kill.
+    return subscribeWithOfflineState(
+      q,
+      (snapshot: { docs: Array<{ id: string; data: () => unknown }> }) => {
+        const next = new Map<string, VacationDay>();
+        snapshot.docs.forEach((d) => {
+          const v = { id: d.id, ...(d.data() as Omit<VacationDay, 'id'>) } as VacationDay;
+          next.set(v.date, v);
+        });
+        setDays(next);
+        setIsLoading(false);
+      },
+      {
+        onError: (error) => {
+          console.error('[vacationDays] snapshot error:', error);
+          // Unblock gated screens — a missing V tile beats an infinite spinner.
+          setIsLoading(false);
+        },
+        setOffline: (offline) => {
+          if (offline) setIsLoading(false);
+        },
+      },
+    );
   }, [user]);
 
   /** Date set, useful where only existence matters (stats, etc.). */
@@ -87,8 +113,8 @@ export function VacationDaysProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ days, dateSet, isVacation, getContiguousBlock }),
-    [days, dateSet, isVacation, getContiguousBlock],
+    () => ({ days, dateSet, isLoading, isVacation, getContiguousBlock }),
+    [days, dateSet, isLoading, isVacation, getContiguousBlock],
   );
 
   return <VacationDaysContext.Provider value={value}>{children}</VacationDaysContext.Provider>;

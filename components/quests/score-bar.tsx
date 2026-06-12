@@ -11,7 +11,9 @@ type Props = {
   color?: string;
 };
 
-function flameColor(score: number): string {
+/** Flame color thresholds for a 0-100 score — one product decision, one
+ * definition (bars, headline numbers, run score all use this). */
+export function flameColor(score: number): string {
   if (score >= 80) return QuestColors.flameHigh;
   if (score >= 50) return QuestColors.flameMid;
   return QuestColors.flameLow;

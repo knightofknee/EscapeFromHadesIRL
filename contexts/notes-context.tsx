@@ -52,8 +52,14 @@ type NotesContextValue = {
   isLoading: boolean;
   isOffline: boolean;
   isLoadingMore: boolean;
-  hasMore: boolean;
   allLoaded: boolean;
+  /**
+   * True once the window listener has delivered at least one SUCCESSFUL
+   * snapshot this session. The orphan-tag GC must gate on this: a listener
+   * error leaves `notes` empty with loading finished, and sweeping against
+   * an empty set would delete every tag.
+   */
+  hasLoadedOnce: boolean;
   loadMore: () => void;
   loadAll: () => void;
   createNote: (title: string, content?: string) => Note | null;
@@ -116,8 +122,8 @@ const NotesContext = createContext<NotesContextValue>({
   isLoading: true,
   isOffline: false,
   isLoadingMore: false,
-  hasMore: false,
   allLoaded: true,
+  hasLoadedOnce: false,
   loadMore: () => {},
   loadAll: () => {},
   createNote: () => null,
@@ -156,6 +162,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
   const [isOffline, setIsOffline] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   // null = no limit ("load all"); otherwise the current window size.
   const [pageLimit, setPageLimit] = useState<number | null>(PAGE_SIZE);
 
@@ -202,9 +209,11 @@ export function NotesProvider({ children }: { children: ReactNode }) {
       windowDataRef.current = [];
       pinnedDataRef.current = [];
       setNotes([]);
-      setIsLoading(false);
+      // Stay "loading" while signed out / auth restoring — see HabitsProvider.
+      setIsLoading(true);
       setIsLoadingMore(false);
       setHasMore(false);
+      setHasLoadedOnce(false);
       setIsOffline(false);
       return;
     }
@@ -238,6 +247,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
         setIsLoadingMore(false);
         applyMerge();
         setIsLoading(false);
+        setHasLoadedOnce(true);
       },
       {
         onError: (error) => {
@@ -246,7 +256,10 @@ export function NotesProvider({ children }: { children: ReactNode }) {
           setIsLoadingMore(false);
           setIsLoading(false);
         },
-        setOffline: setIsOffline,
+        setOffline: (offline) => {
+          setIsOffline(offline);
+          if (offline) setIsLoading(false);
+        },
       },
     );
   }, [user, pageLimit, applyMerge]);
@@ -438,8 +451,8 @@ export function NotesProvider({ children }: { children: ReactNode }) {
       isLoading,
       isOffline,
       isLoadingMore,
-      hasMore,
       allLoaded: !hasMore,
+      hasLoadedOnce,
       loadMore,
       loadAll,
       createNote,
@@ -453,6 +466,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
       isOffline,
       isLoadingMore,
       hasMore,
+      hasLoadedOnce,
       loadMore,
       loadAll,
       createNote,

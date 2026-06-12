@@ -14,7 +14,7 @@ import type { HabitRecord, TripleValue, QuadValue } from '@/types/habit';
  * listener. Return shape is unchanged so call sites don't change.
  */
 export function useTodayRecords(dateStr?: string) {
-  const { recordsMap, ensureRange, getRecordForDay, recordHabit: ctxRecordHabit } =
+  const { recordsMap, isLoading, ensureRange, getRecordForDay, recordHabit: ctxRecordHabit } =
     useRecordsContext();
   const { todayStr } = useTodayDate();
   const effectiveDate = dateStr ?? todayStr;
@@ -37,12 +37,8 @@ export function useTodayRecords(dateStr?: string) {
   );
 
   const recordHabit = useCallback(
-    (
-      habitId: string,
-      value: boolean | TripleValue | QuadValue | number | string,
-      extra?: { source?: 'auto' | 'manual'; steps?: number },
-    ) => {
-      ctxRecordHabit(habitId, effectiveDate, value, extra);
+    (habitId: string, value: boolean | TripleValue | QuadValue | number | string) => {
+      ctxRecordHabit(habitId, effectiveDate, value);
     },
     [ctxRecordHabit, effectiveDate],
   );
@@ -111,6 +107,9 @@ export function useTodayRecords(dateStr?: string) {
 
   return {
     records,
+    // Boot-level signal only (first snapshot of the session) — day swipes
+    // within/past the loaded window intentionally don't flip this.
+    isLoading,
     getRecord,
     recordHabit,
     toggleBoolean,

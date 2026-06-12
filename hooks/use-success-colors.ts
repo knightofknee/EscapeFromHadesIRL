@@ -19,7 +19,7 @@ const DEFAULT_COLORS_DARK: SuccessColors = {
   triple: '#8E44AD',
 };
 
-export const DEFAULT_SUCCESS_COLORS = {
+const DEFAULT_SUCCESS_COLORS = {
   light: DEFAULT_COLORS_LIGHT,
   dark: DEFAULT_COLORS_DARK,
 };

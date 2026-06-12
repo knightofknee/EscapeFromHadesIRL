@@ -55,6 +55,14 @@ export default function NoteEditorScreen() {
   const { height: screenHeight } = useWindowDimensions();
   const [isFocused, setIsFocused] = useState(false);
   const [tagPickerOpen, setTagPickerOpen] = useState(false);
+  // Undo/redo availability, reported by NoteEditor only when it flips —
+  // so typing doesn't re-render this screen on every keystroke.
+  const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
+  const handleHistoryChange = useCallback((canUndo: boolean, canRedo: boolean) => {
+    setHistoryState((prev) =>
+      prev.canUndo === canUndo && prev.canRedo === canRedo ? prev : { canUndo, canRedo },
+    );
+  }, []);
 
   // Ref to NoteEditor for imperative formatting commands
   const noteEditorRef = useRef<NoteEditorHandle>(null);
@@ -203,7 +211,12 @@ export default function NoteEditorScreen() {
       // state). Only text-mode (or untyped) notes get auto-killed when
       // both title and content are empty.
       if (n.type === 'checklist') return;
-      if (!n.title.trim() && !n.content.trim()) {
+      // Judge emptiness by the EDITOR's local state, not the saved doc —
+      // keystrokes inside the 500ms save debounce aren't in Firestore yet,
+      // and deleting based on the stale doc would discard them.
+      const latestTitle = noteEditorRef.current?.getLatestTitle() ?? n.title;
+      const latestContent = noteEditorRef.current?.getLatestContent() ?? n.content;
+      if (!latestTitle.trim() && !latestContent.trim()) {
         deleteNote(n.id);
       }
     });
@@ -480,6 +493,7 @@ export default function NoteEditorScreen() {
             onOpenTagPicker={() => setTagPickerOpen(true)}
             onTouchStart={handleTouchStart}
             onCaretBottom={ensureCaretVisible}
+            onHistoryChange={handleHistoryChange}
           />
         )}
       </Animated.ScrollView>
@@ -498,6 +512,26 @@ export default function NoteEditorScreen() {
             formatting tools would conflict with the checklist semantics. */}
         {note.type !== 'checklist' && (
           <>
+            {/* Undo/redo lead the toolbar — losing content is the editor's
+                cardinal sin, so recovery sits closest to the thumb. */}
+            <Pressable
+              onPress={() => noteEditorRef.current?.undo()}
+              disabled={!historyState.canUndo}
+              style={[styles.toolbarButton, !historyState.canUndo && styles.toolbarButtonDisabled]}
+              hitSlop={8}
+              accessibilityLabel="Undo"
+            >
+              <IconSymbol name="arrow.uturn.backward" size={20} color={colors.icon} />
+            </Pressable>
+            <Pressable
+              onPress={() => noteEditorRef.current?.redo()}
+              disabled={!historyState.canRedo}
+              style={[styles.toolbarButton, !historyState.canRedo && styles.toolbarButtonDisabled]}
+              hitSlop={8}
+              accessibilityLabel="Redo"
+            >
+              <IconSymbol name="arrow.uturn.forward" size={20} color={colors.icon} />
+            </Pressable>
             <Pressable
               onPress={() => noteEditorRef.current?.applyStrikethrough()}
               style={styles.toolbarButton}
@@ -606,6 +640,9 @@ const styles = StyleSheet.create({
   toolbarButton: {
     paddingHorizontal: 10,
     paddingVertical: 4,
+  },
+  toolbarButtonDisabled: {
+    opacity: 0.3,
   },
   offlineBanner: {
     paddingHorizontal: 12,

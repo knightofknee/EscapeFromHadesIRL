@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { StyleSheet, Pressable, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -14,6 +14,7 @@ import { router, useFocusEffect } from 'expo-router';
 import Svg, { Rect } from 'react-native-svg';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { LoadingScreen } from '@/components/ui/loading-screen';
 import { TileGrid } from '@/components/habits/tile-grid';
 import { QuickInputModal } from '@/components/ui/quick-input-modal';
 import { MeditationTimerModal } from '@/components/habits/meditation-timer-modal';
@@ -45,8 +46,15 @@ export default function HabitsDayScreen() {
   const { habits, isLoading, isOffline } = useHabits();
   const { todayStr } = useTodayDate();
   const [viewedDate, setViewedDate] = useState(todayStr);
-  const { records, toggleBoolean, cycleTriple, cycleQuad, incrementCounter, setValue } =
-    useTodayRecords(viewedDate);
+  const {
+    records,
+    isLoading: recordsLoading,
+    toggleBoolean,
+    cycleTriple,
+    cycleQuad,
+    incrementCounter,
+    setValue,
+  } = useTodayRecords(viewedDate);
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const { width: screenWidth } = useWindowDimensions();
@@ -60,7 +68,12 @@ export default function HabitsDayScreen() {
   const [vacationEditVisible, setVacationEditVisible] = useState(false);
   const { user } = useAuth();
   const { requireOnline } = useOfflineGuard();
-  const { days: vacationDays, dateSet: vacationDateSet, getContiguousBlock } = useVacationDays();
+  const {
+    days: vacationDays,
+    dateSet: vacationDateSet,
+    isLoading: vacationLoading,
+    getContiguousBlock,
+  } = useVacationDays();
   // Foreground sync: re-fetch today's steps for every Steps Counter habit
   // on mount + when the app foregrounds, so tiles stay fresh without taps.
   useStepsBackfill();
@@ -126,8 +139,10 @@ export default function HabitsDayScreen() {
     translateX.value = 0;
   }, [todayStr, translateX]);
 
-  // Swipe: content tracks finger, commits animate off-screen, cancels spring back
-  const swipeGesture = Gesture.Pan()
+  // Swipe: content tracks finger, commits animate off-screen, cancels spring back.
+  // Memoized — Gesture.Pan() chains allocate a fresh gesture object per call,
+  // and this screen re-renders on every record tap.
+  const swipeGesture = useMemo(() => Gesture.Pan()
     .activeOffsetX([-20, 20])
     .failOffsetY([-20, 20])
     .onChange((e) => {
@@ -176,7 +191,7 @@ export default function HabitsDayScreen() {
       } else {
         translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
       }
-    });
+    }), [screenWidth, commitPrev, commitNext, translateX, isAnimatingOut]);
 
   const contentAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateX.value }],
@@ -223,8 +238,8 @@ export default function HabitsDayScreen() {
 
   const handleLongPress = useCallback(
     (habitId: string) => {
-      // Pass the viewed date so per-day edits (counter direct-edit, steps
-      // manual override) target the day the user actually long-pressed.
+      // Pass the viewed date so per-day edits (the counter direct-edit)
+      // target the day the user actually long-pressed.
       router.push({ pathname: '/tile-settings', params: { habitId, date: viewedDate } });
     },
     [viewedDate],
@@ -240,12 +255,13 @@ export default function HabitsDayScreen() {
     [valueInputHabit, setValue],
   );
 
-  if (isLoading) {
-    return (
-      <ThemedView style={styles.centered}>
-        <ThemedText>Loading...</ThemedText>
-      </ThemedView>
-    );
+  // Hold the screen until habits, the first records snapshot, AND vacation
+  // days arrive — so tiles never render "unrecorded" then pop to their real
+  // states, and a vacation day shows its V tile directly instead of flashing
+  // the grid. The listener conditions are skipped when offline (no snapshots
+  // are coming).
+  if (isLoading || ((recordsLoading || vacationLoading) && !isOffline)) {
+    return <LoadingScreen />;
   }
 
   return (
@@ -512,11 +528,6 @@ const styles = StyleSheet.create({
   },
   swipeArea: {
     flex: 1,
-  },
-  centered: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   header: {
     flexDirection: 'row',

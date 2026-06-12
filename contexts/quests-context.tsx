@@ -31,7 +31,9 @@ type QuestsContextValue = {
   createQuest: (
     quest: Omit<Quest, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'activatedAt'>,
   ) => Promise<Quest | undefined>;
-  updateQuest: (questId: string, updates: Partial<Quest>) => Promise<void>;
+  // Resolves false when the write was blocked (signed out / offline guard
+  // already alerted) — callers that navigate away on success must stay put.
+  updateQuest: (questId: string, updates: Partial<Quest>) => Promise<boolean>;
   deleteQuest: (questId: string) => Promise<void>;
 };
 
@@ -40,7 +42,7 @@ const QuestsContext = createContext<QuestsContextValue>({
   isLoading: true,
   isOffline: false,
   createQuest: async () => undefined,
-  updateQuest: async () => {},
+  updateQuest: async () => false,
   deleteQuest: async () => {},
 });
 
@@ -60,10 +62,13 @@ export function QuestsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!user) {
       setQuests([]);
-      setIsLoading(false);
+      // Stay "loading" while signed out / auth restoring — see HabitsProvider.
+      setIsLoading(true);
       setIsOffline(false);
       return;
     }
+
+    setIsLoading(true);
 
     const q = query(
       collection(db, 'quests'),
@@ -84,7 +89,10 @@ export function QuestsProvider({ children }: { children: ReactNode }) {
           console.error('[useQuests] snapshot error:', error);
           setIsLoading(false);
         },
-        setOffline: setIsOffline,
+        setOffline: (offline) => {
+          setIsOffline(offline);
+          if (offline) setIsLoading(false);
+        },
       },
     );
   }, [user]);
@@ -111,14 +119,15 @@ export function QuestsProvider({ children }: { children: ReactNode }) {
 
   const updateQuest = useCallback(
     async (questId: string, updates: Partial<Quest>) => {
-      if (!user) return;
-      if (!requireOnline()) return;
+      if (!user) return false;
+      if (!requireOnline()) return false;
       const ref = doc(db, 'quests', questId);
       const firestoreUpdates: Record<string, any> = { updatedAt: Date.now() };
       for (const [key, value] of Object.entries(updates)) {
         firestoreUpdates[key] = value === undefined ? deleteField() : value;
       }
       await setDoc(ref, firestoreUpdates, { merge: true });
+      return true;
     },
     [user, requireOnline],
   );

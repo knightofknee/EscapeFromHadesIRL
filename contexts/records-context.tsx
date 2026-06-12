@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useAuth } from '@/contexts/auth-context';
+import { useOfflineGuard } from '@/contexts/offline-context';
 import { db, collection, query, where, doc, setDoc, onSnapshot } from '@/lib/firebase/firestore';
 import { addDays } from '@/lib/date-utils';
 import type { HabitRecord, TripleValue, QuadValue } from '@/types/habit';
@@ -24,6 +25,13 @@ type RecordsContextValue = {
   /** Range covered by the last delivered snapshot, or null before first load. */
   loadedRange: Range | null;
   /**
+   * True until the FIRST snapshot of the session (or account) delivers —
+   * the boot signal screens gate on so tiles don't render "unrecorded" and
+   * then pop to their real states. Window growth after that never flips it
+   * back (already-loaded views keep their data).
+   */
+  isLoading: boolean;
+  /**
    * Grow the shared window to cover [start, end]. Monotonic within a session
    * (never shrinks) — narrower views just filter recordsMap. Called by
    * consumers in an effect.
@@ -38,7 +46,6 @@ type RecordsContextValue = {
     habitId: string,
     date: string,
     value: boolean | TripleValue | QuadValue | number | string,
-    extra?: { source?: 'auto' | 'manual'; steps?: number },
   ) => void;
 };
 
@@ -51,6 +58,7 @@ const SWIPE_CHUNK_DAYS = 30;
 const noopRecordsContext: RecordsContextValue = {
   recordsMap: new Map(),
   loadedRange: null,
+  isLoading: true,
   ensureRange: () => {},
   getRecordForDay: () => undefined,
   recordHabit: () => {},
@@ -72,6 +80,7 @@ const RecordsContext = createContext<RecordsContextValue>(noopRecordsContext);
  */
 export function RecordsProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
+  const { requireOnline } = useOfflineGuard();
 
   // Master store. `recordsMap` is state (drives consumer memos under React
   // Compiler); `recordsMapRef` mirrors it so optimistic writes + cycle helpers
@@ -161,6 +170,9 @@ export function RecordsProvider({ children }: { children: ReactNode }) {
       },
       (error) => {
         console.error('[records] snapshot error:', error);
+        // Mark the window delivered so gated screens fall through to their
+        // normal render instead of spinning forever on a failed listener.
+        setLoadedRange({ start: win.start, end: win.end });
       },
     );
 
@@ -173,8 +185,14 @@ export function RecordsProvider({ children }: { children: ReactNode }) {
   );
 
   const recordHabit = useCallback<RecordsContextValue['recordHabit']>(
-    (habitId, date, value, extra) => {
+    (habitId, date, value) => {
       if (!user) return;
+      // Same guard as every other user mutation: offline shows the shared
+      // "No internet" alert and records nothing. Without it this was the
+      // app's only unguarded write — the optimistic update made the tap look
+      // recorded while the write sat in Firestore's memory-only cache,
+      // silently lost on force-quit.
+      if (!requireOnline()) return;
       const docId = `${habitId}_${date}`;
       const record: HabitRecord = {
         id: docId,
@@ -183,8 +201,6 @@ export function RecordsProvider({ children }: { children: ReactNode }) {
         date,
         value,
         recordedAt: Date.now(),
-        ...(extra?.source !== undefined ? { source: extra.source } : {}),
-        ...(extra?.steps !== undefined ? { steps: extra.steps } : {}),
       };
       // Optimistic local update — instant feel + lets rapid cycle taps read
       // the latest value synchronously. The listener reconfirms shortly after.
@@ -195,11 +211,18 @@ export function RecordsProvider({ children }: { children: ReactNode }) {
         console.error('Failed to save habit record:', err);
       });
     },
-    [user, setRecordsMap],
+    [user, requireOnline, setRecordsMap],
   );
 
   const value = useMemo(
-    () => ({ recordsMap, loadedRange, ensureRange, getRecordForDay, recordHabit }),
+    () => ({
+      recordsMap,
+      loadedRange,
+      isLoading: loadedRange === null,
+      ensureRange,
+      getRecordForDay,
+      recordHabit,
+    }),
     [recordsMap, loadedRange, ensureRange, getRecordForDay, recordHabit],
   );
 

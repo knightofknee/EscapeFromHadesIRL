@@ -15,7 +15,7 @@ import {
 // CCPA "right to erasure" problem, made worse by this being a Firebase
 // project shared with other apps). userSettings is handled separately
 // below because its doc id IS the uid (no `userId` field to query on).
-export const USER_DATA_COLLECTIONS = [
+const USER_DATA_COLLECTIONS = [
   'habits',
   'records',
   'notes',
@@ -52,11 +52,18 @@ export async function deleteAccountAndData(user: User): Promise<void> {
     if (batchCount === 500) await flush();
   };
 
-  for (const col of USER_DATA_COLLECTIONS) {
-    const snapshot = await getDocs(
-      query(collection(db, col), where('userId', '==', user.uid)),
-    );
-    for (const docSnap of snapshot.docs) {
+  // The per-collection reads are independent — fetch them in parallel so
+  // deletion latency doesn't scale with collection count. Batch building
+  // below stays strictly serial (the 500-op flush counter is shared state).
+  const snapshots = await Promise.all(
+    USER_DATA_COLLECTIONS.map(async (col) => ({
+      col,
+      snap: await getDocs(query(collection(db, col), where('userId', '==', user.uid))),
+    })),
+  );
+
+  for (const { col, snap } of snapshots) {
+    if (col === 'notes') {
       // Notes own a per-item `items` subcollection that Firestore does NOT
       // cascade-delete when the parent note is removed — sweep it before
       // deleting the note doc, or the items live on as orphaned user data
@@ -64,14 +71,19 @@ export async function deleteAccountAndData(user: User): Promise<void> {
       // note needs no collection-group index, so this can't fail the whole
       // deletion on a missing index. The `userId` filter is required: the
       // items rule scopes reads on it (rules are filters, not row-level
-      // masks), so an unfiltered list would be denied.
-      if (col === 'notes') {
-        const itemsSnap = await getDocs(
-          query(collection(docSnap.ref, 'items'), where('userId', '==', user.uid)),
-        );
-        for (const itemSnap of itemsSnap.docs) await enqueueDelete(itemSnap.ref);
+      // masks), so an unfiltered list would be denied. Item reads for all
+      // notes run in parallel; deletes stay ordered (items, then the note).
+      const itemSnaps = await Promise.all(
+        snap.docs.map((docSnap) =>
+          getDocs(query(collection(docSnap.ref, 'items'), where('userId', '==', user.uid))),
+        ),
+      );
+      for (let i = 0; i < snap.docs.length; i++) {
+        for (const itemSnap of itemSnaps[i].docs) await enqueueDelete(itemSnap.ref);
+        await enqueueDelete(snap.docs[i].ref);
       }
-      await enqueueDelete(docSnap.ref);
+    } else {
+      for (const docSnap of snap.docs) await enqueueDelete(docSnap.ref);
     }
   }
 

@@ -1,66 +1,110 @@
 import { useMemo } from 'react';
-import { ScrollView, View, Pressable, StyleSheet } from 'react-native';
+import { ActivityIndicator, ScrollView, View, Pressable, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { QuestCard } from '@/components/quests/quest-card';
-import { ScoreBar } from '@/components/quests/score-bar';
+import { ScoreBar, flameColor } from '@/components/quests/score-bar';
 import { useQuests } from '@/hooks/use-quests';
 import { useHabits } from '@/hooks/use-habits';
-import { useQuestScores } from '@/hooks/use-quest-scores';
+import { useQuestScores, questPointValue } from '@/hooks/use-quest-scores';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
 import { useRecordsSnapshot } from '@/hooks/use-records-snapshot';
 import { QuestColors } from '@/constants/theme';
 import {
-  CATEGORY_NAMES,
   QUEST_TEMPLATES,
+  TEMPLATE_BY_KEY,
+  getVirtualQuests,
   type QuestTemplate,
 } from '@/constants/quest-templates';
-import { formatDate } from '@/lib/date-utils';
+import { get18MonthWindow } from '@/lib/date-utils';
+import { useTodayDate } from '@/hooks/use-today-date';
 
-// 18-month window for the long-term quest average. Fetched one-shot on focus
-// (not a live listener) — see useRecordsSnapshot. The 30-day score is derived
-// from the same data inside useQuestScores.
-function get18MonthWindow() {
-  const end = new Date();
-  const start = new Date();
-  start.setDate(start.getDate() - 548);
-  return { startDate: formatDate(start), endDate: formatDate(end) };
-}
 
 export default function QuestsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
-  const { quests } = useQuests();
+  const { quests, isLoading: questsLoading } = useQuests();
   const { habits } = useHabits();
-  const { startDate, endDate } = useMemo(get18MonthWindow, []);
-  const records = useRecordsSnapshot(startDate, endDate, isFocused);
+  const { todayStr } = useTodayDate();
+  const { startDate, endDate } = useMemo(() => get18MonthWindow(todayStr), [todayStr]);
+  const { records, isLoading: recordsLoading } = useRecordsSnapshot(startDate, endDate, isFocused);
   const { dateSet: vacationSet } = useVacationDays();
   const { winOnlyWeekends } = useWinOnlyWeekends();
-  const scores = useQuestScores(quests, habits, records, vacationSet, winOnlyWeekends, isFocused);
 
-  // Base challenges: always shown, in template order. Each maps to its active
-  // quest (if started) or null (→ a "Begin" stub).
-  const baseChallenges = useMemo(
+  // All-habit challenges are ALWAYS-ON: no Begin, no quest doc — each is a
+  // synthesized virtual quest that tracks every habit automatically. Any
+  // legacy started docs for these templates are ignored (the virtual
+  // replaces them) so nothing double-counts.
+  const autoQuests = useMemo(() => getVirtualQuests(), []);
+  const singleInstanceKeys = useMemo(
+    () => new Set(QUEST_TEMPLATES.map((t) => t.key)),
+    [],
+  );
+  // Score exactly what renders. Base templates show ONE card each (the first
+  // active doc) — data from before the duplicate-Begin guard can hold extra
+  // active copies of a template, which must not silently inflate the run
+  // score as invisible, unabandonable quests.
+  const scoredQuests = useMemo(() => {
+    const firstActivePerTemplate = new Map<string, string>();
+    for (const q of quests) {
+      if (
+        q.status === 'active' &&
+        q.templateKey &&
+        singleInstanceKeys.has(q.templateKey) &&
+        !firstActivePerTemplate.has(q.templateKey)
+      ) {
+        firstActivePerTemplate.set(q.templateKey, q.id);
+      }
+    }
+    return [
+      ...quests.filter((q) => {
+        if (q.templateKey && TEMPLATE_BY_KEY[q.templateKey]?.allHabits) return false;
+        if (q.templateKey && singleInstanceKeys.has(q.templateKey)) {
+          return firstActivePerTemplate.get(q.templateKey) === q.id;
+        }
+        return true;
+      }),
+      ...autoQuests,
+    ];
+  }, [quests, autoQuests, singleInstanceKeys]);
+  const scores = useQuestScores(scoredQuests, habits, records, vacationSet, winOnlyWeekends, isFocused);
+
+  // CHALLENGES (top section): the curated base templates you opt into.
+  // Each maps to its active quest (if started) or null (→ a "Begin" stub
+  // that links a habit of the right type). The always-on all-habit quests
+  // live in their own ETERNAL TRIALS section.
+  const selectedChallenges = useMemo(
     () =>
-      QUEST_TEMPLATES.map((t) => ({
+      QUEST_TEMPLATES.filter((t) => !t.allHabits).map((t) => ({
         template: t,
-        quest:
-          quests.find((q) => q.status === 'active' && q.templateKey === t.key) ?? null,
+        quest: quests.find((q) => q.status === 'active' && q.templateKey === t.key) ?? null,
       })),
     [quests],
   );
-  // Everything that isn't a base challenge: custom quests + any legacy
+  // Everything that isn't a base challenge: custom pacts + any legacy
   // template quests whose template is no longer in the base set.
-  const baseKeys = useMemo(() => new Set(QUEST_TEMPLATES.map((t) => t.key)), []);
   const otherQuests = useMemo(
-    () => quests.filter((q) => !(q.templateKey && baseKeys.has(q.templateKey))),
-    [quests, baseKeys],
+    () => quests.filter((q) => !(q.templateKey && singleInstanceKeys.has(q.templateKey))),
+    [quests, singleInstanceKeys],
   );
+
+
+  // Hold until quests and the score history arrive — otherwise started
+  // quests flash as "Begin" stubs and the run score flashes 0. Keeps the
+  // quests theme (dark background) rather than the themed LoadingScreen.
+  if (questsLoading || recordsLoading) {
+    return (
+      <View style={[styles.root, styles.loadingRoot, { paddingTop: insets.top + 8 }]}>
+        {isFocused && <StatusBar style="light" />}
+        <ActivityIndicator size="large" color={QuestColors.flameMid} />
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.root, { paddingTop: insets.top + 8 }]}>
@@ -73,29 +117,29 @@ export default function QuestsScreen() {
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <ThemedText style={styles.headerTitle}>QUESTS</ThemedText>
-          <ThemedText style={styles.headerSub}>30-day run</ThemedText>
+          <ThemedText style={styles.headerSub}>Current run</ThemedText>
         </View>
         <View style={styles.headerRight}>
-          <ThemedText style={[styles.runScore, { color: scores.runScore >= 80 ? QuestColors.flameHigh : scores.runScore >= 50 ? QuestColors.flameMid : QuestColors.flameLow }]}>
+          <ThemedText style={[styles.runScore, { color: flameColor(scores.runPct) }]}>
             {scores.runScore}
           </ThemedText>
-          <ThemedText style={styles.runScoreLabel}>RUN SCORE</ThemedText>
+          <ThemedText style={styles.runScoreLabel}>RUN SCORE · MAX {scores.totalAvailable}</ThemedText>
         </View>
         <Pressable style={styles.addButton} onPress={() => router.push('/(tabs)/(quests)/create')}>
           <ThemedText style={styles.addButtonText}>+ NEW</ThemedText>
         </Pressable>
       </View>
 
-      <ScoreBar score={scores.runScore} showLabel={false} height={3} />
+      <ScoreBar score={scores.runPct} showLabel={false} height={3} />
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-        {/* Base challenges — always shown. Started ones show their score;
+        {/* CHALLENGES — the quests you choose. Started ones show their score;
             the rest show a "Begin" stub that links a habit + starts them. */}
         <View style={styles.section}>
           <ThemedText style={[styles.sectionHeader, { color: QuestColors.flameMid }]}>
             CHALLENGES
           </ThemedText>
-          {baseChallenges.map(({ template, quest }) =>
+          {selectedChallenges.map(({ template, quest }) =>
             quest ? (
               <QuestCard
                 key={template.key}
@@ -113,7 +157,24 @@ export default function QuestsScreen() {
           )}
         </View>
 
-        {/* Custom pacts + any legacy quests */}
+        {/* ETERNAL TRIALS — the always-on all-habit ladder. No Begin, no
+            linking: they watch every habit automatically, forever. */}
+        <View style={styles.section}>
+          <ThemedText style={[styles.sectionHeader, { color: QuestColors.gold }]}>
+            ETERNAL TRIALS
+          </ThemedText>
+          {autoQuests.map((q) => (
+            <QuestCard
+              key={q.id}
+              quest={q}
+              questScore={scores.byQuest.get(q.id)}
+              onPress={() => router.push(`/(tabs)/(quests)/${q.id}`)}
+            />
+          ))}
+        </View>
+
+        {/* Custom pacts + any legacy quests. "+ NEW" in the header is the
+            create entry point. */}
         {otherQuests.length > 0 && (
           <View style={styles.section}>
             <ThemedText style={[styles.sectionHeader, { color: QuestColors.custom }]}>
@@ -152,17 +213,28 @@ function ChallengeStub({
         </ThemedText>
         <ThemedText style={styles.beginText}>BEGIN ›</ThemedText>
       </View>
-      <ThemedText style={styles.stubDesc} numberOfLines={1}>
+      {/* Wraps — never truncate the description to an ellipsis. */}
+      <ThemedText style={styles.stubDesc}>
         {template.description}
       </ThemedText>
       <ThemedText style={styles.stubMeta}>
-        {template.targetDaysPerWeek}×/wk · {CATEGORY_NAMES[template.category]}
+        {`${template.targetDaysPerWeek}×/wk${
+          template.scoreWindow === '18mo'
+            ? ' · 18-month'
+            : template.scoreWindow === '30d'
+              ? ' · 30-day'
+              : ''
+        } · worth ${questPointValue(template).total} pts`}
       </ThemedText>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
+  loadingRoot: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   root: {
     flex: 1,
     backgroundColor: QuestColors.background,

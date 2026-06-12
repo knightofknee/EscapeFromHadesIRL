@@ -8,13 +8,17 @@ import {
   Alert,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { useIsFocused } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { useQuests } from '@/hooks/use-quests';
 import { useHabits } from '@/hooks/use-habits';
 import { setPendingHabitCallback } from '@/lib/pending-habit-link';
 import { QuestColors } from '@/constants/theme';
-import { QUEST_TEMPLATES, CATEGORY_NAMES } from '@/constants/quest-templates';
+import { QUEST_TEMPLATES } from '@/constants/quest-templates';
+import { QuestPhilosophy } from '@/components/quests/quest-philosophy';
+import { isTieredMode } from '@/lib/habit-scoring';
 import type { QuestType } from '@/types/quest';
 
 const DAYS = [1, 2, 3, 4, 5, 6, 7];
@@ -30,30 +34,30 @@ const AUTO_RECORD_MODE_BY_TEMPLATE: Record<string, string> = {
 export default function CreateQuestScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { quests, createQuest } = useQuests();
+  const isFocused = useIsFocused();
+  const { quests, createQuest, updateQuest } = useQuests();
   const { habits } = useHabits();
 
   // A home "Begin" stub routes here as ?templateKey=walk — preselect that
-  // template and jump straight to the link-habit step.
-  const params = useLocalSearchParams<{ templateKey?: string }>();
+  // template and jump straight to the link-habit step. (All-habit templates
+  // are always-on virtual quests and never route here — reject their keys.)
+  // An ?editQuestId param instead opens this form in EDIT mode for an
+  // existing personal pact.
+  const params = useLocalSearchParams<{ templateKey?: string; editQuestId?: string }>();
   const paramTemplate =
-    params.templateKey && QUEST_TEMPLATES.some((t) => t.key === params.templateKey)
+    params.templateKey &&
+    QUEST_TEMPLATES.some((t) => t.key === params.templateKey && !t.allHabits)
       ? params.templateKey
       : null;
-
-  // For templates: 'pick' = choose template, 'habits' = link habits step.
-  const [templateStep, setTemplateStep] = useState<'pick' | 'habits'>(
-    paramTemplate ? 'habits' : 'pick',
+  const editQuest = useMemo(
+    () => (params.editQuestId ? (quests.find((q) => q.id === params.editQuestId) ?? null) : null),
+    [quests, params.editQuestId],
   );
 
-  // Default to custom: the base challenges live on the quests home now, so
-  // "+ NEW" is for custom pacts. A ?templateKey entry forces template mode.
-  const [mode, setMode] = useState<'template' | 'custom'>(
-    paramTemplate ? 'template' : 'custom',
-  );
-  const [selectedTemplateKey, setSelectedTemplateKey] = useState<string | null>(
-    paramTemplate,
-  );
+  // Two entry modes, no toggle: a ?templateKey param (from a home Begin
+  // stub) renders the link-habit step for that challenge; otherwise this
+  // screen IS the custom pact form. There's no template browser here — the
+  // home already shows every template.
 
   // Custom fields
   const [customName, setCustomName] = useState('');
@@ -63,6 +67,25 @@ export default function CreateQuestScreen() {
   const [successLevel, setSuccessLevel] = useState<1 | 2 | 3>(1);
   const [linkedHabitIds, setLinkedHabitIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+
+  // Which rolling average the pact targets — the single-window choice that
+  // used to live on the Stygian Pact template. BOTH keeps the classic
+  // dual-bar behavior.
+  const [customWindow, setCustomWindow] = useState<'30d' | '18mo' | 'both'>('both');
+
+  // Edit mode: prefill every create-time field from the pact, once.
+  const didPrefill = useRef(false);
+  useEffect(() => {
+    if (!editQuest || didPrefill.current) return;
+    didPrefill.current = true;
+    setCustomName(editQuest.name);
+    setCustomDescription(editQuest.description);
+    setCustomQuestType(editQuest.questType);
+    setTargetDays(editQuest.targetDaysPerWeek);
+    setSuccessLevel((editQuest.successLevel ?? 1) as 1 | 2 | 3);
+    setCustomWindow(editQuest.scoreWindow ?? 'both');
+    setLinkedHabitIds(editQuest.linkedHabitIds);
+  }, [editQuest]);
 
   // Auto-link the matching auto-record habit once habits load (async), so a
   // walk/meditate/write challenge works immediately.
@@ -81,22 +104,15 @@ export default function CreateQuestScreen() {
     }
   }, [paramTemplate, habits]);
 
-  const activeTemplateKeys = useMemo(
-    () => new Set(quests.filter((q) => q.status === 'active' && q.templateKey).map((q) => q.templateKey)),
-    [quests],
-  );
-
   const selectedTemplate = useMemo(
-    () => QUEST_TEMPLATES.find((t) => t.key === selectedTemplateKey) ?? null,
-    [selectedTemplateKey],
+    () => QUEST_TEMPLATES.find((t) => t.key === paramTemplate) ?? null,
+    [paramTemplate],
   );
 
   // The single linked habit (custom quests link exactly one). The success-
   // level field only applies to quad-type habits (yes/goal/ideal tiers).
   const linkedHabit = habits.find((h) => h.id === linkedHabitIds[0]);
-  const isQuadHabit =
-    !!linkedHabit &&
-    ['quad', 'steps', 'meditation', 'creativeWriting'].includes(linkedHabit.recordingMode);
+  const isQuadHabit = !!linkedHabit && isTieredMode(linkedHabit.recordingMode);
 
   function toggleHabit(id: string) {
     setLinkedHabitIds((prev) =>
@@ -104,16 +120,14 @@ export default function CreateQuestScreen() {
     );
   }
 
-  function handleTemplateNext() {
-    if (!selectedTemplate) {
-      Alert.alert('Select a template.');
+  async function handleSave(overrideLinkedHabitIds?: string[]) {
+    // Edit deep link raced the quests listener: saving before the pact doc
+    // arrives would fall through to the CREATE branch and duplicate it.
+    if (params.editQuestId && !editQuest) {
+      Alert.alert('Still loading', 'Give it a beat and try again.');
       return;
     }
-    setTemplateStep('habits');
-  }
-
-  async function handleSave(overrideLinkedHabitIds?: string[]) {
-    if (mode === 'custom' && !customName.trim()) {
+    if (!selectedTemplate && !customName.trim()) {
       Alert.alert('Name your quest.');
       return;
     }
@@ -127,8 +141,35 @@ export default function CreateQuestScreen() {
 
     setSaving(true);
     try {
+      // Edit mode: write the changed fields back to the existing pact.
+      if (editQuest) {
+        const saved = await updateQuest(editQuest.id, {
+          name: customName.trim(),
+          description: customDescription.trim(),
+          questType: customQuestType,
+          targetDaysPerWeek: targetDays,
+          successLevel: customQuestType === 'positive' && isQuadHabit ? successLevel : 1,
+          scoreWindow: customWindow,
+          linkedHabitIds: habitIds,
+        });
+        // Blocked write (offline guard already alerted) → stay on the form
+        // instead of silently discarding the user's edits.
+        if (saved) router.back();
+        return;
+      }
+
       let newQuest;
-      if (mode === 'template' && selectedTemplate) {
+      if (selectedTemplate) {
+        // One active instance per template: a double-tapped Begin stub (or a
+        // stale deep link) must not create a hidden duplicate — the home
+        // renders only the first match while both would be scored.
+        const existing = quests.find(
+          (q) => q.status === 'active' && q.templateKey === selectedTemplate.key,
+        );
+        if (existing) {
+          router.replace(`/(tabs)/(quests)/${existing.id}`);
+          return;
+        }
         newQuest = await createQuest({
           templateKey: selectedTemplate.key,
           name: selectedTemplate.name,
@@ -136,6 +177,9 @@ export default function CreateQuestScreen() {
           category: selectedTemplate.category,
           questType: selectedTemplate.questType,
           targetDaysPerWeek: selectedTemplate.targetDaysPerWeek,
+          successLevel: selectedTemplate.successLevel ?? 1,
+          scoreWindow: selectedTemplate.scoreWindow ?? 'both',
+          allHabits: false,
           linkedHabitIds: habitIds,
           status: 'active',
         });
@@ -150,14 +194,16 @@ export default function CreateQuestScreen() {
           linkedHabitIds: habitIds,
           // Only meaningful for a positive quest on a quad habit; else basic.
           successLevel: customQuestType === 'positive' && isQuadHabit ? successLevel : 1,
+          scoreWindow: customWindow,
+          allHabits: false,
           status: 'active',
         });
       }
       if (newQuest) {
         router.replace(`/(tabs)/(quests)/${newQuest.id}`);
-      } else {
-        router.back();
       }
+      // No quest back = the write was blocked (offline guard already
+      // alerted) — keep the filled-in form instead of throwing it away.
     } catch (e) {
       console.error(e);
       Alert.alert('Failed to save quest.');
@@ -166,13 +212,18 @@ export default function CreateQuestScreen() {
     }
   }
 
-  // --- Template mode, step 2: link habits ---
-  if (mode === 'template' && templateStep === 'habits') {
-    const questName = selectedTemplate?.name ?? '';
+  // --- Begin-a-challenge flow (?templateKey): link a habit of the right
+  // type and save. This is the only template path — there's no in-screen
+  // template browser.
+  if (selectedTemplate) {
+    const questName = selectedTemplate.name;
     return (
       <View style={styles.root}>
+        {/* Dark screen — focused override keeps status-bar icons visible in
+            light mode (the index's own override unmounts when it blurs). */}
+        {isFocused && <StatusBar style="light" />}
         <View style={[styles.navBar, { paddingTop: insets.top + 8 }]}>
-          <Pressable onPress={() => setTemplateStep('pick')}>
+          <Pressable onPress={() => router.back()}>
             <ThemedText style={styles.cancel}>Back</ThemedText>
           </Pressable>
           <ThemedText style={styles.navTitle}>LINK HABITS</ThemedText>
@@ -184,6 +235,9 @@ export default function CreateQuestScreen() {
         </View>
 
         <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+          {/* The "why" behind this quest — expandable, collapsed by default. */}
+          <QuestPhilosophy text={selectedTemplate.philosophy} />
+
           <ThemedText style={styles.linkQuestion}>
             Link a habit to {questName} to track it.
           </ThemedText>
@@ -208,7 +262,8 @@ export default function CreateQuestScreen() {
             style={styles.createHabitBtn}
             onPress={() => {
               setPendingHabitCallback((habitId) => {
-                setLinkedHabitIds((prev) => [...prev, habitId]);
+                // Replace, not append — quests link exactly one habit.
+                setLinkedHabitIds([habitId]);
               });
               router.push({ pathname: '/tile-settings', params: { mode: 'create', prefillName: questName } });
             }}>
@@ -219,88 +274,23 @@ export default function CreateQuestScreen() {
     );
   }
 
-  // --- Main screen: template pick OR full custom form ---
+  // --- Custom pact form (the only thing "+ NEW" creates) ---
   return (
     <View style={styles.root}>
+      {isFocused && <StatusBar style="light" />}
       <View style={[styles.navBar, { paddingTop: insets.top + 8 }]}>
         <Pressable onPress={() => router.back()}>
           <ThemedText style={styles.cancel}>Cancel</ThemedText>
         </Pressable>
-        <ThemedText style={styles.navTitle}>NEW QUEST</ThemedText>
-        {mode === 'template' ? (
-          <Pressable onPress={handleTemplateNext}>
-            <ThemedText style={styles.save}>Next</ThemedText>
-          </Pressable>
-        ) : (
-          <Pressable onPress={() => handleSave()} disabled={saving}>
-            <ThemedText style={[styles.save, saving && styles.saveDim]}>
-              {saving ? 'Saving...' : 'Save'}
-            </ThemedText>
-          </Pressable>
-        )}
+        <ThemedText style={styles.navTitle}>{editQuest ? 'EDIT PACT' : 'NEW PACT'}</ThemedText>
+        <Pressable onPress={() => handleSave()} disabled={saving}>
+          <ThemedText style={[styles.save, saving && styles.saveDim]}>
+            {saving ? 'Saving...' : 'Save'}
+          </ThemedText>
+        </Pressable>
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-        {/* Mode toggle */}
-        <View style={styles.modeRow}>
-          <Pressable
-            style={[styles.modeBtn, mode === 'template' && styles.modeBtnActive]}
-            onPress={() => setMode('template')}>
-            <ThemedText style={[styles.modeBtnText, mode === 'template' && styles.modeBtnTextActive]}>
-              TEMPLATES
-            </ThemedText>
-          </Pressable>
-          <Pressable
-            style={[styles.modeBtn, mode === 'custom' && styles.modeBtnActive]}
-            onPress={() => setMode('custom')}>
-            <ThemedText style={[styles.modeBtnText, mode === 'custom' && styles.modeBtnTextActive]}>
-              CUSTOM
-            </ThemedText>
-          </Pressable>
-        </View>
-
-        {mode === 'template' ? (
-          <View style={styles.section}>
-            <ThemedText style={styles.sectionLabel}>CHOOSE A QUEST</ThemedText>
-            {QUEST_TEMPLATES.map((t) => {
-              const alreadyActive = activeTemplateKeys.has(t.key);
-              return (
-                <Pressable
-                  key={t.key}
-                  style={[
-                    styles.templateCard,
-                    // Foundation styling first so selection can override its border
-                    t.isFoundation && styles.templateCardFoundation,
-                    selectedTemplateKey === t.key && styles.templateCardSelected,
-                    alreadyActive && styles.templateCardDisabled,
-                  ]}
-                  onPress={() => {
-                    if (alreadyActive) return;
-                    if (selectedTemplateKey === t.key) {
-                      setSelectedTemplateKey(null);
-                    } else {
-                      setSelectedTemplateKey(t.key);
-                    }
-                  }}>
-                  <View style={styles.templateCardHeader}>
-                    <ThemedText style={[styles.templateName, alreadyActive && styles.templateNameDisabled]}>
-                      {t.name}
-                    </ThemedText>
-                    {alreadyActive ? (
-                      <ThemedText style={styles.activeBadge}>ACTIVE</ThemedText>
-                    ) : t.isFoundation ? (
-                      <ThemedText style={styles.foundationBadge}>FOUNDATION</ThemedText>
-                    ) : null}
-                  </View>
-                  <ThemedText style={styles.templateDesc}>{t.description}</ThemedText>
-                  <ThemedText style={styles.templateMeta}>
-                    {CATEGORY_NAMES[t.category]} · {t.targetDaysPerWeek}×/wk
-                  </ThemedText>
-                </Pressable>
-              );
-            })}
-          </View>
-        ) : (
           <View style={styles.section}>
             <ThemedText style={styles.sectionLabel}>QUEST NAME</ThemedText>
             <TextInput
@@ -359,6 +349,29 @@ export default function CreateQuestScreen() {
               ))}
             </View>
 
+            {/* Scored window — the single-window choice that used to live on
+                the Stygian Pact template. BOTH = the classic dual bars. */}
+            <ThemedText style={styles.sectionLabel}>ROLLING AVERAGE</ThemedText>
+            <View style={styles.chipRow}>
+              {(
+                [
+                  { value: '30d', label: '30 DAYS' },
+                  { value: '18mo', label: '18 MONTHS' },
+                  { value: 'both', label: 'BOTH' },
+                ] as const
+              ).map((opt) => (
+                <Pressable
+                  key={opt.value}
+                  style={[styles.chip, customWindow === opt.value && styles.chipPositiveActive]}
+                  onPress={() => setCustomWindow(opt.value)}>
+                  <ThemedText
+                    style={[styles.chipText, customWindow === opt.value && styles.chipTextActive]}>
+                    {opt.label}
+                  </ThemedText>
+                </Pressable>
+              ))}
+            </View>
+
             {/* Habit linker */}
             <ThemedText style={styles.sectionLabel}>LINK A HABIT</ThemedText>
             <ThemedText style={styles.sectionHint}>
@@ -384,7 +397,8 @@ export default function CreateQuestScreen() {
               style={styles.createHabitBtn}
               onPress={() => {
                 setPendingHabitCallback((habitId) => {
-                  setLinkedHabitIds((prev) => [...prev, habitId]);
+                  // Replace, not append — quests link exactly one habit.
+                  setLinkedHabitIds([habitId]);
                 });
                 router.push({ pathname: '/tile-settings', params: { mode: 'create', prefillName: customName.trim() } });
               }}>
@@ -414,7 +428,6 @@ export default function CreateQuestScreen() {
               </>
             )}
           </View>
-        )}
       </ScrollView>
     </View>
   );
@@ -460,32 +473,6 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingBottom: 40,
   },
-  modeRow: {
-    flexDirection: 'row',
-    gap: 0,
-    borderWidth: 1,
-    borderColor: QuestColors.border,
-    borderRadius: 6,
-    overflow: 'hidden',
-  },
-  modeBtn: {
-    flex: 1,
-    paddingVertical: 10,
-    alignItems: 'center',
-    backgroundColor: QuestColors.surface,
-  },
-  modeBtnActive: {
-    backgroundColor: QuestColors.flameMid,
-  },
-  modeBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: QuestColors.textDim,
-    letterSpacing: 1,
-  },
-  modeBtnTextActive: {
-    color: '#fff',
-  },
   section: {
     gap: 8,
   },
@@ -499,59 +486,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: QuestColors.textDim,
     lineHeight: 17,
-  },
-  templateCard: {
-    backgroundColor: QuestColors.surface,
-    borderWidth: 1,
-    borderColor: QuestColors.border,
-    borderRadius: 8,
-    padding: 12,
-    gap: 4,
-  },
-  templateCardSelected: {
-    borderColor: QuestColors.flameMid,
-  },
-  templateCardFoundation: {
-    borderColor: QuestColors.goldDim,
-  },
-  templateCardDisabled: {
-    opacity: 0.4,
-  },
-  templateNameDisabled: {
-    color: QuestColors.textDim,
-  },
-  activeBadge: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: QuestColors.textDim,
-    letterSpacing: 0.5,
-  },
-  templateCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  templateName: {
-    flex: 1,
-    fontSize: 15,
-    fontWeight: '700',
-    color: QuestColors.text,
-  },
-  foundationBadge: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: QuestColors.gold,
-    letterSpacing: 0.5,
-  },
-  templateDesc: {
-    fontSize: 12,
-    color: QuestColors.textDim,
-    fontStyle: 'italic',
-  },
-  templateMeta: {
-    fontSize: 11,
-    color: QuestColors.textDim,
-    marginTop: 2,
   },
   input: {
     backgroundColor: QuestColors.surface,
@@ -624,21 +558,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: QuestColors.text,
     marginBottom: 4,
-  },
-  skipBtn: {
-    borderWidth: 1,
-    borderColor: QuestColors.border,
-    borderRadius: 8,
-    paddingVertical: 14,
-    alignItems: 'center',
-    backgroundColor: QuestColors.surface,
-  },
-  skipBtnActive: {
-    borderColor: QuestColors.flameMid,
-  },
-  skipText: {
-    fontSize: 14,
-    color: QuestColors.textDim,
   },
   habitRow: {
     flexDirection: 'row',

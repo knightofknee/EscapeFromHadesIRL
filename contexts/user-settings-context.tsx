@@ -21,16 +21,22 @@ type UserSettingsContextValue = {
   /** Raw stored success-color overrides, or null when using the defaults. */
   successColors: SuccessColors | null;
   winOnlyWeekends: boolean;
+  /** One global switch: show every habit's name on its tile (overrides the
+   * per-habit showName when on). */
+  showAllTileNames: boolean;
   /** Persist (or clear, with null) the success-color overrides. */
   setSuccessColors: (next: SuccessColors | null) => void;
   setWinOnlyWeekends: (value: boolean) => void;
+  setShowAllTileNames: (value: boolean) => void;
 };
 
 const UserSettingsContext = createContext<UserSettingsContextValue>({
   successColors: null,
   winOnlyWeekends: false,
+  showAllTileNames: false,
   setSuccessColors: () => {},
   setWinOnlyWeekends: () => {},
+  setShowAllTileNames: () => {},
 });
 
 /**
@@ -47,11 +53,13 @@ export function UserSettingsProvider({ children }: { children: ReactNode }) {
   const { requireOnline } = useOfflineGuard();
   const [successColors, setSuccessColorsState] = useState<SuccessColors | null>(null);
   const [winOnlyWeekends, setWinOnlyWeekendsState] = useState(false);
+  const [showAllTileNames, setShowAllTileNamesState] = useState(false);
 
   useEffect(() => {
     if (!user) {
       setSuccessColorsState(null);
       setWinOnlyWeekendsState(false);
+      setShowAllTileNamesState(false);
       return;
     }
     return subscribeWithOfflineState(
@@ -60,6 +68,7 @@ export function UserSettingsProvider({ children }: { children: ReactNode }) {
         const data = snap.data();
         setSuccessColorsState(data?.successColors ? (data.successColors as SuccessColors) : null);
         setWinOnlyWeekendsState(data?.winOnlyWeekends === true);
+        setShowAllTileNamesState(data?.showAllTileNames === true);
       },
       // Offline state is owned by OfflineProvider's own heartbeat on this doc.
       { setOffline: () => {} },
@@ -87,9 +96,26 @@ export function UserSettingsProvider({ children }: { children: ReactNode }) {
     [user, requireOnline],
   );
 
+  const setShowAllTileNames = useCallback(
+    (value: boolean) => {
+      if (!user) return;
+      if (!requireOnline()) return;
+      setShowAllTileNamesState(value);
+      setDoc(doc(db, 'userSettings', user.uid), { showAllTileNames: value }, { merge: true });
+    },
+    [user, requireOnline],
+  );
+
   const value = useMemo(
-    () => ({ successColors, winOnlyWeekends, setSuccessColors, setWinOnlyWeekends }),
-    [successColors, winOnlyWeekends, setSuccessColors, setWinOnlyWeekends],
+    () => ({
+      successColors,
+      winOnlyWeekends,
+      showAllTileNames,
+      setSuccessColors,
+      setWinOnlyWeekends,
+      setShowAllTileNames,
+    }),
+    [successColors, winOnlyWeekends, showAllTileNames, setSuccessColors, setWinOnlyWeekends, setShowAllTileNames],
   );
 
   return <UserSettingsContext.Provider value={value}>{children}</UserSettingsContext.Provider>;

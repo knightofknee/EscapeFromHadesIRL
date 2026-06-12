@@ -33,7 +33,7 @@ export {
 
 // ---------- references ----------
 
-export function itemsCollection(noteId: string) {
+function itemsCollection(noteId: string) {
   return collection(db, 'notes', noteId, 'items');
 }
 

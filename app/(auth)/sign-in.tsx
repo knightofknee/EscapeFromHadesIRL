@@ -38,7 +38,7 @@ export default function SignInScreen() {
       setError('');
       await signIn(email, password);
       router.replace('/(tabs)/(habits)');
-    } catch (e: any) {
+    } catch (e: unknown) {
       setError(getAuthErrorMessage(e));
     }
   }
@@ -55,11 +55,11 @@ export default function SignInScreen() {
             if (!emailInput) return;
             try {
               await sendPasswordReset(emailInput);
-            } catch (e: any) {
+            } catch (e: unknown) {
               // Don't reveal whether the address is registered (account
               // enumeration). Surface genuine problems (bad format, network),
               // but treat "user not found" as the same neutral outcome.
-              if (e?.code !== 'auth/user-not-found') {
+              if ((e as { code?: string })?.code !== 'auth/user-not-found') {
                 Alert.alert('Error', getAuthErrorMessage(e));
                 return;
               }
@@ -110,8 +110,8 @@ export default function SignInScreen() {
       } else {
         setError('Apple sign-in failed: no identity token');
       }
-    } catch (e: any) {
-      if (e.code === 'ERR_REQUEST_CANCELED') return;
+    } catch (e: unknown) {
+      if ((e as { code?: string })?.code === 'ERR_REQUEST_CANCELED') return;
       setError(getAuthErrorMessage(e));
     }
   }

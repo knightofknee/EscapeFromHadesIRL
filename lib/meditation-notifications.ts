@@ -9,7 +9,7 @@ import * as Notifications from 'expo-notifications';
  *  - `denied`: iOS won't re-prompt programmatically; sending the user to
  *    Settings is the only path. We surface nothing here.
  */
-export type NotificationPermissionBucket = 'granted' | 'undetermined' | 'denied';
+type NotificationPermissionBucket = 'granted' | 'undetermined' | 'denied';
 
 export async function getNotificationPermissionBucket(): Promise<NotificationPermissionBucket> {
   try {
@@ -42,23 +42,6 @@ export async function requestNotificationPermission(): Promise<boolean> {
     return req.status === 'granted';
   } catch (e) {
     console.error('requestNotificationPermission failed:', e);
-    return false;
-  }
-}
-
-/**
- * Convenience helper kept for code paths that don't need a pre-prompt
- * (anywhere already inside an explicit "you opted in" flow). Resolves to
- * the granted state without surfacing any UI of its own.
- */
-export async function ensureNotificationPermission(): Promise<boolean> {
-  try {
-    const current = await Notifications.getPermissionsAsync();
-    if (current.status === 'granted') return true;
-    if (!current.canAskAgain) return false;
-    return await requestNotificationPermission();
-  } catch (e) {
-    console.error('ensureNotificationPermission failed:', e);
     return false;
   }
 }

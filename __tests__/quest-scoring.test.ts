@@ -1,4 +1,4 @@
-import { scoreQuest } from '../hooks/use-quest-scores';
+import { scoreQuest, scoreAllHabitsQuest, questPointValue } from '../hooks/use-quest-scores';
 import { isWeekend } from '../lib/date-utils';
 import type { Quest } from '../types/quest';
 import type { Habit, HabitRecord } from '../types/habit';
@@ -322,5 +322,219 @@ describe('scoreQuest - Win only Weekends', () => {
     expect(without.score).toBe(100);
     expect(withWoW.score).toBe(100);
     expect(withWoW.targetDays).toBe(without.targetDays);
+  });
+});
+
+describe('questPointValue', () => {
+  test('positive quest: value scales with weekly commitment, 18mo worth 6x', () => {
+    // 5x/wk basic: 50 + 300 = 350
+    const v = questPointValue(makeQuest({ targetDaysPerWeek: 5 }));
+    expect(v.value30).toBe(50);
+    expect(v.value18).toBe(300);
+    expect(v.total).toBe(350);
+    // 3x/wk basic: 30 + 180 = 210
+    expect(questPointValue(makeQuest({ targetDaysPerWeek: 3 })).total).toBe(210);
+  });
+
+  test('success level raises the value: goal x2, ideal x4', () => {
+    const base = questPointValue(makeQuest({ targetDaysPerWeek: 5 }));
+    const goal = questPointValue(makeQuest({ targetDaysPerWeek: 5, successLevel: 2 }));
+    const ideal = questPointValue(makeQuest({ targetDaysPerWeek: 5, successLevel: 3 }));
+    expect(goal.value30).toBe(base.value30 * 2);
+    expect(ideal.value30).toBe(base.value30 * 4);
+    expect(goal.value18).toBe(goal.value30 * 6);
+    expect(ideal.total).toBe(ideal.value30 * 7);
+  });
+
+  test('reduce quest: commitment is the days abstained beyond the allowance', () => {
+    // Max 2x/wk allowed → 5 abstain days/wk of commitment → 50 + 300 = 350
+    const v = questPointValue(makeQuest({ questType: 'reduce', targetDaysPerWeek: 2 }));
+    expect(v.value30).toBe(50);
+    expect(v.total).toBe(350);
+    // Allowance covers the whole week → minimum commitment of 1 → 70 total
+    expect(
+      questPointValue(makeQuest({ questType: 'reduce', targetDaysPerWeek: 7 })).total,
+    ).toBe(70);
+  });
+});
+
+describe('questPointValue scoreWindow', () => {
+  test('30d-window quest earns only the 30-day value', () => {
+    const v = questPointValue(makeQuest({ targetDaysPerWeek: 4, scoreWindow: '30d' }));
+    expect(v.value30).toBe(40);
+    expect(v.value18).toBe(0);
+    expect(v.total).toBe(40);
+  });
+
+  test('18mo-window quest earns only the (6x) 18-month value', () => {
+    const v = questPointValue(makeQuest({ targetDaysPerWeek: 4, scoreWindow: '18mo' }));
+    expect(v.value30).toBe(0);
+    expect(v.value18).toBe(240);
+    expect(v.total).toBe(240);
+  });
+
+  test('tier multipliers compose with the window: the template ladder', () => {
+    // Charon's Crossing (30d, any): 4x10 = 40
+    expect(
+      questPointValue(makeQuest({ targetDaysPerWeek: 4, scoreWindow: '30d' })).total,
+    ).toBe(40);
+    // Hermes' Stride (30d, goal): 4x10x2 = 80
+    expect(
+      questPointValue(makeQuest({ targetDaysPerWeek: 4, scoreWindow: '30d', successLevel: 2 })).total,
+    ).toBe(80);
+    // The Golden Bough (30d, ideal): 4x10x4 = 160
+    expect(
+      questPointValue(makeQuest({ targetDaysPerWeek: 4, scoreWindow: '30d', successLevel: 3 })).total,
+    ).toBe(160);
+    // Charon's Vigil (18mo, any): 40x6 = 240
+    expect(
+      questPointValue(makeQuest({ targetDaysPerWeek: 4, scoreWindow: '18mo' })).total,
+    ).toBe(240);
+    // Sisyphus' Resolve (18mo, goal): 80x6 = 480
+    expect(
+      questPointValue(makeQuest({ targetDaysPerWeek: 4, scoreWindow: '18mo', successLevel: 2 })).total,
+    ).toBe(480);
+    // Heracles' Ascent (18mo, ideal): 160x6 = 960
+    expect(
+      questPointValue(makeQuest({ targetDaysPerWeek: 4, scoreWindow: '18mo', successLevel: 3 })).total,
+    ).toBe(960);
+  });
+
+  test("'both'/undefined keeps the dual-window value", () => {
+    expect(questPointValue(makeQuest({ targetDaysPerWeek: 5 })).total).toBe(350);
+    expect(questPointValue(makeQuest({ targetDaysPerWeek: 5, scoreWindow: 'both' })).total).toBe(350);
+  });
+});
+
+describe('windowSize backfill', () => {
+  const habits = [makeHabit('h1')];
+
+  test('scores only the most recent N counting days from a deep pool', () => {
+    const dates = makeDates(60);
+    // Complete every day in the OLD half only — the recent 30 are all misses.
+    const entries = dates.slice(0, 30).map((d) => [`h1_${d}`, true] as [string, any]);
+    const result = scoreQuest(
+      makeQuest({ targetDaysPerWeek: 7 }),
+      habits,
+      makeRecordIndex(entries),
+      dates,
+      false,
+      30,
+    );
+    expect(result.windowDays).toBe(30);
+    expect(result.targetDays).toBe(30);
+    expect(result.completedDays).toBe(0);
+  });
+
+  test('window stays full when earlier days are skipped (always-30 rule)', () => {
+    const dates = makeDates(60);
+    const result = scoreQuest(
+      makeQuest({ targetDaysPerWeek: 5 }),
+      habits,
+      new Map(),
+      dates,
+      false,
+      30,
+    );
+    // Full 30-day window from a 60-day pool → fixed 21-day goal for 5x/wk.
+    expect(result.windowDays).toBe(30);
+    expect(result.targetDays).toBe(21);
+  });
+});
+
+describe('legacy tierless-link fallback (linked quests only)', () => {
+  test('a goal-bar quest linked to a boolean habit scores plain true days', () => {
+    const dates = makeDates(30);
+    const entries: [string, any][] = [
+      [`b1_${dates[0]}`, true],
+      [`b1_${dates[1]}`, true],
+    ];
+    const quest = makeQuest({ linkedHabitIds: ['b1'], successLevel: 2 });
+    const result = scoreQuest(
+      quest, [makeHabit('b1', 'boolean')], makeRecordIndex(entries), dates,
+    );
+    // The stored bar (2) is unreachable on a tierless habit — the quest is
+    // enforced at basic instead of silently flatlining to 0 forever.
+    expect(result.completedDays).toBe(2);
+  });
+});
+
+describe('all-habit quests (best single habit, not a union of days)', () => {
+  const manyHabits = [
+    makeHabit('b1', 'boolean'),
+    makeHabit('t1', 'triple'),
+    makeHabit('q1', 'quad'),
+  ];
+
+  test('the tierless fallback NEVER applies to all-habit trials — strict bar even when a tierless habit would win', () => {
+    const dates = makeDates(30);
+    const entries: [string, any][] = [
+      [`b1_${dates[0]}`, true],
+      [`b1_${dates[1]}`, true],
+      [`b1_${dates[2]}`, true], // boolean would win with 3 days IF the fallback applied
+      [`q1_${dates[3]}`, 'goal'], // quad: 1 genuine tier-2 day
+    ];
+    const quest = makeQuest({ allHabits: true, linkedHabitIds: [], successLevel: 2 });
+    const { qs, bestHabitId } = scoreAllHabitsQuest(
+      quest, manyHabits, makeRecordIndex(entries), dates,
+    );
+    expect(qs.completedDays).toBe(1);
+    expect(bestHabitId).toBe('q1');
+  });
+
+  test('shows the single best habit — days across habits never combine', () => {
+    const dates = makeDates(30);
+    const entries: [string, any][] = [
+      [`b1_${dates[0]}`, true], // boolean: 1 day
+      [`q1_${dates[1]}`, 'yes'], // quad: 1 day (different day)
+      [`q1_${dates[2]}`, 'yes'], // quad: 2nd day → quad is the best habit
+    ];
+    const quest = makeQuest({ allHabits: true, linkedHabitIds: [] });
+    const { qs, bestHabitId } = scoreAllHabitsQuest(
+      quest, manyHabits, makeRecordIndex(entries), dates,
+    );
+    // Union would be 3 days; best single habit (q1) has 2.
+    expect(qs.completedDays).toBe(2);
+    expect(bestHabitId).toBe('q1');
+  });
+
+  test('tier quests gate every recording mode on the unified level scale', () => {
+    const dates = makeDates(30);
+    const entries: [string, any][] = [
+      [`b1_${dates[0]}`, true], // boolean tops out at level 1 — not tier 2
+      [`t1_${dates[1]}`, 'double'], // triple double = level 2 ✓ (1 day)
+      [`q1_${dates[2]}`, 'goal'], // quad goal = level 2 ✓ (1 day)
+      [`q1_${dates[3]}`, 'goal'], // quad: 2nd tier-2 day → quad wins
+    ];
+    const quest = makeQuest({ allHabits: true, linkedHabitIds: [], successLevel: 2 });
+    const { qs, bestHabitId } = scoreAllHabitsQuest(
+      quest, manyHabits, makeRecordIndex(entries), dates,
+    );
+    expect(qs.completedDays).toBe(2);
+    expect(bestHabitId).toBe('q1');
+  });
+
+  test('ideal-tier quests only count ideal days', () => {
+    const dates = makeDates(30);
+    const entries: [string, any][] = [
+      [`q1_${dates[0]}`, 'goal'],
+      [`q1_${dates[1]}`, 'ideal'],
+      [`t1_${dates[2]}`, 'double'], // triple cannot reach level 3
+    ];
+    const quest = makeQuest({ allHabits: true, linkedHabitIds: [], successLevel: 3 });
+    const { qs, bestHabitId } = scoreAllHabitsQuest(
+      quest, manyHabits, makeRecordIndex(entries), dates,
+    );
+    expect(qs.completedDays).toBe(1);
+    expect(bestHabitId).toBe('q1');
+  });
+
+  test('no records at all → zero score, no best habit', () => {
+    const dates = makeDates(30);
+    const quest = makeQuest({ allHabits: true, linkedHabitIds: [] });
+    const { qs, bestHabitId } = scoreAllHabitsQuest(quest, manyHabits, new Map(), dates);
+    expect(qs.completedDays).toBe(0);
+    // All habits tie at 0 — the first is reported (stable), or none without habits.
+    expect(bestHabitId).toBe('b1');
   });
 });

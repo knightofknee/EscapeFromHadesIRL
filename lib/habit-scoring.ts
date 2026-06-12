@@ -1,50 +1,57 @@
 import type { Habit, HabitRecord } from '@/types/habit';
+import type { RecordingMode } from '@/types/habit';
 import { isWeekend } from '@/lib/date-utils';
+
+/** Recording modes with success tiers (yes/goal/ideal) — the only modes a
+ * goal/ideal quest bar can be satisfied by. One list, shared everywhere. */
+const TIERED_MODES: RecordingMode[] = ['quad', 'steps', 'meditation', 'creativeWriting'];
+export function isTieredMode(mode: RecordingMode): boolean {
+  return TIERED_MODES.includes(mode);
+}
 
 export type CompletionChecker = (habit: Habit, record?: HabitRecord) => boolean;
 
-// Level 0: any completion
-export function isRecordCompleted(habit: Habit, record?: HabitRecord): boolean {
-  if (!record) return false;
+/**
+ * Success level of a record on ONE unified 0-3 scale across every recording
+ * mode: 0 none, 1 basic, 2 goal (triple's "double"), 3 ideal. A boolean
+ * habit tops out at 1, a triple at 2, quad-family habits reach 3. This is
+ * the single mode→tier table — the completion checkers below and all quest
+ * scoring derive from it, so the app can't disagree with itself about what
+ * a record is worth.
+ */
+export function recordLevel(habit: Habit, record?: HabitRecord): number {
+  if (!record) return 0;
+  const v = record.value;
   switch (habit.recordingMode) {
     case 'boolean':
-      return record.value !== false && record.value !== 'no';
+      return v !== false && v !== 'no' && v != null ? 1 : 0;
     case 'triple':
-      return record.value === 'yes' || record.value === 'double';
+      return v === 'double' ? 2 : v === 'yes' ? 1 : 0;
     case 'steps':
     case 'meditation':
     case 'creativeWriting':
     case 'quad':
-      return record.value === 'yes' || record.value === 'goal' || record.value === 'ideal';
+      return v === 'ideal' ? 3 : v === 'goal' ? 2 : v === 'yes' ? 1 : 0;
     case 'counter':
-      return (record.value as number) > 0;
+      return (v as number) > 0 ? 1 : 0;
     case 'value':
-      return !!(record.value as string);
+      return v ? 1 : 0;
     default:
-      return false;
+      return 0;
   }
 }
 
-// Level 1: goal or above
+// Tier checkers, derived from the unified scale.
+export function isRecordCompleted(habit: Habit, record?: HabitRecord): boolean {
+  return recordLevel(habit, record) >= 1;
+}
+
 export function isRecordGoal(habit: Habit, record?: HabitRecord): boolean {
-  if (!record) return false;
-  switch (habit.recordingMode) {
-    case 'triple':
-      return record.value === 'double';
-    case 'steps':
-    case 'meditation':
-    case 'creativeWriting':
-    case 'quad':
-      return record.value === 'goal' || record.value === 'ideal';
-    default:
-      return false;
-  }
+  return recordLevel(habit, record) >= 2;
 }
 
-// Level 2: ideal only
-export function isRecordIdeal(_habit: Habit, record?: HabitRecord): boolean {
-  if (!record) return false;
-  return record.value === 'ideal';
+export function isRecordIdeal(habit: Habit, record?: HabitRecord): boolean {
+  return recordLevel(habit, record) >= 3;
 }
 
 export const LEVEL_CHECKERS: CompletionChecker[] = [isRecordCompleted, isRecordGoal, isRecordIdeal];

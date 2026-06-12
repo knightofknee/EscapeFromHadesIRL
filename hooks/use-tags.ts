@@ -9,7 +9,6 @@ import {
   onSnapshot,
   doc,
   setDoc,
-  deleteDoc,
   writeBatch,
 } from '@/lib/firebase/firestore';
 import { stripUndefined } from '@/lib/firebase/clean';
@@ -54,20 +53,11 @@ export function useTags() {
     [user, requireOnline],
   );
 
-  const deleteTag = useCallback(
-    async (tagId: string) => {
-      if (!user) return;
-      // No requireOnline guard: deleteTag is called by the notes-list focus
-      // effect to garbage-collect orphaned tags. An alert there would fire
-      // every time the user re-enters the notes tab offline. Firestore
-      // queues the delete and applies it on reconnect.
-      await deleteDoc(doc(db, 'tags', tagId));
-    },
-    [user],
-  );
-
   // Batched delete for the orphan-tag GC sweep — one commit instead of N
   // individual deletes. Chunks at Firestore's 500-write batch limit.
+  // No requireOnline guard: this fires from the notes-list focus effect; an
+  // alert would pop every time the user re-entered the notes tab offline.
+  // Firestore queues the deletes and applies them on reconnect.
   const deleteTags = useCallback(
     async (tagIds: string[]) => {
       if (!user || tagIds.length === 0) return;
@@ -87,5 +77,5 @@ export function useTags() {
     [user],
   );
 
-  return { tags, createTag, deleteTag, deleteTags };
+  return { tags, createTag, deleteTags };
 }

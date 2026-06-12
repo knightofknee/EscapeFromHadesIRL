@@ -151,4 +151,3 @@ export async function deleteVacationDaysBulk(params: {
 
 // Re-export `collection` so callers can build queries without hitting two
 // import paths. Keeps vacation-day plumbing in one file.
-export { collection };

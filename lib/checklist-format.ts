@@ -39,7 +39,7 @@ export function formatChecklistAsText(
  */
 const CHECKLIST_LINE_RE = /^- \[([ xX])\] (.*)$/;
 
-export type ParsedChecklist = {
+type ParsedChecklist = {
   /** Description = text content above the checklist block, trimmed. */
   description: string;
   /** Parsed items in the order they appeared in the source text. */

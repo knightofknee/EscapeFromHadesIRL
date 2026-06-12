@@ -1,41 +1,47 @@
-import { useState, useMemo, useCallback, useRef } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { StyleSheet, Pressable, View, ScrollView, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS, Easing } from 'react-native-reanimated';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
+import { LoadingScreen } from '@/components/ui/loading-screen';
 import { ThemedView } from '@/components/themed-view';
 import { WeekGrid } from '@/components/habits/week-grid';
 import { SuccessColorPicker } from '@/components/habits/success-color-picker';
 import { useHabits } from '@/hooks/use-habits';
 import { useHabitRecords, getWeekDates } from '@/hooks/use-habit-records';
+import { useTodayDate } from '@/hooks/use-today-date';
 import { useAuth } from '@/contexts/auth-context';
-import { db, doc, setDoc } from '@/lib/firebase/firestore';
+import { useRecordsContext } from '@/contexts/records-context';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useSuccessColors } from '@/hooks/use-success-colors';
 import { useVacationDays } from '@/hooks/use-vacation-days';
-import type { HabitRecord, TripleValue, QuadValue } from '@/types/habit';
+import type { TripleValue, QuadValue } from '@/types/habit';
 
 export default function WeekViewScreen() {
   const { user } = useAuth();
-  const { habits, isOffline } = useHabits();
+  const { habits, isLoading: habitsLoading, isOffline } = useHabits();
   const colorScheme = useColorScheme();
   const scheme = colorScheme ?? 'light';
   const colors = Colors[scheme];
   const { colors: successColors } = useSuccessColors(scheme);
-  const { days: vacationDays } = useVacationDays();
+  const { days: vacationDays, isLoading: vacationLoading } = useVacationDays();
   const [weekOffset, setWeekOffset] = useState(0);
 
+  // Anchor "this week" to the live today — a bare new Date() would freeze
+  // offset 0 at the mount day across midnight.
+  const { todayDate } = useTodayDate();
   const refDate = useMemo(() => {
-    const d = new Date();
+    const d = new Date(todayDate);
     d.setDate(d.getDate() + weekOffset * 7);
     return d;
-  }, [weekOffset]);
+  }, [weekOffset, todayDate]);
 
   const { dates, startDate, endDate } = useMemo(() => getWeekDates(refDate), [refDate]);
-  const { recordsByDate } = useHabitRecords(startDate, endDate);
+  const { recordsByDate, isLoading: recordsLoading } = useHabitRecords(startDate, endDate);
+  const { recordHabit } = useRecordsContext();
 
   const handleTapHabit = useCallback(
     (habitId: string, date: string) => {
@@ -74,18 +80,12 @@ export default function WeekViewScreen() {
           break;
       }
 
-      const docId = `${habitId}_${date}`;
-      const record: HabitRecord = {
-        id: docId,
-        habitId,
-        userId: user.uid,
-        date,
-        value: newValue,
-        recordedAt: Date.now(),
-      };
-      setDoc(doc(db, 'records', docId), record);
+      // Through the shared context path: optimistic local update, plus the
+      // same offline guard every other mutation has (a direct setDoc here
+      // bypassed both).
+      recordHabit(habitId, date, newValue);
     },
-    [user, habits, recordsByDate],
+    [user, habits, recordsByDate, recordHabit],
   );
 
   const translateX = useSharedValue(0);
@@ -97,7 +97,8 @@ export default function WeekViewScreen() {
     setWeekOffset((o) => o + direction);
   }, []);
 
-  const swipeGesture = Gesture.Pan()
+  // Memoized — rebuilt-per-render gesture objects churn the gesture handler.
+  const swipeGesture = useMemo(() => Gesture.Pan()
     .activeOffsetX([-20, 20])
     .failOffsetY([-10, 10])
     .onUpdate((e) => {
@@ -118,7 +119,7 @@ export default function WeekViewScreen() {
         translateX.value = withTiming(0, { duration: 150 });
         opacity.value = withTiming(1, { duration: 150 });
       }
-    });
+    }), [screenWidth, SWIPE_THRESHOLD, changeWeek, translateX, opacity]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateX.value }],
@@ -132,6 +133,12 @@ export default function WeekViewScreen() {
     const endStr = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     return `${startStr} – ${endStr}`;
   }, [dates]);
+
+  // Hold until habits and this week's records arrive — otherwise the grid
+  // renders all-empty cells and then pops to the real data.
+  if (habitsLoading || ((recordsLoading || vacationLoading) && !isOffline)) {
+    return <LoadingScreen />;
+  }
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -150,7 +157,9 @@ export default function WeekViewScreen() {
           </Pressable>
         </View>
 
-        <Pressable style={styles.backLink} onPress={() => router.back()}>
+        {/* replace, not back(): history-walking lands on surprising siblings
+            after deep links — see the back-to-parent invariant. */}
+        <Pressable style={styles.backLink} onPress={() => router.replace('/(tabs)/(habits)')}>
           <ThemedText style={[styles.backText, { color: colors.tint }]}>← Day View</ThemedText>
         </Pressable>
 

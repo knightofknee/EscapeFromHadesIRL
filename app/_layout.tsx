@@ -22,7 +22,6 @@ Notifications.setNotificationHandler({
 });
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useAppearance } from '@/hooks/use-appearance';
 import { AuthProvider, useAuth } from '@/contexts/auth-context';
 import { OfflineProvider } from '@/contexts/offline-context';
 import { AppDataProviders } from '@/contexts/app-data-providers';
@@ -41,16 +40,24 @@ async function routeToHome(userId: string, replace: (href: string) => void) {
   try {
     const ref = doc(collection(db, 'notes'));
     const now = Date.now();
-    setDoc(ref, {
-      id: ref.id,
-      userId,
-      title: '',
-      content: '',
-      tags: [],
-      createdAt: now,
-      updatedAt: now,
-    });
-    replace(`/(tabs)/(notes)/${ref.id}?new=1`);
+    // Awaited: if the write rejects (rules/network), fall back to the notes
+    // list instead of routing into a note that doesn't exist. Offline, a
+    // Firestore write promise never settles (it only resolves on server
+    // ack), so race a timeout — the user must not hang on the splash, and a
+    // late ack must not yank them into an empty note minutes into a session.
+    const created = await Promise.race([
+      setDoc(ref, {
+        id: ref.id,
+        userId,
+        title: '',
+        content: '',
+        tags: [],
+        createdAt: now,
+        updatedAt: now,
+      }).then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 4000)),
+    ]);
+    replace(created ? `/(tabs)/(notes)/${ref.id}?new=1` : '/(tabs)/(notes)');
   } catch {
     replace('/(tabs)/(notes)');
   }
@@ -98,17 +105,26 @@ function RootNavigator() {
     <Stack>
       <Stack.Screen name="(auth)" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="tile-settings" options={{ presentation: 'modal', title: 'Tile Settings' }} />
+      {/* Custom in-screen header (no native bar): iOS 26 wraps native bar
+          buttons in glass capsules we can't opt out of, so the screen draws
+          its own plain-text Cancel/Save row. */}
+      <Stack.Screen name="tile-settings" options={{ presentation: 'modal', headerShown: false }} />
+      {/* Draws its own back-row header (same iOS 26 capsule reason as
+          tile-settings) — without this entry it gets a default native bar
+          titled "revive-habit" stacked above its own. */}
+      <Stack.Screen name="revive-habit" options={{ presentation: 'modal', headerShown: false }} />
       <Stack.Screen name="export-notes" options={{ presentation: 'modal', title: 'Export Notes' }} />
     </Stack>
   );
 }
 
 export default function RootLayout() {
-  const systemColorScheme = useColorScheme();
-  const { appearance } = useAppearance();
-
-  const effectiveScheme = appearance === 'light' ? 'light' : 'dark';
+  // useColorScheme already folds the stored appearance preference together
+  // with the system scheme (including legacy 'system' values) — every
+  // component resolves through it, so the navigation theme and root status
+  // bar must too, or a 'system' preference renders light components inside
+  // a dark nav theme.
+  const effectiveScheme = useColorScheme() ?? 'dark';
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

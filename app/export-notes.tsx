@@ -6,15 +6,21 @@ import { ThemedView } from '@/components/themed-view';
 import { TagChip } from '@/components/notes/tag-chip';
 import { useAllNotes } from '@/hooks/use-notes';
 import { useTags } from '@/hooks/use-tags';
+import { useAuth } from '@/contexts/auth-context';
+import { getDocs } from '@/lib/firebase/firestore';
+import { itemsQuery } from '@/lib/firebase/checklist-items';
+import { fromSnapshot } from '@/lib/checklist-item-doc';
 import { allNotesToMarkdown } from '@/lib/export/markdown-export';
 import { saveAndShareFiles } from '@/lib/export/file-saver';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import type { ChecklistItem } from '@/types/note';
 
 export default function ExportScreen() {
   // Export needs EVERY note, so a one-time full fetch (not the paginated list).
   const { notes, isLoading } = useAllNotes();
   const { tags } = useTags();
+  const { user } = useAuth();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
@@ -34,7 +40,28 @@ export default function ExportScreen() {
 
     setExporting(true);
     try {
-      const files = allNotesToMarkdown(filteredNotes, tags);
+      // Checklist notes export their LIVE items — note.content is a stale
+      // pre-toggle snapshot. Fetch each migrated checklist note's
+      // subcollection (userId-filtered, per the items invariant) and sort in
+      // display order; unmigrated notes still carry the legacy array.
+      const checklistItems = new Map<string, ChecklistItem[]>();
+      if (user) {
+        await Promise.all(
+          filteredNotes
+            .filter((n) => n.type === 'checklist' && n.itemsMigrated)
+            .map(async (n) => {
+              const snap = await getDocs(itemsQuery(n.id, user.uid));
+              const items = snap.docs
+                .map((d) => fromSnapshot(d.id, d.data()))
+                .sort(
+                  (a, b) =>
+                    (a.completed ? 1 : 0) - (b.completed ? 1 : 0) || a.order - b.order,
+                );
+              checklistItems.set(n.id, items);
+            }),
+        );
+      }
+      const files = allNotesToMarkdown(filteredNotes, tags, checklistItems);
       await saveAndShareFiles(files);
     } catch (e: any) {
       Alert.alert('Export failed', e.message ?? 'Unknown error');

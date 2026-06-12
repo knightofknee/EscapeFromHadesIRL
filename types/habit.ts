@@ -48,6 +48,16 @@ export type Habit = {
    */
   stepGoals?: number[];
   /**
+   * For 'steps' mode: the last fully-ended local day (YYYY-MM-DD) whose
+   * FINAL step count has been written to its record. A day's record is
+   * otherwise only as fresh as the last foreground sync that day, so the
+   * backfill writes every ended day after this date, then advances it.
+   * Set to yesterday whenever a habit becomes a steps habit — days before
+   * the switch are out of scope. Absent on habits from before this field
+   * existed; the backfill then initializes it from a bounded scan.
+   */
+  stepsConfirmedThrough?: string;
+  /**
    * For 'meditation' mode: target number of sessions per day (default 1).
    * "Goal" tier is reached when the user completes this many sessions of at
    * least `meditationMinutes` each in a single day.
@@ -95,12 +105,6 @@ export type HabitRecord = {
    * also updating `sessions` and recomputing.
    */
   sessions?: MeditationSession[];
-};
-
-export type GridConfig = {
-  userId: string;
-  columns: number;
-  statsButtonPosition: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 };
 
 export type VacationDay = {

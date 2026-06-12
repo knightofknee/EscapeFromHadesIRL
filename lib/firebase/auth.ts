@@ -95,8 +95,9 @@ const AUTH_ERROR_MESSAGES: Record<string, string> = {
   'auth/requires-recent-login': 'Please sign out and sign back in to continue.',
 };
 
-export function getAuthErrorMessage(error: any): string {
-  const code = error?.code;
+export function getAuthErrorMessage(error: unknown): string {
+  const err = error as { code?: string };
+  const code = err?.code;
   if (code && AUTH_ERROR_MESSAGES[code]) {
     return AUTH_ERROR_MESSAGES[code];
   }

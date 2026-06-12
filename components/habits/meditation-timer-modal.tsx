@@ -88,6 +88,11 @@ export function MeditationTimerModal({
   const [remainingSec, setRemainingSec] = useState<number>(defaultDurationSec);
   const [running, setRunning] = useState<boolean>(false);
   const startRef = useRef<{ at: number; remainingAtStart: number } | null>(null);
+  // startedAt of the run whose completion has already been logged. The tick
+  // path and the resync paths (modal open / app foreground) can all observe
+  // the same completion before clearTimerState lands — without this guard
+  // the same session gets appended twice.
+  const loggedCompletionRef = useRef<number | null>(null);
   // Day-cross attribution: the START day for the active timer. Sessions get
   // logged to this date even if completion happens after midnight.
   const activeDateRef = useRef<string>(date);
@@ -104,14 +109,19 @@ export function MeditationTimerModal({
   const sessions = record?.sessions ?? [];
   const qualifying = getMeditationQualifyingCount(sessions, targetMinutes);
 
+  // persistSession can fire from the tick interval, whose closure is frozen
+  // at run start — a session logged or removed DURING the run would be
+  // clobbered by a completion write built on the pre-run list. Read the
+  // latest record through a ref instead of the closure.
+  const recordRef = useRef(record);
+  useEffect(() => {
+    recordRef.current = record;
+  });
+
   const persistSession = useCallback(
     async (newSession: MeditationSession, sessionDate: string) => {
       if (!habit) return;
-      // Re-read the latest record from this render — `sessions` from props
-      // (above) may be stale across long-running awaits, but for the
-      // single-write case here it's fine: we read once, append, write back.
-      // (Concurrent edits on the same day are exceedingly rare.)
-      const existing = record?.sessions ?? [];
+      const existing = recordRef.current?.sessions ?? [];
       const nextSessions = [...existing, newSession];
       const value = computeMeditationTier(nextSessions, targetSessions, targetMinutes);
       const docId = `${habit.id}_${sessionDate}`;
@@ -130,7 +140,7 @@ export function MeditationTimerModal({
         console.error('Failed to save meditation session:', err);
       }
     },
-    [habit, record?.sessions, targetSessions, targetMinutes, userId],
+    [habit, targetSessions, targetMinutes, userId],
   );
 
   const removeSession = useCallback(
@@ -184,7 +194,8 @@ export function MeditationTimerModal({
       // session to its start day, then clear and show today fresh.
       if (persisted.startedAt != null) {
         const remaining = computeRemainingSec(persisted, Date.now());
-        if (remaining === 0) {
+        if (remaining === 0 && loggedCompletionRef.current !== persisted.startedAt) {
+          loggedCompletionRef.current = persisted.startedAt;
           await persistSession(
             {
               durationSec: persisted.totalSec,
@@ -210,14 +221,17 @@ export function MeditationTimerModal({
       // Was running when last saved. May have completed while we were away.
       const remaining = computeRemainingSec(persisted, Date.now());
       if (remaining === 0) {
-        await persistSession(
-          {
-            durationSec: persisted.totalSec,
-            source: 'timer',
-            loggedAt: Date.now(),
-          },
-          persisted.date,
-        );
+        if (loggedCompletionRef.current !== persisted.startedAt) {
+          loggedCompletionRef.current = persisted.startedAt;
+          await persistSession(
+            {
+              durationSec: persisted.totalSec,
+              source: 'timer',
+              loggedAt: Date.now(),
+            },
+            persisted.date,
+          );
+        }
         await cancelMeditationAlarm(persisted.notificationId);
         await clearTimerState(habit.id);
         setRemainingSec(persisted.totalSec);
@@ -273,6 +287,9 @@ export function MeditationTimerModal({
         // (the start day), so cross-midnight runs attribute correctly.
         clearInterval(id);
         setRunning(false);
+        // Claim this run's completion before the async log so a foreground
+        // resync racing the write can't log it again.
+        loggedCompletionRef.current = s.at;
         startRef.current = null;
         if (Platform.OS === 'ios' && !Platform.isPad) {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});

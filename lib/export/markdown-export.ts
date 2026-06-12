@@ -1,6 +1,13 @@
-import type { Note, Tag } from '@/types/note';
+import { formatChecklistAsText } from '@/lib/checklist-format';
+import type { ChecklistItem, Note, Tag } from '@/types/note';
 
-export function noteToMarkdown(note: Note, tags: Tag[]): string {
+/** Escape a string for a double-quoted YAML scalar: backslashes first, then
+ * quotes, then literal newlines (a raw newline breaks the frontmatter line). */
+function yamlEscape(text: string): string {
+  return text.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+}
+
+function noteToMarkdown(note: Note, tags: Tag[], items?: ChecklistItem[]): string {
   const noteTagIds = [...new Set(note.tags.map((t) => t.tagId))];
   const noteTagNames = noteTagIds
     .map((id) => tags.find((t) => t.id === id)?.name)
@@ -8,18 +15,26 @@ export function noteToMarkdown(note: Note, tags: Tag[]): string {
 
   const frontmatter = [
     '---',
-    `title: "${note.title.replace(/"/g, '\\"')}"`,
-    `tags: [${noteTagNames.map((n) => `"${n}"`).join(', ')}]`,
+    `title: "${yamlEscape(note.title)}"`,
+    `tags: [${noteTagNames.map((n) => `"${yamlEscape(n ?? '')}"`).join(', ')}]`,
     `created: ${new Date(note.createdAt).toISOString()}`,
     `updated: ${new Date(note.updatedAt).toISOString()}`,
     '---',
     '',
   ].join('\n');
 
-  return frontmatter + note.content;
+  // Checklist notes keep `content` as a stale snapshot from the last
+  // text→checklist toggle — the live data is `description` + the items
+  // subcollection (passed in by the export flow). Unmigrated notes fall
+  // back to the legacy embedded array.
+  const body =
+    note.type === 'checklist'
+      ? formatChecklistAsText(note.description ?? '', items ?? note.checklist ?? [])
+      : note.content;
+  return frontmatter + body;
 }
 
-export function noteToFilename(note: Note): string {
+function noteToFilename(note: Note): string {
   const sanitized = (note.title || 'untitled')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -28,7 +43,12 @@ export function noteToFilename(note: Note): string {
   return `${sanitized}.md`;
 }
 
-export function allNotesToMarkdown(notes: Note[], tags: Tag[]): { filename: string; content: string }[] {
+export function allNotesToMarkdown(
+  notes: Note[],
+  tags: Tag[],
+  /** Live subcollection items per checklist note id (see noteToMarkdown). */
+  checklistItems?: Map<string, ChecklistItem[]>,
+): { filename: string; content: string }[] {
   const usedNames = new Map<string, number>();
   return notes.map((note) => {
     let filename = noteToFilename(note);
@@ -40,7 +60,7 @@ export function allNotesToMarkdown(notes: Note[], tags: Tag[]): { filename: stri
     }
     return {
       filename,
-      content: noteToMarkdown(note, tags),
+      content: noteToMarkdown(note, tags, checklistItems?.get(note.id)),
     };
   });
 }

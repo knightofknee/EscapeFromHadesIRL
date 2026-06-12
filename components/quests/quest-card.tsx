@@ -2,7 +2,7 @@ import { Pressable, View, StyleSheet } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ScoreBar } from './score-bar';
 import { QuestColors } from '@/constants/theme';
-import { CATEGORY_NAMES } from '@/constants/quest-templates';
+import { questPointValue } from '@/hooks/use-quest-scores';
 import type { Quest } from '@/types/quest';
 import type { QuestScore } from '@/hooks/use-quest-scores';
 
@@ -17,6 +17,8 @@ export function QuestCard({ quest, questScore, onPress }: Props) {
   const score18mo = questScore?.score18mo ?? 0;
   const doubleDays = questScore?.doubleDays ?? 0;
   const categoryColor = QuestColors[quest.category] ?? QuestColors.custom;
+  const pointsEarned = questScore?.pointsEarned ?? 0;
+  const pointsAvailable = questScore?.pointsAvailable ?? questPointValue(quest).total;
 
   return (
     <Pressable style={styles.card} onPress={onPress}>
@@ -25,10 +27,12 @@ export function QuestCard({ quest, questScore, onPress }: Props) {
         <ThemedText style={styles.name} numberOfLines={1}>
           {quest.name}
         </ThemedText>
-        {(quest.successLevel ?? 1) >= 2 && (
+        {/* Badge the bar that's actually ENFORCED — the legacy tierless-link
+            fallback can score a stored goal/ideal quest at basic. */}
+        {(questScore?.effectiveSuccessLevel ?? quest.successLevel ?? 1) >= 2 && (
           <View style={styles.levelBadge}>
             <ThemedText style={styles.levelText}>
-              {quest.successLevel === 3 ? 'IDEAL' : 'GOAL'}
+              {(questScore?.effectiveSuccessLevel ?? quest.successLevel) === 3 ? 'IDEAL' : 'GOAL'}
             </ThemedText>
           </View>
         )}
@@ -43,21 +47,31 @@ export function QuestCard({ quest, questScore, onPress }: Props) {
           </View>
         )}
       </View>
-      <View style={styles.barRow}>
-        <ThemedText style={styles.barLabel}>30D</ThemedText>
-        <View style={styles.barFill}>
-          <ScoreBar score={score} height={5} />
+      {/* The mythic names alone aren't recognizable — keep the description
+          on active cards. Wraps; never truncates to an ellipsis. */}
+      {!!quest.description && (
+        <ThemedText style={styles.description}>{quest.description}</ThemedText>
+      )}
+      {/* Single-window quests show only the bar they're scored on. */}
+      {(quest.scoreWindow ?? 'both') !== '18mo' && (
+        <View style={styles.barRow}>
+          <ThemedText style={styles.barLabel}>30D</ThemedText>
+          <View style={styles.barFill}>
+            <ScoreBar score={score} height={5} />
+          </View>
         </View>
-      </View>
-      <View style={styles.barRow}>
-        <ThemedText style={styles.barLabel}>18MO</ThemedText>
-        <View style={styles.barFill}>
-          <ScoreBar score={score18mo} height={5} color={QuestColors.gold} />
+      )}
+      {(quest.scoreWindow ?? 'both') !== '30d' && (
+        <View style={styles.barRow}>
+          <ThemedText style={styles.barLabel}>18MO</ThemedText>
+          <View style={styles.barFill}>
+            <ScoreBar score={score18mo} height={5} color={QuestColors.gold} />
+          </View>
         </View>
-      </View>
+      )}
       <View style={styles.meta}>
         <ThemedText style={styles.metaText}>
-          {quest.targetDaysPerWeek}×/wk · {CATEGORY_NAMES[quest.category]}
+          {quest.targetDaysPerWeek}×/wk · {pointsEarned}/{pointsAvailable} pts
         </ThemedText>
       </View>
     </Pressable>
@@ -65,6 +79,12 @@ export function QuestCard({ quest, questScore, onPress }: Props) {
 }
 
 const styles = StyleSheet.create({
+  description: {
+    fontSize: 12,
+    color: QuestColors.textDim,
+    fontStyle: 'italic',
+    marginTop: -2,
+  },
   card: {
     backgroundColor: QuestColors.surface,
     borderWidth: 1,

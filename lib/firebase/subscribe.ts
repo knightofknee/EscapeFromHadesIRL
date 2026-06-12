@@ -40,6 +40,7 @@ export function subscribeWithOfflineState(
 ): Unsubscribe {
   const timeoutMs = options.offlineTimeoutMs ?? 5000;
   let seenServer = false;
+  let delivered = false;
   let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
     timer = null;
     if (!seenServer) callbacks.setOffline(true);
@@ -56,7 +57,19 @@ export function subscribeWithOfflineState(
     ref as any,
     { includeMetadataChanges: true },
     (snapshot: any) => {
-      onNext(snapshot);
+      // A cold cache emits an immediate EMPTY fromCache snapshot before the
+      // server answers (memory persistence starts empty every launch). It
+      // carries no information, but passing it through made consumers mark
+      // loading complete and flash their empty states on every cold start.
+      // Hold delivery until there's real cache data or a server response —
+      // the offline timeout below still unblocks consumers when the server
+      // never answers.
+      const isEmptyResult =
+        typeof snapshot.empty === 'boolean' ? snapshot.empty : !snapshot.exists?.();
+      if (delivered || !snapshot.metadata.fromCache || !isEmptyResult) {
+        delivered = true;
+        onNext(snapshot);
+      }
       if (snapshot.metadata.fromCache) {
         if (seenServer) callbacks.setOffline(true);
       } else {

@@ -33,10 +33,13 @@ export function useArchivedHabits() {
   useEffect(() => {
     if (!user) {
       setHabits([]);
-      setIsLoading(false);
+      // Stay "loading" while signed out / auth restoring — see HabitsProvider.
+      setIsLoading(true);
       setIsOffline(false);
       return;
     }
+
+    setIsLoading(true);
 
     const q = query(
       collection(db, 'habits'),
@@ -56,7 +59,10 @@ export function useArchivedHabits() {
           console.error('[useArchivedHabits] snapshot error:', error);
           setIsLoading(false);
         },
-        setOffline: setIsOffline,
+        setOffline: (offline) => {
+          setIsOffline(offline);
+          if (offline) setIsLoading(false);
+        },
       },
     );
   }, [user]);

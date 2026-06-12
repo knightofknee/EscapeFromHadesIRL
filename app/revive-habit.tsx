@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { StyleSheet, ScrollView, Pressable, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, ScrollView, Pressable, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
@@ -37,7 +37,7 @@ export default function ReviveHabitScreen() {
 
       <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: footerReserve }]}>
         {isLoading ? (
-          <ThemedText style={styles.emptyText}>Loading...</ThemedText>
+          <ActivityIndicator size="large" color={colors.tint} style={styles.loading} />
         ) : archived.length === 0 ? (
           <ThemedText style={styles.emptyText}>
             {isOffline ? 'No internet connection' : 'No archived habits'}
@@ -117,6 +117,9 @@ const styles = StyleSheet.create({
     opacity: 0.5,
     paddingVertical: 40,
     fontSize: 15,
+  },
+  loading: {
+    paddingVertical: 40,
   },
   habitRow: {
     flexDirection: 'row',

@@ -14,11 +14,12 @@ import { useNotes } from '@/hooks/use-notes';
 import { useTags } from '@/hooks/use-tags';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import type { Note } from '@/types/note';
 
 const DISMISS_BAR_HEIGHT = 40;
 
 export default function NotesListScreen() {
-  const { notes, isLoading, isOffline, createNote, deleteNote, togglePinNote, loadMore, loadAll, allLoaded, isLoadingMore } = useNotes();
+  const { notes, isLoading, isOffline, createNote, deleteNote, togglePinNote, loadMore, loadAll, allLoaded, hasLoadedOnce, isLoadingMore } = useNotes();
   const { tags, deleteTags } = useTags();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
@@ -55,6 +56,10 @@ export default function NotesListScreen() {
       // until everything is loaded ("load all", or a library small enough to
       // fit one page) rather than risk a wrong delete.
       if (!allLoaded) return;
+      // And never against an error/empty-state note set: a failed listener
+      // leaves notes=[] with loading finished, and sweeping against that
+      // would mass-delete every tag.
+      if (!hasLoadedOnce) return;
       const timer = setTimeout(() => {
         const inUse = new Set<string>();
         for (const n of notes) {
@@ -64,7 +69,7 @@ export default function NotesListScreen() {
         if (orphans.length > 0) deleteTags(orphans);
       }, 500);
       return () => clearTimeout(timer);
-    }, [notes, tags, isLoading, allLoaded, deleteTags]),
+    }, [notes, tags, isLoading, allLoaded, hasLoadedOnce, deleteTags]),
   );
 
   // Drop the active filter if its tag is no longer in use.
@@ -80,6 +85,22 @@ export default function NotesListScreen() {
     router.push(`/(tabs)/(notes)/${noteId}`);
   }, []);
 
+  // Hoisted + stable so NoteListItem's memo actually skips re-renders while
+  // typing in the search field (an inline closure re-created per keystroke
+  // is fine for memo'd children only if its props are stable — keep them so).
+  const renderNote = useCallback(
+    ({ item }: { item: Note }) => (
+      <NoteListItem
+        note={item}
+        tags={tags}
+        onPress={handleOpenNote}
+        onDelete={deleteNote}
+        onTogglePin={togglePinNote}
+      />
+    ),
+    [tags, handleOpenNote, deleteNote, togglePinNote],
+  );
+
   const filteredNotes = useMemo(() => {
     let result = notes;
 
@@ -91,10 +112,19 @@ export default function NotesListScreen() {
     // Filter by search
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      result = result.filter(
-        (note) =>
-          note.title.toLowerCase().includes(q) || note.content.toLowerCase().includes(q),
-      );
+      result = result.filter((note) => {
+        if (note.title.toLowerCase().includes(q)) return true;
+        // Checklist notes keep `content` as a stale pre-toggle snapshot
+        // (live items are in a subcollection) — search what the list doc
+        // actually knows: the description and the summary preview.
+        if (note.type === 'checklist') {
+          return (
+            (note.description ?? '').toLowerCase().includes(q) ||
+            (note.checklistSummary?.firstUncompleted ?? '').toLowerCase().includes(q)
+          );
+        }
+        return note.content.toLowerCase().includes(q);
+      });
     }
 
     // Pinned notes first, then unpinned. Within each group, preserve updatedAt desc.
@@ -169,6 +199,7 @@ export default function NotesListScreen() {
       {/* Notes list */}
       <FlatList
         data={filteredNotes}
+        extraData={tags}
         keyExtractor={(item) => item.id}
         style={styles.list}
         contentContainerStyle={styles.listContent}
@@ -177,15 +208,7 @@ export default function NotesListScreen() {
         // "load all" button above is the explicit path for full coverage.
         onEndReached={isFiltering ? undefined : loadMore}
         onEndReachedThreshold={0.5}
-        renderItem={({ item }) => (
-          <NoteListItem
-            note={item}
-            tags={tags}
-            onPress={handleOpenNote}
-            onDelete={deleteNote}
-            onTogglePin={togglePinNote}
-          />
-        )}
+        renderItem={renderNote}
         ListFooterComponent={
           isLoadingMore ? (
             <View style={styles.footer}>
@@ -195,15 +218,17 @@ export default function NotesListScreen() {
         }
         ListEmptyComponent={
           <View style={styles.empty}>
-            <ThemedText style={styles.emptyText}>
-              {isLoading
-                ? 'Loading...'
-                : searchQuery || selectedTagId
+            {isLoading ? (
+              <ActivityIndicator size="large" color={colors.tint} />
+            ) : (
+              <ThemedText style={styles.emptyText}>
+                {searchQuery || selectedTagId
                   ? 'No matching notes'
                   : isOffline
                     ? 'No internet connection'
                     : 'No notes yet'}
-            </ThemedText>
+              </ThemedText>
+            )}
           </View>
         }
       />

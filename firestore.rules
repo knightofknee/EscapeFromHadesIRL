@@ -208,7 +208,14 @@ service cloud.firestore {
       allow update: if ownsExisting() && ownsIncoming();
     }
     match /records/{docId} {
-      allow read, delete: if ownsExisting();
+      // `get` also allows MISSING docs (returns not-found, not denied):
+      // read-then-create flows — e.g. the creative-writing auto-bump reading
+      // today's record before any tap — get a missing doc, and the plain
+      // ownsExisting() rule would evaluate `resource.data` on null and deny,
+      // surfacing as permission-denied. Doc ids embed unguessable habit ids,
+      // so allowing not-found responses leaks nothing useful.
+      allow get: if signedIn() && (resource == null || resource.data.userId == request.auth.uid);
+      allow list, delete: if ownsExisting();
       allow create: if ownsIncoming();
       allow update: if ownsExisting() && ownsIncoming();
     }
@@ -221,9 +228,11 @@ service cloud.firestore {
       // per checklist item instead of a single array on the note). Each
       // item carries its own `userId` mirroring the parent note's owner, so
       // ownership is scoped without a get() of the parent — same shape as
-      // the top-level collections above. A collection-group query on
-      // `items` (account deletion) is also gated by this rule because it
-      // filters on userId.
+      // the top-level collections above. NOTE: this rule matches only the
+      // direct path /notes/{id}/items — a collectionGroup('items') query
+      // would need its own `match /{path=**}/items` rule and is therefore
+      // DENIED today. All readers (editor, export, account deletion) do
+      // per-note userId-filtered reads, never a collection-group query.
       match /items/{itemId} {
         allow read, delete: if ownsExisting();
         allow create: if ownsIncoming();

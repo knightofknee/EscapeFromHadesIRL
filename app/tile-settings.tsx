@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { StyleSheet, ScrollView, TextInput, Pressable, Switch, View, Alert, Modal } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { GlyphEditor } from '@/components/habits/glyph-editor';
@@ -10,7 +11,9 @@ import { TILE_COLORS, DEFAULT_TILE_COLOR } from '@/constants/grid';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useHabits } from '@/hooks/use-habits';
 import { useTodayRecords } from '@/hooks/use-today-records';
+import { useUserSettingsContext } from '@/contexts/user-settings-context';
 import { consumePendingHabitCallback, clearPendingHabitCallback } from '@/lib/pending-habit-link';
+import { addDays, getTodayString } from '@/lib/date-utils';
 import type { RecordingMode, GlyphData } from '@/types/habit';
 import { requestStepsPermission } from '@/lib/steps-health';
 import {
@@ -21,9 +24,11 @@ import {
 type ModeOption = { value: RecordingMode; label: string; description: string; auto?: boolean };
 
 const RECORDING_MODES: ModeOption[] = [
+  // quad leads: 3 success tiers feed the tiered quests, so it's the
+  // recommended default recording style.
+  { value: 'quad', label: 'No / Yes / Goal / Ideal · Recommended', description: 'Tap to cycle through 4 levels — powers tiered quests' },
   { value: 'boolean', label: 'Yes / No', description: 'Tap to toggle' },
   { value: 'triple', label: 'No / Yes / Goal', description: 'Tap to cycle through 3 levels' },
-  { value: 'quad', label: 'No / Yes / Goal / Ideal', description: 'Tap to cycle through 4 levels' },
   { value: 'counter', label: 'Counter', description: 'Tap to increment' },
   { value: 'value', label: 'Value', description: 'Enter a value' },
   { value: 'steps', label: 'Steps Counter', description: 'Auto-filled from your step count', auto: true },
@@ -69,6 +74,9 @@ export default function TileSettingsModal() {
     existingHabit?.meditationMinutes ?? DEFAULT_MEDITATION_MINUTES,
   );
   const [showName, setShowName] = useState<boolean>(existingHabit?.showName ?? false);
+  // Global "show name on all tiles" — one on/off for the whole grid, surfaced
+  // in every tile's settings. Writes immediately (not part of Save).
+  const { showAllTileNames, setShowAllTileNames } = useUserSettingsContext();
   const [tileSize, setTileSize] = useState<number>(existingHabit?.tileSize ?? 1);
 
   // Compute current display order for position control
@@ -159,8 +167,14 @@ export default function TileSettingsModal() {
     };
   }, []);
 
+  // Seed the form only when a DIFFERENT habit loads. Habit objects get new
+  // identities on every snapshot (any habit-doc write — e.g. the steps
+  // backfill advancing its pointer), and re-seeding mid-edit would wipe the
+  // user's typing.
+  const seededHabitIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (existingHabit) {
+    if (existingHabit && seededHabitIdRef.current !== existingHabit.id) {
+      seededHabitIdRef.current = existingHabit.id;
       setName(existingHabit.name);
       setAbbreviation(existingHabit.abbreviation);
       setIcon(existingHabit.icon ?? '');
@@ -199,6 +213,28 @@ export default function TileSettingsModal() {
     }
   }, [recordingMode, stepGoals.length]);
 
+  // Any unsaved edit? Each field compares against the same source its state
+  // initializes (and re-syncs) from, so late-arriving data — the habit doc,
+  // the counter record, the position index — never reads as dirty. Drives
+  // the pinned Save/Cancel in the nav header below. (The global
+  // "show name on all tiles" switch is excluded: it saves immediately.)
+  const isDirty =
+    name !== (existingHabit?.name ?? params.prefillName ?? '') ||
+    abbreviation !== (existingHabit?.abbreviation ?? '') ||
+    icon !== (existingHabit?.icon ?? '') ||
+    recordingMode !== (existingHabit?.recordingMode ?? 'boolean') ||
+    showName !== (existingHabit?.showName ?? false) ||
+    tileSize !== (existingHabit?.tileSize ?? 1) ||
+    color !== (existingHabit?.color ?? DEFAULT_TILE_COLOR) ||
+    glyph !== existingHabit?.glyph ||
+    meditationSessions !== (existingHabit?.meditationSessions ?? DEFAULT_MEDITATION_SESSIONS) ||
+    meditationMinutes !== (existingHabit?.meditationMinutes ?? DEFAULT_MEDITATION_MINUTES) ||
+    JSON.stringify(stepGoals) !== JSON.stringify(existingHabit?.stepGoals ?? []) ||
+    (counterInitialized && counterValue !== String(currentCounterValue)) ||
+    (positionInitialized && existingHabit != null && position !== currentIndex + 1);
+
+  const canSave = isCreating ? name.trim().length > 0 : isDirty;
+
   async function handleSave() {
     if (!name.trim()) {
       Alert.alert('Name required', 'Please enter a name for this habit.');
@@ -219,6 +255,22 @@ export default function TileSettingsModal() {
     }
     const goalsToSave = recordingMode === 'steps' ? cleanGoals : undefined;
 
+    // Pointer rules (see useStepsBackfill): becoming a steps habit → start
+    // confirming with the first full day (yesterday; days before the switch
+    // are out of scope); STAYING steps → omit the key entirely, since the
+    // backfill may have advanced the pointer after this form snapshotted the
+    // habit and writing the snapshot back would regress it; leaving steps →
+    // undefined, which updateHabit turns into deleteField.
+    const wasSteps = existingHabit?.recordingMode === 'steps';
+    const stepsPointerUpdate =
+      recordingMode === 'steps'
+        ? wasSteps
+          ? {}
+          : { stepsConfirmedThrough: addDays(getTodayString(), -1) }
+        : wasSteps
+          ? { stepsConfirmedThrough: undefined }
+          : {};
+
     // Only persist meditation config when this habit IS a meditation habit;
     // otherwise drop the fields so switching away cleans up the doc.
     const isMeditation = recordingMode === 'meditation';
@@ -235,6 +287,9 @@ export default function TileSettingsModal() {
         glyph: glyph && glyph.paths.length > 0 ? glyph : undefined,
         recordingMode,
         stepGoals: goalsToSave,
+        ...(recordingMode === 'steps'
+          ? { stepsConfirmedThrough: addDays(getTodayString(), -1) }
+          : {}),
         meditationSessions: meditationSessionsToSave,
         meditationMinutes: meditationMinutesToSave,
         showName,
@@ -255,6 +310,7 @@ export default function TileSettingsModal() {
         glyph: glyph && glyph.paths.length > 0 ? glyph : undefined,
         recordingMode,
         stepGoals: goalsToSave,
+        ...stepsPointerUpdate,
         meditationSessions: meditationSessionsToSave,
         meditationMinutes: meditationMinutesToSave,
         showName,
@@ -324,21 +380,34 @@ export default function TileSettingsModal() {
 
   return (
     <ThemedView style={styles.container}>
-      <ScrollView ref={scrollRef} contentContainerStyle={styles.scrollContent}>
-        <View style={styles.modalHeader}>
-          <ThemedText type="title" style={styles.sectionTitle}>
-            {isCreating ? 'New Habit' : 'Edit Habit'}
-          </ThemedText>
-          <View style={styles.headerActions}>
-            <Pressable style={[styles.headerSave, { backgroundColor: colors.tint }]} onPress={handleSave}>
-              <ThemedText style={styles.headerSaveText}>Save</ThemedText>
-            </Pressable>
-            <Pressable onPress={() => router.back()} style={styles.cancelLink}>
-              <ThemedText style={[styles.cancelText, { color: colors.tint }]}>Cancel</ThemedText>
-            </Pressable>
+      {/* Custom header (native bar hidden — see root layout): plain-text
+          buttons, no system capsules. Cancel is always available; Save is
+          always visible but disabled/grayed until something is edited. */}
+      <SafeAreaView edges={['top']}>
+        <View style={styles.navHeader}>
+          <Pressable onPress={() => router.back()} hitSlop={8}>
+            <ThemedText style={[styles.cancelText, { color: colors.tint }]}>Cancel</ThemedText>
+          </Pressable>
+          <View style={styles.navTitleWrap} pointerEvents="none">
+            <ThemedText style={styles.navTitle}>Habit Settings</ThemedText>
           </View>
+          {/* Create mode enables Save whenever the name is valid — a
+              prefilled form (quest flow's prefillName) starts clean, and a
+              dirty-only gate would leave Save dead with no explanation. */}
+          <Pressable onPress={handleSave} disabled={!canSave} hitSlop={8}>
+            <ThemedText
+              style={[
+                styles.headerSaveText,
+                { color: canSave ? colors.tint : colors.icon },
+                !canSave && styles.headerSaveDisabled,
+              ]}
+            >
+              Save
+            </ThemedText>
+          </Pressable>
         </View>
-
+      </SafeAreaView>
+      <ScrollView ref={scrollRef} contentContainerStyle={styles.scrollContent}>
         {/* Name */}
         <ThemedText type="defaultSemiBold" style={styles.label}>
           Name
@@ -353,17 +422,42 @@ export default function TileSettingsModal() {
         />
 
         {/* Show Name — when on, the habit's name renders at the bottom of the
-            tile below any counter/value/step subtitle. Off by default. */}
-        <View style={styles.toggleRow}>
+            tile below any counter/value/step subtitle. Off by default. While
+            the global "all tiles" switch is on it takes over: this row grays
+            out, shows the effective ON state, and can't be toggled. The
+            stored per-tile value is untouched, so turning the global off
+            restores each tile's own setting. */}
+        <View style={[styles.toggleRow, showAllTileNames && { opacity: 0.4 }]}>
           <View style={{ flex: 1 }}>
             <ThemedText style={{ fontSize: 14, fontWeight: '600' }}>Show name on tile</ThemedText>
             <ThemedText style={{ fontSize: 12, opacity: 0.6 }}>
-              Adds the name as a small label at the bottom of the tile.
+              {showAllTileNames
+                ? 'On for every tile — controlled by the switch below.'
+                : 'Adds the name as a small label at the bottom of the tile.'}
             </ThemedText>
           </View>
           <Switch
-            value={showName}
+            value={showAllTileNames ? true : showName}
             onValueChange={setShowName}
+            disabled={showAllTileNames}
+            trackColor={{ false: colors.tileBorder, true: colors.tint }}
+            thumbColor="#fff"
+          />
+        </View>
+
+        {/* Show name on ALL tiles — one global setting for the whole grid,
+            shown in every tile's settings for convenience. Applies
+            immediately (not part of this tile's Save). */}
+        <View style={styles.toggleRow}>
+          <View style={{ flex: 1 }}>
+            <ThemedText style={{ fontSize: 14, fontWeight: '600' }}>Show name on all tiles</ThemedText>
+            <ThemedText style={{ fontSize: 12, opacity: 0.6 }}>
+              One switch for every tile — overrides the per-tile setting above.
+            </ThemedText>
+          </View>
+          <Switch
+            value={showAllTileNames}
+            onValueChange={setShowAllTileNames}
             trackColor={{ false: colors.tileBorder, true: colors.tint }}
             thumbColor="#fff"
           />
@@ -769,17 +863,7 @@ export default function TileSettingsModal() {
           )}
         </View>
 
-        {/* Actions */}
-        <Pressable style={[styles.saveButton, { backgroundColor: colors.tint }]} onPress={handleSave}>
-          <ThemedText style={styles.saveText}>{isCreating ? 'Create Habit' : 'Save Changes'}</ThemedText>
-        </Pressable>
-
-        {/* Bottom Cancel — mirrors the one at the top so it's reachable after
-            scrolling without having to go back up. */}
-        <Pressable style={styles.bottomCancelButton} onPress={() => router.back()}>
-          <ThemedText style={[styles.bottomCancelText, { color: colors.tint }]}>Cancel</ThemedText>
-        </Pressable>
-
+        {/* Save/Cancel live solely in the pinned header now. */}
         {isCreating && (
           <Pressable style={styles.reviveLink} onPress={() => router.push('/revive-habit')}>
             <ThemedText style={[styles.reviveLinkText, { color: colors.icon }]}>
@@ -858,36 +942,39 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    padding: 20,
+    paddingHorizontal: 20,
+    // Tight to the nav header — the title row that used to occupy this
+    // space is gone, so a big top inset just reads as dead space.
+    paddingTop: 8,
     gap: 8,
     paddingBottom: 40,
   },
-  modalHeader: {
+  // Custom header row — plain text buttons, centered title, no capsules.
+  navHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(128,128,128,0.2)',
   },
-  sectionTitle: {
-    marginBottom: 16,
-  },
-  headerActions: {
-    flexDirection: 'row',
+  navTitleWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
     alignItems: 'center',
-    gap: 12,
-    marginBottom: 16,
   },
-  headerSave: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 6,
+  navTitle: {
+    fontSize: 17,
+    fontWeight: '600',
   },
   headerSaveText: {
-    color: '#fff',
     fontWeight: '600',
-    fontSize: 14,
+    fontSize: 16,
   },
-  cancelLink: {
-    padding: 8,
+  headerSaveDisabled: {
+    opacity: 0.4,
   },
   cancelText: {
     fontSize: 16,
@@ -1070,18 +1157,6 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     marginVertical: 8,
   },
-  saveButton: {
-    height: 48,
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 20,
-  },
-  saveText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 16,
-  },
   deleteButton: {
     height: 48,
     justifyContent: 'center',
@@ -1092,16 +1167,6 @@ const styles = StyleSheet.create({
     color: '#E74C3C',
     fontWeight: '600',
     fontSize: 16,
-  },
-  bottomCancelButton: {
-    height: 48,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  bottomCancelText: {
-    fontSize: 16,
-    fontWeight: '600',
   },
   reviveLink: {
     alignItems: 'center',
