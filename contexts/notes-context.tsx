@@ -23,6 +23,7 @@ import {
   setDoc,
   deleteDoc,
 } from '@/lib/firebase/firestore';
+import { emitError } from '@/lib/error-bus';
 import { subscribeWithOfflineState } from '@/lib/firebase/subscribe';
 import { deleteAllItems } from '@/lib/firebase/checklist-items';
 import { maybeBumpCreativeWriting } from '@/lib/creative-writing';
@@ -60,6 +61,8 @@ type NotesContextValue = {
    * an empty set would delete every tag.
    */
   hasLoadedOnce: boolean;
+  /** True when the notes listener last errored — blocks the orphan-tag GC. */
+  listenerError: boolean;
   loadMore: () => void;
   loadAll: () => void;
   createNote: (title: string, content?: string) => Note | null;
@@ -124,6 +127,7 @@ const NotesContext = createContext<NotesContextValue>({
   isLoadingMore: false,
   allLoaded: true,
   hasLoadedOnce: false,
+  listenerError: false,
   loadMore: () => {},
   loadAll: () => {},
   createNote: () => null,
@@ -163,6 +167,11 @@ export function NotesProvider({ children }: { children: ReactNode }) {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  // Listener error → surface to the user AND hard-block the orphan-tag GC so a
+  // failed/empty-on-error snapshot can never be mistaken for "no notes" and
+  // wipe every tag. Retry bumps the nonce to re-subscribe.
+  const [listenerError, setListenerError] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
   // null = no limit ("load all"); otherwise the current window size.
   const [pageLimit, setPageLimit] = useState<number | null>(PAGE_SIZE);
 
@@ -248,6 +257,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
         applyMerge();
         setIsLoading(false);
         setHasLoadedOnce(true);
+        setListenerError(false);
       },
       {
         onError: (error) => {
@@ -255,6 +265,8 @@ export function NotesProvider({ children }: { children: ReactNode }) {
           loadingMoreRef.current = false;
           setIsLoadingMore(false);
           setIsLoading(false);
+          setListenerError(true);
+          emitError("Couldn't load your notes. Tap Retry.", () => setRetryNonce((n) => n + 1));
         },
         setOffline: (offline) => {
           setIsOffline(offline);
@@ -262,7 +274,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
         },
       },
     );
-  }, [user, pageLimit, applyMerge]);
+  }, [user, pageLimit, applyMerge, retryNonce]);
 
   // Pinned sidecar: pinned notes are always present regardless of the window,
   // so a pinned note older than the loaded page still floats to the top. Two
@@ -333,6 +345,9 @@ export function NotesProvider({ children }: { children: ReactNode }) {
       // doesn't have it) silently in production.
       setDoc(ref, newNote).catch((err) => {
         console.error('createNote: Firestore write failed', err);
+        emitError("Couldn't save the new note. Tap Retry.", () => {
+          setDoc(ref, newNote).catch((e) => console.error('createNote retry failed', e));
+        });
       });
       // Creative Writing auto-bump (fire-and-forget). New notes default to
       // text (no `type` field) → not a checklist → bump-eligible.
@@ -383,10 +398,15 @@ export function NotesProvider({ children }: { children: ReactNode }) {
           { merge: true },
         );
       } catch (err) {
-        // Silent rollback isn't safe (we'd clobber other in-flight
-        // edits), but we should at least log so production failures
-        // are visible. UI is already optimistic — user sees success.
+        // Silent rollback isn't safe (we'd clobber other in-flight edits), so
+        // surface the failure with a retry of the same merge write instead of
+        // letting the optimistic "saved" state lie.
         console.error('updateNote: Firestore write failed', err);
+        emitError("Couldn't save your note changes. Tap Retry.", () => {
+          setDoc(ref, touch ? { ...updates, updatedAt: now } : { ...updates }, { merge: true }).catch(
+            (e) => console.error('updateNote retry failed', e),
+          );
+        });
       }
       // Creative Writing auto-bump. The note's checklist status after this
       // patch determines whether it counts — `updates.type` wins if it
@@ -453,6 +473,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
       isLoadingMore,
       allLoaded: !hasMore,
       hasLoadedOnce,
+      listenerError,
       loadMore,
       loadAll,
       createNote,
@@ -467,6 +488,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
       isLoadingMore,
       hasMore,
       hasLoadedOnce,
+      listenerError,
       loadMore,
       loadAll,
       createNote,

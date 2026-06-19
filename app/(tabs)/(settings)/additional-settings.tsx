@@ -125,6 +125,15 @@ export default function AdditionalSettingsScreen() {
                   'Session Expired',
                   'For security, please sign out and sign back in, then try again.',
                 );
+              } else if (error?.code === 'account/auth-delete-failed') {
+                // Data is already gone — don't leave the user in an emptied,
+                // still-authenticated app. Sign out and explain the retry path.
+                await signOut().catch(() => {});
+                router.replace('/(auth)/sign-in');
+                Alert.alert(
+                  'Account Data Deleted',
+                  'Your data was deleted and you have been signed out. We could not fully close your account — sign in and tap Delete Account again to finish.',
+                );
               } else {
                 Alert.alert('Error', 'Failed to delete account. Please try again.');
               }

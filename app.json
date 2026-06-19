@@ -80,8 +80,15 @@
           ]
         }
       ],
-      "expo-audio",
-      "@bacons/apple-targets"
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false
+        }
+      ],
+      "@bacons/apple-targets",
+      "expo-asset",
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true,
@@ -96,8 +103,8 @@
             "ios": {
               "appExtensions": [
                 {
-                  "targetName": "MeditationActivity",
-                  "bundleIdentifier": "com.briancarlisle.escapefromhadesirl.MeditationActivity",
+                  "targetName": "MeditationWidget",
+                  "bundleIdentifier": "com.briancarlisle.escapefromhadesirl.MeditationWidget",
                   "entitlements": {}
                 }
               ]

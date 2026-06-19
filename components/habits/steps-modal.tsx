@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   Modal,
   Platform,
   Pressable,
@@ -10,7 +11,7 @@ import {
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { db, doc, setDoc } from '@/lib/firebase/firestore';
+import { persistHabitRecord } from '@/lib/persist-record';
 import { computeStepsLevel, levelForStepsQuad } from '@/lib/steps';
 import {
   getStepsForDay,
@@ -73,11 +74,7 @@ export function StepsModal({
         source: 'auto',
         steps,
       };
-      try {
-        await setDoc(doc(db, 'records', docId), next);
-      } catch (err) {
-        console.error('Failed to persist steps record:', err);
-      }
+      await persistHabitRecord(next, { errorMessage: "Couldn't save your step count. Tap Retry." });
     },
     [habit, goals, date, userId],
   );
@@ -109,34 +106,53 @@ export function StepsModal({
     await fetchAndPersist();
   }, [fetchAndPersist]);
 
-  // On open: check availability → request permission if needed → fetch.
+  // The full check sequence: availability → permission → fetch. Shared by the
+  // open effect and the foreground recheck below.
+  const runCheck = useCallback(async () => {
+    setStatus({ kind: 'checking' });
+    const available = await isStepsHealthAvailable();
+    if (!available) {
+      setStatus({ kind: 'unavailable' });
+      return;
+    }
+    // No iOS API to query existing permission — requestStepsPermission is
+    // idempotent (no prompt if already granted), so just call it.
+    const ok = await requestStepsPermission();
+    if (!ok) {
+      setStatus({ kind: 'needs-permission' });
+      return;
+    }
+    await fetchAndPersist();
+  }, [fetchAndPersist]);
+
+  // Latest status kind, for the foreground listener's closure.
+  const statusRef = useRef<Status['kind']>('idle');
+  useEffect(() => {
+    statusRef.current = status.kind;
+  }, [status.kind]);
+
+  // On open: run the check.
   useEffect(() => {
     if (!visible || !habit) return;
-    let cancelled = false;
-    (async () => {
-      setStatus({ kind: 'checking' });
-      const available = await isStepsHealthAvailable();
-      if (cancelled) return;
-      if (!available) {
-        setStatus({ kind: 'unavailable' });
-        return;
+    void runCheck();
+  }, [visible, habit, runCheck]);
+
+  // Returning from system Settings after granting permission would otherwise
+  // leave the modal stuck on 'needs-permission' until a manual re-tap. Re-run
+  // the check on foreground so a now-granted permission auto-advances.
+  useEffect(() => {
+    if (!visible || !habit) return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      const k = statusRef.current;
+      if (k === 'needs-permission' || k === 'unavailable' || k === 'error') {
+        void runCheck();
       }
-      // We don't have a way on iOS to check if read permission is already
-      // granted — requestStepsPermission is idempotent and harmless to call.
-      // If the user has already granted, no prompt appears; we go straight
-      // to fetching.
-      const ok = await requestStepsPermission();
-      if (cancelled) return;
-      if (!ok) {
-        setStatus({ kind: 'needs-permission' });
-        return;
-      }
-      await fetchAndPersist();
-    })();
+    });
     return () => {
-      cancelled = true;
+      sub.remove();
     };
-  }, [visible, habit, fetchAndPersist]);
+  }, [visible, habit, runCheck]);
 
   if (!habit) return null;
 

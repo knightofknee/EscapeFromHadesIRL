@@ -19,7 +19,7 @@ import type { Note } from '@/types/note';
 const DISMISS_BAR_HEIGHT = 40;
 
 export default function NotesListScreen() {
-  const { notes, isLoading, isOffline, createNote, deleteNote, togglePinNote, loadMore, loadAll, allLoaded, hasLoadedOnce, isLoadingMore } = useNotes();
+  const { notes, isLoading, isOffline, createNote, deleteNote, togglePinNote, loadMore, loadAll, allLoaded, hasLoadedOnce, listenerError, isLoadingMore } = useNotes();
   const { tags, deleteTags } = useTags();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
@@ -60,6 +60,9 @@ export default function NotesListScreen() {
       // leaves notes=[] with loading finished, and sweeping against that
       // would mass-delete every tag.
       if (!hasLoadedOnce) return;
+      // Belt-and-suspenders: if the listener is currently in an error state,
+      // the note set may be stale/empty — never GC tags against it.
+      if (listenerError) return;
       const timer = setTimeout(() => {
         const inUse = new Set<string>();
         for (const n of notes) {
@@ -69,7 +72,7 @@ export default function NotesListScreen() {
         if (orphans.length > 0) deleteTags(orphans);
       }, 500);
       return () => clearTimeout(timer);
-    }, [notes, tags, isLoading, allLoaded, hasLoadedOnce, deleteTags]),
+    }, [notes, tags, isLoading, allLoaded, hasLoadedOnce, listenerError, deleteTags]),
   );
 
   // Drop the active filter if its tag is no longer in use.

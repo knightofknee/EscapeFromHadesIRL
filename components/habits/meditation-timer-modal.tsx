@@ -17,7 +17,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { db, doc, setDoc } from '@/lib/firebase/firestore';
+import { persistHabitRecord } from '@/lib/persist-record';
 import {
   computeMeditationTier,
   formatTimerDuration,
@@ -192,11 +192,9 @@ export function MeditationTimerModal({
         recordedAt: Date.now(),
         sessions: nextSessions,
       };
-      try {
-        await setDoc(doc(db, 'records', docId), next);
-      } catch (err) {
-        console.error('Failed to save meditation session:', err);
-      }
+      await persistHabitRecord(next, {
+        errorMessage: "Couldn't save your meditation session. Tap Retry.",
+      });
     },
     [habit, targetSessions, targetMinutes, idealTotalMinutes, userId],
   );
@@ -216,11 +214,9 @@ export function MeditationTimerModal({
         recordedAt: Date.now(),
         sessions: nextSessions,
       };
-      try {
-        await setDoc(doc(db, 'records', docId), next);
-      } catch (err) {
-        console.error('Failed to remove meditation session:', err);
-      }
+      await persistHabitRecord(next, {
+        errorMessage: "Couldn't update your meditation sessions. Tap Retry.",
+      });
     },
     [habit, sessions, targetSessions, targetMinutes, idealTotalMinutes, userId, date],
   );
@@ -568,11 +564,14 @@ export function MeditationTimerModal({
                 onPress={() => setHelpVisible(true)}
                 hitSlop={10}
                 style={[styles.helpButton, { borderColor: tint }]}
+                accessibilityRole="button"
+                accessibilityLabel="About the timer"
+                accessibilityHint="Explains lock-screen and notification behavior"
               >
                 <ThemedText style={[styles.helpMark, { color: tint }]}>?</ThemedText>
               </Pressable>
             </View>
-            <Pressable onPress={onClose} hitSlop={12}>
+            <Pressable onPress={onClose} hitSlop={12} accessibilityRole="button" accessibilityLabel="Close">
               <ThemedText style={[styles.close, { color: tint }]}>Close</ThemedText>
             </Pressable>
           </View>
@@ -595,6 +594,8 @@ export function MeditationTimerModal({
                   style={[styles.stepper, { borderColor: colors.tileBorder }]}
                   onPress={() => adjustTotalMinutes(-1)}
                   hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Decrease timer minutes"
                 >
                   <ThemedText style={styles.stepperText}>−</ThemedText>
                 </Pressable>
@@ -604,11 +605,14 @@ export function MeditationTimerModal({
                   onChangeText={setTotalMinutesFromInput}
                   keyboardType="number-pad"
                   maxLength={3}
+                  accessibilityLabel="Timer minutes"
                 />
                 <Pressable
                   style={[styles.stepper, { borderColor: colors.tileBorder }]}
                   onPress={() => adjustTotalMinutes(1)}
                   hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Increase timer minutes"
                 >
                   <ThemedText style={styles.stepperText}>+</ThemedText>
                 </Pressable>
@@ -696,7 +700,12 @@ export function MeditationTimerModal({
       {/* Full-screen "time's up" takeover — covers the sheet while the alarm
           rings. Any tap silences it. */}
       {alarming && (
-        <Pressable style={[styles.alarmOverlay, { backgroundColor: tint }]} onPress={stopAlarm}>
+        <Pressable
+          style={[styles.alarmOverlay, { backgroundColor: tint }]}
+          onPress={stopAlarm}
+          accessibilityRole="button"
+          accessibilityLabel="Time's up. Tap to stop the alarm."
+        >
           <ThemedText style={styles.alarmTitle}>Time’s up</ThemedText>
           <ThemedText style={styles.alarmHabit}>{habit.name}</ThemedText>
           <ThemedText style={styles.alarmHint}>Tap anywhere to stop</ThemedText>

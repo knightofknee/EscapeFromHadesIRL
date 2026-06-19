@@ -32,6 +32,7 @@ Notifications.setNotificationHandler({
 });
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { ErrorToast } from '@/components/ui/error-toast';
 import { AuthProvider, useAuth } from '@/contexts/auth-context';
 import { OfflineProvider } from '@/contexts/offline-context';
 import { AppDataProviders } from '@/contexts/app-data-providers';
@@ -144,6 +145,7 @@ export default function RootLayout() {
             <AppDataProviders>
               <ThemeProvider value={effectiveScheme === 'dark' ? DarkTheme : DefaultTheme}>
                 <RootNavigator />
+                <ErrorToast />
                 <StatusBar style={effectiveScheme === 'dark' ? 'light' : 'dark'} />
               </ThemeProvider>
             </AppDataProviders>

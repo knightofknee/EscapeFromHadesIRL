@@ -11,6 +11,7 @@ import {
 import { useAuth } from '@/contexts/auth-context';
 import { useOfflineGuard } from '@/contexts/offline-context';
 import { db, collection, query, where, doc, setDoc, onSnapshot } from '@/lib/firebase/firestore';
+import { emitError } from '@/lib/error-bus';
 import { addDays } from '@/lib/date-utils';
 import type { HabitRecord, TripleValue, QuadValue } from '@/types/habit';
 
@@ -209,6 +210,14 @@ export function RecordsProvider({ children }: { children: ReactNode }) {
       setRecordsMap(next);
       setDoc(doc(db, 'records', docId), record).catch((err) => {
         console.error('Failed to save habit record:', err);
+        // Optimistic update already showed it as recorded; the write failed
+        // (token expiry, quota, mid-request drop), so tell the user and offer a
+        // retry of the same write rather than letting it vanish silently.
+        emitError("Couldn't save that — tap Retry.", () => {
+          setDoc(doc(db, 'records', docId), record).catch((e) =>
+            console.error('Habit record retry failed:', e),
+          );
+        });
       });
     },
     [user, requireOnline, setRecordsMap],

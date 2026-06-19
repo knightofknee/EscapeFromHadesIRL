@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import { useAuth } from '@/contexts/auth-context';
-import { db, doc, getDoc, setDoc, updateDoc } from '@/lib/firebase/firestore';
+import { db, doc, getDoc, updateDoc } from '@/lib/firebase/firestore';
+import { persistHabitRecord } from '@/lib/persist-record';
 import { getTodayString } from '@/lib/date-utils';
 import { computeStepsLevel, unconfirmedStepDays } from '@/lib/steps';
 import { getStepsForDay } from '@/lib/steps-health';
@@ -53,7 +54,9 @@ export function useStepsBackfill() {
         source: 'auto',
         steps,
       };
-      await setDoc(doc(db, 'records', docId), next);
+      // Silent: this runs automatically in the background and self-heals on the
+      // next sync, so a failed write shouldn't pop a toast the user can't act on.
+      await persistHabitRecord(next, { silent: true });
     };
 
     /**

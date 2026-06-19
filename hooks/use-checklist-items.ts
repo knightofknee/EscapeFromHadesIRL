@@ -13,11 +13,13 @@ import {
   migrateNoteChecklistToItems,
 } from '@/lib/firebase/checklist-items';
 import {
+  db,
   setDoc,
   updateDoc,
   deleteDoc,
   deleteField,
   onSnapshot,
+  writeBatch,
 } from '@/lib/firebase/firestore';
 import type {
   ChecklistItem,
@@ -174,11 +176,15 @@ export function useChecklistItems({
       const entries = [...pendingTextRef.current.entries()];
       if (entries.length === 0) return;
       pendingTextRef.current.clear();
+      // One batched write for all pending edits instead of N updateDocs — a
+      // multi-item edit session was firing 3-8 separate writes.
+      const batch = writeBatch(db);
       for (const [id, text] of entries) {
-        updateDoc(itemDocRef(flushNoteId, id), { text }).catch((e) =>
-          console.error('[useChecklistItems] text write failed', e),
-        );
+        batch.update(itemDocRef(flushNoteId, id), { text });
       }
+      batch.commit().catch((e) =>
+        console.error('[useChecklistItems] text batch write failed', e),
+      );
       // Item text edits bump recency, like the old array write did.
       writeNoteState(flushNoteId, itemsRef.current, { touch: true });
     },

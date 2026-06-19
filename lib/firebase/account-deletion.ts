@@ -92,5 +92,24 @@ export async function deleteAccountAndData(user: User): Promise<void> {
   batchCount++;
   await flush();
 
-  await deleteUser(user);
+  // Data is now gone. If closing the auth account fails for any reason OTHER
+  // than needing recent login, the user would be left authenticated with an
+  // emptied account (a GDPR/erasure half-state). Rethrow requires-recent-login
+  // as-is (the caller reauths + retries — re-running the now-idempotent data
+  // sweep is harmless); tag every other failure as `account/auth-delete-failed`
+  // and flag that data was already deleted, so the caller can sign the user out
+  // rather than strand them. (A server-side Cloud Function is the truly atomic
+  // fix; this is the client-only safeguard.)
+  try {
+    await deleteUser(user);
+  } catch (e) {
+    const code = (e as { code?: string })?.code;
+    if (code === 'auth/requires-recent-login') throw e;
+    const err = new Error(
+      'Your data was deleted, but the account sign-in could not be closed.',
+    ) as Error & { code: string; dataDeleted: boolean };
+    err.code = 'account/auth-delete-failed';
+    err.dataDeleted = true;
+    throw err;
+  }
 }

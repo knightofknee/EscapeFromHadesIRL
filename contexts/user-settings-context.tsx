@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -75,35 +76,63 @@ export function UserSettingsProvider({ children }: { children: ReactNode }) {
     );
   }, [user]);
 
+  // Coalesce rapid setting changes into a single merged write. Each setter
+  // updates local state optimistically (immediate UI) and queues its field;
+  // a short debounce flushes one setDoc(merge) for all pending fields — the
+  // three settings used to fire three separate writes to the same doc.
+  const pendingWritesRef = useRef<Record<string, unknown>>({});
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queueSettingWrite = useCallback(
+    (fields: Record<string, unknown>) => {
+      if (!user) return;
+      Object.assign(pendingWritesRef.current, fields);
+      if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = setTimeout(() => {
+        flushTimerRef.current = null;
+        const payload = pendingWritesRef.current;
+        pendingWritesRef.current = {};
+        if (Object.keys(payload).length === 0) return;
+        setDoc(doc(db, 'userSettings', user.uid), payload, { merge: true }).catch((e) =>
+          console.error('[userSettings] write failed', e),
+        );
+      }, 250);
+    },
+    [user],
+  );
+
+  // Clear any pending debounce timer on unmount so it can't fire a
+  // stale-closure write after the provider is gone.
+  useEffect(() => {
+    return () => {
+      if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+    };
+  }, []);
+
   const setSuccessColors = useCallback(
     (next: SuccessColors | null) => {
-      if (!user) return;
-      if (!requireOnline()) return;
-      // Optimistic local update before the round-trip; the listener reconfirms.
-      setSuccessColorsState(next);
-      setDoc(doc(db, 'userSettings', user.uid), { successColors: next }, { merge: true });
+      if (!user || !requireOnline()) return;
+      setSuccessColorsState(next); // optimistic; the listener reconfirms
+      queueSettingWrite({ successColors: next });
     },
-    [user, requireOnline],
+    [user, requireOnline, queueSettingWrite],
   );
 
   const setWinOnlyWeekends = useCallback(
     (value: boolean) => {
-      if (!user) return;
-      if (!requireOnline()) return;
+      if (!user || !requireOnline()) return;
       setWinOnlyWeekendsState(value);
-      setDoc(doc(db, 'userSettings', user.uid), { winOnlyWeekends: value }, { merge: true });
+      queueSettingWrite({ winOnlyWeekends: value });
     },
-    [user, requireOnline],
+    [user, requireOnline, queueSettingWrite],
   );
 
   const setShowAllTileNames = useCallback(
     (value: boolean) => {
-      if (!user) return;
-      if (!requireOnline()) return;
+      if (!user || !requireOnline()) return;
       setShowAllTileNamesState(value);
-      setDoc(doc(db, 'userSettings', user.uid), { showAllTileNames: value }, { merge: true });
+      queueSettingWrite({ showAllTileNames: value });
     },
-    [user, requireOnline],
+    [user, requireOnline, queueSettingWrite],
   );
 
   const value = useMemo(

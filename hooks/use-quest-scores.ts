@@ -102,13 +102,16 @@ const WINDOW_DAYS = 30;
 const WINDOW_DAYS_18MO = 548; // ~18 months
 
 function getWindowDates(days: number): string[] {
+  // Build descending (today → oldest) with O(1) push, then reverse once to get
+  // ascending order. The previous unshift-in-loop was O(n²) (~300k ops for the
+  // 548-day window) and ran on every quest render / records update.
   const dates: string[] = [];
   const d = new Date();
   for (let i = 0; i < days; i++) {
-    dates.unshift(formatDate(d));
+    dates.push(formatDate(d));
     d.setDate(d.getDate() - 1);
   }
-  return dates;
+  return dates.reverse();
 }
 
 export function scoreQuest(

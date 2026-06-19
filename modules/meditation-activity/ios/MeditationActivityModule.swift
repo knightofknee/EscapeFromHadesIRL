@@ -1,5 +1,21 @@
 import ActivityKit
 import ExpoModulesCore
+import Foundation
+
+// The Live Activity contract lives in THIS file (not a separate one) so the pod
+// always compiles the struct alongside the module that uses it — a separate
+// file can be dropped by a stale/incremental pod install. This ContentState
+// DECLARATION (field names + types + Codable/Hashable conformance) MUST stay
+// identical to the widget extension's copy at
+// targets/meditation-activity/MeditationAttributes.swift (the app/module target
+// and the widget target don't share source). Comments/formatting may differ.
+struct MeditationAttributes: ActivityAttributes {
+  struct ContentState: Codable, Hashable {
+    var habitName: String
+    var startDate: Date
+    var endDate: Date
+  }
+}
 
 // App-side bridge to ActivityKit. The widget extension only RENDERS the Live
 // Activity; requesting/ending one must happen in the app process, which is what

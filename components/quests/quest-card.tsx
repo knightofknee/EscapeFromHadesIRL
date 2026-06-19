@@ -20,8 +20,21 @@ export function QuestCard({ quest, questScore, onPress }: Props) {
   const pointsEarned = questScore?.pointsEarned ?? 0;
   const pointsAvailable = questScore?.pointsAvailable ?? questPointValue(quest).total;
 
+  // VoiceOver label — the card is icon/color/bar heavy, so spell out name,
+  // category, enforced level, and progress for screen readers.
+  const level = questScore?.effectiveSuccessLevel ?? quest.successLevel ?? 1;
+  const levelLabel = level === 3 ? 'ideal' : level === 2 ? 'goal' : 'basic';
+  const a11yLabel =
+    `${quest.name}, ${quest.category} quest, ${levelLabel} level. ` +
+    `${quest.targetDaysPerWeek}× per week. ${pointsEarned} of ${pointsAvailable} points earned.`;
+
   return (
-    <Pressable style={styles.card} onPress={onPress}>
+    <Pressable
+      style={styles.card}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={a11yLabel}
+    >
       <View style={styles.header}>
         <View style={[styles.categoryDot, { backgroundColor: categoryColor }]} />
         <ThemedText style={styles.name} numberOfLines={1}>

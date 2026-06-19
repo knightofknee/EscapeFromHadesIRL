@@ -11,12 +11,17 @@
  */
 module.exports = {
   type: 'widget',
-  name: 'MeditationActivity',
+  // MUST NOT be "MeditationActivity": that's the local Expo module's pod/Swift
+  // module name, and a duplicate here makes the app's ExpoModulesProvider
+  // `import MeditationActivity` bind to THIS widget module (no
+  // MeditationActivityModule class) → "cannot find ... in scope". The widget's
+  // module name is internal; ActivityKit matches on the MeditationAttributes
+  // struct name (unchanged), so renaming the target is safe.
+  name: 'MeditationWidget',
   // Leading dot = appended to the app's bundle id →
-  // com.briancarlisle.escapefromhadesirl.MeditationActivity. Without this,
-  // apple-targets derives ".widget" from `type`, which would NOT match the
-  // extension declared in app.json's EAS appExtensions and breaks signing.
-  bundleIdentifier: '.MeditationActivity',
+  // com.briancarlisle.escapefromhadesirl.MeditationWidget. Must match app.json's
+  // EAS appExtensions entry or signing breaks.
+  bundleIdentifier: '.MeditationWidget',
   deploymentTarget: '16.4',
   frameworks: ['SwiftUI', 'WidgetKit', 'ActivityKit'],
 };
