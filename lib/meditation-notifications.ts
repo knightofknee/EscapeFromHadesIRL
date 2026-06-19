@@ -1,4 +1,34 @@
+import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
+
+/**
+ * Bundled alarm sound (see app.json expo-notifications `sounds`). It's a ~12s
+ * clip with three chimes 5s apart, so ONE notification gives a repeating "nag"
+ * without scheduling multiple notifications that would clutter the lock screen.
+ * iOS references the filename directly; Android needs it carried by a channel.
+ */
+const ALARM_SOUND = 'alarm.wav';
+const ANDROID_CHANNEL_ID = 'meditation-alarm';
+
+/**
+ * Android only: ensure the high-importance channel that plays the bell exists.
+ * Idempotent — safe to call before every schedule. No-op on iOS (the sound is
+ * set per-notification there).
+ */
+async function ensureAlarmChannel(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  try {
+    await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
+      name: 'Meditation timer',
+      importance: Notifications.AndroidImportance.MAX,
+      sound: ALARM_SOUND,
+      vibrationPattern: [0, 400, 200, 400],
+      enableVibrate: true,
+    });
+  } catch (e) {
+    console.warn('ensureAlarmChannel failed:', e);
+  }
+}
 
 /**
  * Three buckets the tile-settings pre-prompt cares about:
@@ -57,15 +87,22 @@ export async function scheduleMeditationAlarm(
   habitName: string,
 ): Promise<string | null> {
   try {
+    await ensureAlarmChannel();
     const id = await Notifications.scheduleNotificationAsync({
       content: {
         title: 'Meditation complete',
         body: `Your ${habitName} session is done.`,
-        sound: 'default',
+        sound: ALARM_SOUND,
+        // Time-Sensitive breaks through Focus / Do Not Disturb (free
+        // capability, no Apple approval). It does NOT override the hardware
+        // ring/silent switch — only Apple's Critical Alerts can, which a
+        // meditation app won't be granted.
+        interruptionLevel: 'timeSensitive',
       },
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.DATE,
         date: endTime,
+        channelId: ANDROID_CHANNEL_ID,
       },
     });
     return id;

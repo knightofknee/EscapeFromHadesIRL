@@ -12,6 +12,8 @@ import {
   View,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import { setAudioModeAsync, useAudioPlayer } from 'expo-audio';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -25,6 +27,7 @@ import {
   cancelMeditationAlarm,
   scheduleMeditationAlarm,
 } from '@/lib/meditation-notifications';
+import { startActivity, endActivity } from '@/modules/meditation-activity';
 import {
   clearTimerState,
   computeRemainingSec,
@@ -34,6 +37,11 @@ import {
 } from '@/lib/meditation-timer-storage';
 import { useTodayDate } from '@/hooks/use-today-date';
 import type { Habit, HabitRecord, MeditationSession } from '@/types/habit';
+
+// Bundled chime (also registered as the notification sound in app.json). The
+// asset carries ~1.4s of trailing silence so looping it re-rings every ~2.7s.
+const BELL_SOUND = require('../../assets/bell.wav');
+const KEEP_AWAKE_TAG = 'meditation-timer';
 
 type MeditationTimerModalProps = {
   visible: boolean;
@@ -80,6 +88,7 @@ export function MeditationTimerModal({
 
   const targetSessions = habit?.meditationSessions ?? 1;
   const targetMinutes = habit?.meditationMinutes ?? 5;
+  const idealTotalMinutes = habit?.meditationIdealTotalMinutes;
   const defaultDurationSec = targetMinutes * 60;
 
   // Timer state. `totalSec` = the configured run length (editable when idle).
@@ -99,12 +108,58 @@ export function MeditationTimerModal({
   // Currently-scheduled completion notification id (so we can cancel on
   // pause/reset).
   const notificationIdRef = useRef<string | null>(null);
+  // id of the running lock-screen Live Activity (iOS), managed in lockstep with
+  // notificationIdRef at every start/pause/reset/complete/reconcile site.
+  const activityIdRef = useRef<string | null>(null);
 
   // Sub-modal for "Log Session" — small minutes-input prompt so the user
   // explicitly picks how long the manually-logged session is. Prefilled to
   // whatever the timer is currently set to so the connection is obvious.
   const [logModalVisible, setLogModalVisible] = useState<boolean>(false);
   const [logMinutes, setLogMinutes] = useState<string>('');
+
+  // Completion alarm (in-app, foreground). When a running timer hits 0 with
+  // this screen open we ring the bell on a loop and buzz until the user taps
+  // to dismiss — see the tick effect and the takeover overlay below.
+  const player = useAudioPlayer(BELL_SOUND);
+  const [alarming, setAlarming] = useState<boolean>(false);
+  const [helpVisible, setHelpVisible] = useState<boolean>(false);
+
+  // Ring on silent too — an alarm the ringer switch can mute defeats the point.
+  useEffect(() => {
+    setAudioModeAsync({ playsInSilentMode: true }).catch(() => {});
+  }, []);
+
+  // Keep the screen awake ONLY while a countdown is actively running (or the
+  // alarm is ringing) with this screen open — never while idle or paused.
+  useEffect(() => {
+    if (!(visible && (running || alarming))) return;
+    activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch(() => {});
+    return () => {
+      Promise.resolve(deactivateKeepAwake(KEEP_AWAKE_TAG)).catch(() => {});
+    };
+  }, [visible, running, alarming]);
+
+  // Drive the ringing alarm: loop the bell (its trailing silence makes it
+  // re-ring every ~2.7s) and repeat the vibration until `alarming` clears.
+  useEffect(() => {
+    if (!alarming) return;
+    player.loop = true;
+    player.seekTo(0).catch(() => {});
+    player.play();
+    Vibration.vibrate([0, 600, 400, 600], true);
+    return () => {
+      player.pause();
+      Vibration.cancel();
+    };
+  }, [alarming, player]);
+
+  // Closing the modal silences any active alarm.
+  useEffect(() => {
+    if (!visible) setAlarming(false);
+  }, [visible]);
+
+  const stopAlarm = useCallback(() => setAlarming(false), []);
 
   const sessions = record?.sessions ?? [];
   const qualifying = getMeditationQualifyingCount(sessions, targetMinutes);
@@ -123,7 +178,7 @@ export function MeditationTimerModal({
       if (!habit) return;
       const existing = recordRef.current?.sessions ?? [];
       const nextSessions = [...existing, newSession];
-      const value = computeMeditationTier(nextSessions, targetSessions, targetMinutes);
+      const value = computeMeditationTier(nextSessions, targetSessions, targetMinutes, idealTotalMinutes);
       const docId = `${habit.id}_${sessionDate}`;
       const next: HabitRecord = {
         id: docId,
@@ -140,14 +195,14 @@ export function MeditationTimerModal({
         console.error('Failed to save meditation session:', err);
       }
     },
-    [habit, targetSessions, targetMinutes, userId],
+    [habit, targetSessions, targetMinutes, idealTotalMinutes, userId],
   );
 
   const removeSession = useCallback(
     async (index: number) => {
       if (!habit) return;
       const nextSessions = sessions.filter((_, i) => i !== index);
-      const value = computeMeditationTier(nextSessions, targetSessions, targetMinutes);
+      const value = computeMeditationTier(nextSessions, targetSessions, targetMinutes, idealTotalMinutes);
       const docId = `${habit.id}_${date}`;
       const next: HabitRecord = {
         id: docId,
@@ -164,7 +219,7 @@ export function MeditationTimerModal({
         console.error('Failed to remove meditation session:', err);
       }
     },
-    [habit, sessions, targetSessions, targetMinutes, userId, date],
+    [habit, sessions, targetSessions, targetMinutes, idealTotalMinutes, userId, date],
   );
 
   // Re-sync UI state from whatever's in AsyncStorage. Handles: fresh state,
@@ -181,6 +236,7 @@ export function MeditationTimerModal({
       setRunning(false);
       startRef.current = null;
       notificationIdRef.current = null;
+      activityIdRef.current = null;
       activeDateRef.current = date;
     };
 
@@ -207,6 +263,7 @@ export function MeditationTimerModal({
         }
       }
       await cancelMeditationAlarm(persisted.notificationId);
+      await endActivity(persisted.activityId);
       await clearTimerState(habit.id);
       resetFresh();
       return;
@@ -214,6 +271,9 @@ export function MeditationTimerModal({
 
     // Same-day persisted state.
     notificationIdRef.current = persisted.notificationId;
+    // Restore the running Live Activity's id so we can end it later. If still
+    // running, the activity is alive and self-ticking — nothing to recreate.
+    activityIdRef.current = persisted.activityId ?? null;
     activeDateRef.current = persisted.date;
     setTotalSec(persisted.totalSec);
 
@@ -233,11 +293,13 @@ export function MeditationTimerModal({
           );
         }
         await cancelMeditationAlarm(persisted.notificationId);
+        await endActivity(persisted.activityId);
         await clearTimerState(habit.id);
         setRemainingSec(persisted.totalSec);
         setRunning(false);
         startRef.current = null;
         notificationIdRef.current = null;
+        activityIdRef.current = null;
         activeDateRef.current = date;
       } else {
         // Still running — restore the tick anchor.
@@ -294,10 +356,13 @@ export function MeditationTimerModal({
         if (Platform.OS === 'ios' && !Platform.isPad) {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         }
-        Vibration.vibrate([0, 400, 200, 400]);
+        // Ring the in-app alarm (bell + repeating buzz + full-screen takeover)
+        // until the user taps to dismiss.
+        setAlarming(true);
         const sessionDate = activeDateRef.current;
         const sessionTotal = totalSec;
         const fireId = notificationIdRef.current;
+        const activeId = activityIdRef.current;
         void (async () => {
           await persistSession(
             { durationSec: sessionTotal, source: 'timer', loggedAt: Date.now() },
@@ -307,8 +372,12 @@ export function MeditationTimerModal({
           // no-op if it already did. Clearing persisted state prevents
           // double-logging on next open.
           await cancelMeditationAlarm(fireId);
+          // End the lock-screen Live Activity (it would otherwise freeze at
+          // 00:00). The in-app alarm + notification handle the "done" signal.
+          await endActivity(activeId);
           if (habit) await clearTimerState(habit.id);
           notificationIdRef.current = null;
+          activityIdRef.current = null;
         })();
         // Reset display ready for another run.
         setRemainingSec(totalSec);
@@ -335,6 +404,10 @@ export function MeditationTimerModal({
     const newId = await scheduleMeditationAlarm(endTime, habit.name);
     notificationIdRef.current = newId;
 
+    // Start the lock-screen / Dynamic Island Live Activity (best-effort: null
+    // if Live Activities are disabled — the notification still rings).
+    activityIdRef.current = await startActivity(habit.name, now, endTime.getTime());
+
     await saveTimerState({
       habitId: habit.id,
       date,
@@ -342,6 +415,7 @@ export function MeditationTimerModal({
       startedAt: now,
       remainingAtStart: remainAtStart,
       notificationId: newId,
+      activityId: activityIdRef.current,
     });
   }
 
@@ -357,6 +431,11 @@ export function MeditationTimerModal({
     await cancelMeditationAlarm(notificationIdRef.current);
     notificationIdRef.current = null;
 
+    // End the Live Activity on pause; Resume starts a fresh one (mirrors the
+    // notification's cancel-and-reschedule behavior).
+    await endActivity(activityIdRef.current);
+    activityIdRef.current = null;
+
     await saveTimerState({
       habitId: habit.id,
       date,
@@ -364,6 +443,7 @@ export function MeditationTimerModal({
       startedAt: null,
       remainingAtStart: currentRemaining,
       notificationId: null,
+      activityId: null,
     });
   }
 
@@ -377,6 +457,8 @@ export function MeditationTimerModal({
     setRemainingSec(totalSec);
     await cancelMeditationAlarm(notificationIdRef.current);
     notificationIdRef.current = null;
+    await endActivity(activityIdRef.current);
+    activityIdRef.current = null;
     await clearTimerState(habit.id);
   }
 
@@ -466,6 +548,17 @@ export function MeditationTimerModal({
             <ThemedText type="defaultSemiBold" style={styles.title}>
               {habit.name}
             </ThemedText>
+            {/* Centered help button — explains the keep-awake vs notification
+                behavior when the timer ends. */}
+            <View style={styles.helpWrap} pointerEvents="box-none">
+              <Pressable
+                onPress={() => setHelpVisible(true)}
+                hitSlop={10}
+                style={[styles.helpButton, { borderColor: tint }]}
+              >
+                <ThemedText style={[styles.helpMark, { color: tint }]}>?</ThemedText>
+              </Pressable>
+            </View>
             <Pressable onPress={onClose} hitSlop={12}>
               <ThemedText style={[styles.close, { color: tint }]}>Close</ThemedText>
             </Pressable>
@@ -587,6 +680,48 @@ export function MeditationTimerModal({
         </Pressable>
       </Pressable>
 
+      {/* Full-screen "time's up" takeover — covers the sheet while the alarm
+          rings. Any tap silences it. */}
+      {alarming && (
+        <Pressable style={[styles.alarmOverlay, { backgroundColor: tint }]} onPress={stopAlarm}>
+          <ThemedText style={styles.alarmTitle}>Time’s up</ThemedText>
+          <ThemedText style={styles.alarmHabit}>{habit.name}</ThemedText>
+          <ThemedText style={styles.alarmHint}>Tap anywhere to stop</ThemedText>
+        </Pressable>
+      )}
+
+      {/* Help sub-modal — keep-awake vs notification behavior. */}
+      <Modal
+        visible={helpVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setHelpVisible(false)}
+      >
+        <Pressable style={styles.overlay} onPress={() => setHelpVisible(false)}>
+          <Pressable
+            style={[styles.logSheet, { backgroundColor: colors.tileBackground }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <ThemedText type="defaultSemiBold" style={styles.logTitle}>
+              About the timer
+            </ThemedText>
+            <ThemedText style={styles.helpBody}>
+              While a timer is running with this screen open, your device stays awake so it
+              can ring a bell when the time’s up — tap the screen to silence it.
+              {'\n\n'}
+              If you leave this screen or lock your phone, the timer keeps running, but we
+              can only alert you with a local notification (a single chime) when it ends.
+            </ThemedText>
+            <Pressable
+              style={[styles.primary, { backgroundColor: tint, alignSelf: 'stretch' }]}
+              onPress={() => setHelpVisible(false)}
+            >
+              <ThemedText style={styles.primaryText}>Got it</ThemedText>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* Log Session sub-modal — small minutes-input prompt. Number + the
           word "minutes" only, with a Log Session button to make the
           connection between the prompt and the action explicit. */}
@@ -665,6 +800,63 @@ const styles = StyleSheet.create({
   close: {
     fontSize: 15,
     fontWeight: '600',
+  },
+  helpWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  helpButton: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  helpMark: {
+    fontSize: 15,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+  helpBody: {
+    fontSize: 14,
+    lineHeight: 20,
+    opacity: 0.85,
+  },
+  alarmOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    gap: 12,
+    zIndex: 10,
+  },
+  alarmTitle: {
+    fontSize: 40,
+    fontWeight: '800',
+    color: '#fff',
+    textAlign: 'center',
+  },
+  alarmHabit: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#fff',
+    textAlign: 'center',
+  },
+  alarmHint: {
+    fontSize: 15,
+    color: '#fff',
+    opacity: 0.85,
+    marginTop: 8,
   },
   subdued: {
     fontSize: 12,

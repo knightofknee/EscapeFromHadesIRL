@@ -41,6 +41,7 @@ const AUTO_MODES = RECORDING_MODES.filter((m) => m.auto);
 
 const DEFAULT_MEDITATION_SESSIONS = 1;
 const DEFAULT_MEDITATION_MINUTES = 5;
+const DEFAULT_MEDITATION_IDEAL_TOTAL_MINUTES = 30;
 
 export default function TileSettingsModal() {
   'use no memo';
@@ -73,10 +74,24 @@ export default function TileSettingsModal() {
   const [meditationMinutes, setMeditationMinutes] = useState<number>(
     existingHabit?.meditationMinutes ?? DEFAULT_MEDITATION_MINUTES,
   );
+  const [meditationIdealTotalMinutes, setMeditationIdealTotalMinutes] = useState<number>(
+    existingHabit?.meditationIdealTotalMinutes ?? DEFAULT_MEDITATION_IDEAL_TOTAL_MINUTES,
+  );
   const [showName, setShowName] = useState<boolean>(existingHabit?.showName ?? false);
   // Global "show name on all tiles" — one on/off for the whole grid, surfaced
-  // in every tile's settings. Writes immediately (not part of Save).
-  const { showAllTileNames, setShowAllTileNames } = useUserSettingsContext();
+  // in every tile's settings. Staged like every other field: the toggle edits
+  // local state, Save commits it, Cancel discards it. It must NOT write through
+  // on toggle (it used to) — that left Save unable to see it as a change and
+  // Cancel unable to undo it.
+  const { showAllTileNames: savedShowAllNames, setShowAllTileNames } = useUserSettingsContext();
+  const [showAllNames, setShowAllNames] = useState<boolean>(savedShowAllNames);
+  const showAllNamesTouched = useRef(false);
+  // Until the user actually flips the switch, follow the saved value: the
+  // app-wide settings doc can resolve a frame after this screen mounts, and we
+  // must not snapshot a stale `false` and write it back on Save.
+  useEffect(() => {
+    if (!showAllNamesTouched.current) setShowAllNames(savedShowAllNames);
+  }, [savedShowAllNames]);
   const [tileSize, setTileSize] = useState<number>(existingHabit?.tileSize ?? 1);
 
   // Compute current display order for position control
@@ -182,6 +197,9 @@ export default function TileSettingsModal() {
       setStepGoals(existingHabit.stepGoals ?? []);
       setMeditationSessions(existingHabit.meditationSessions ?? DEFAULT_MEDITATION_SESSIONS);
       setMeditationMinutes(existingHabit.meditationMinutes ?? DEFAULT_MEDITATION_MINUTES);
+      setMeditationIdealTotalMinutes(
+        existingHabit.meditationIdealTotalMinutes ?? DEFAULT_MEDITATION_IDEAL_TOTAL_MINUTES,
+      );
       setShowName(existingHabit.showName ?? false);
       setTileSize(existingHabit.tileSize);
       setColor(existingHabit.color);
@@ -215,20 +233,22 @@ export default function TileSettingsModal() {
 
   // Any unsaved edit? Each field compares against the same source its state
   // initializes (and re-syncs) from, so late-arriving data — the habit doc,
-  // the counter record, the position index — never reads as dirty. Drives
-  // the pinned Save/Cancel in the nav header below. (The global
-  // "show name on all tiles" switch is excluded: it saves immediately.)
+  // the counter record, the position index, the app-wide settings doc — never
+  // reads as dirty. Drives the pinned Save/Cancel in the nav header below.
   const isDirty =
     name !== (existingHabit?.name ?? params.prefillName ?? '') ||
     abbreviation !== (existingHabit?.abbreviation ?? '') ||
     icon !== (existingHabit?.icon ?? '') ||
     recordingMode !== (existingHabit?.recordingMode ?? 'boolean') ||
     showName !== (existingHabit?.showName ?? false) ||
+    showAllNames !== savedShowAllNames ||
     tileSize !== (existingHabit?.tileSize ?? 1) ||
     color !== (existingHabit?.color ?? DEFAULT_TILE_COLOR) ||
     glyph !== existingHabit?.glyph ||
     meditationSessions !== (existingHabit?.meditationSessions ?? DEFAULT_MEDITATION_SESSIONS) ||
     meditationMinutes !== (existingHabit?.meditationMinutes ?? DEFAULT_MEDITATION_MINUTES) ||
+    meditationIdealTotalMinutes !==
+      (existingHabit?.meditationIdealTotalMinutes ?? DEFAULT_MEDITATION_IDEAL_TOTAL_MINUTES) ||
     JSON.stringify(stepGoals) !== JSON.stringify(existingHabit?.stepGoals ?? []) ||
     (counterInitialized && counterValue !== String(currentCounterValue)) ||
     (positionInitialized && existingHabit != null && position !== currentIndex + 1);
@@ -276,6 +296,15 @@ export default function TileSettingsModal() {
     const isMeditation = recordingMode === 'meditation';
     const meditationSessionsToSave = isMeditation ? Math.max(1, Math.round(meditationSessions)) : undefined;
     const meditationMinutesToSave = isMeditation ? Math.max(1, Math.round(meditationMinutes)) : undefined;
+    const meditationIdealTotalMinutesToSave = isMeditation
+      ? Math.max(1, Math.round(meditationIdealTotalMinutes))
+      : undefined;
+
+    // Commit the staged global "show name on all tiles" toggle (app-wide, not
+    // part of the habit doc) — deferred to Save so Cancel can discard it.
+    if (showAllNames !== savedShowAllNames) {
+      setShowAllTileNames(showAllNames);
+    }
 
     if (isCreating) {
       // Find next available position
@@ -292,6 +321,7 @@ export default function TileSettingsModal() {
           : {}),
         meditationSessions: meditationSessionsToSave,
         meditationMinutes: meditationMinutesToSave,
+        meditationIdealTotalMinutes: meditationIdealTotalMinutesToSave,
         showName,
         tileSize,
         position: { row: maxRow + 1, col: 0 },
@@ -313,6 +343,7 @@ export default function TileSettingsModal() {
         ...stepsPointerUpdate,
         meditationSessions: meditationSessionsToSave,
         meditationMinutes: meditationMinutesToSave,
+        meditationIdealTotalMinutes: meditationIdealTotalMinutesToSave,
         showName,
         tileSize,
         color,
@@ -427,27 +458,27 @@ export default function TileSettingsModal() {
             out, shows the effective ON state, and can't be toggled. The
             stored per-tile value is untouched, so turning the global off
             restores each tile's own setting. */}
-        <View style={[styles.toggleRow, showAllTileNames && { opacity: 0.4 }]}>
+        <View style={[styles.toggleRow, showAllNames && { opacity: 0.4 }]}>
           <View style={{ flex: 1 }}>
             <ThemedText style={{ fontSize: 14, fontWeight: '600' }}>Show name on tile</ThemedText>
             <ThemedText style={{ fontSize: 12, opacity: 0.6 }}>
-              {showAllTileNames
+              {showAllNames
                 ? 'On for every tile — controlled by the switch below.'
                 : 'Adds the name as a small label at the bottom of the tile.'}
             </ThemedText>
           </View>
           <Switch
-            value={showAllTileNames ? true : showName}
+            value={showAllNames ? true : showName}
             onValueChange={setShowName}
-            disabled={showAllTileNames}
+            disabled={showAllNames}
             trackColor={{ false: colors.tileBorder, true: colors.tint }}
             thumbColor="#fff"
           />
         </View>
 
         {/* Show name on ALL tiles — one global setting for the whole grid,
-            shown in every tile's settings for convenience. Applies
-            immediately (not part of this tile's Save). */}
+            shown in every tile's settings for convenience. Staged: it commits
+            on Save and is discarded on Cancel, like every other field. */}
         <View style={styles.toggleRow}>
           <View style={{ flex: 1 }}>
             <ThemedText style={{ fontSize: 14, fontWeight: '600' }}>Show name on all tiles</ThemedText>
@@ -456,8 +487,11 @@ export default function TileSettingsModal() {
             </ThemedText>
           </View>
           <Switch
-            value={showAllTileNames}
-            onValueChange={setShowAllTileNames}
+            value={showAllNames}
+            onValueChange={(v) => {
+              showAllNamesTouched.current = true;
+              setShowAllNames(v);
+            }}
             trackColor={{ false: colors.tileBorder, true: colors.tint }}
             thumbColor="#fff"
           />
@@ -711,10 +745,40 @@ export default function TileSettingsModal() {
               </Pressable>
             </View>
 
+            <ThemedText type="defaultSemiBold" style={styles.label}>
+              Ideal total minutes
+            </ThemedText>
+            <View style={styles.sizeRow}>
+              <Pressable
+                style={[styles.stepperButton, { borderColor: colors.tileBorder }]}
+                onPress={() => setMeditationIdealTotalMinutes((n) => Math.max(1, n - 5))}
+              >
+                <ThemedText style={styles.stepperText}>−</ThemedText>
+              </Pressable>
+              <TextInput
+                style={[styles.sizeInput, { color: colors.text, borderColor: colors.tileBorder }]}
+                value={String(meditationIdealTotalMinutes)}
+                onChangeText={(t) => {
+                  const n = parseInt(t.replace(/[^0-9]/g, ''), 10);
+                  if (!isNaN(n)) setMeditationIdealTotalMinutes(Math.max(1, Math.min(600, n)));
+                  else if (t === '') setMeditationIdealTotalMinutes(1);
+                }}
+                keyboardType="number-pad"
+                maxLength={3}
+              />
+              <Pressable
+                style={[styles.stepperButton, { borderColor: colors.tileBorder }]}
+                onPress={() => setMeditationIdealTotalMinutes((n) => Math.min(600, n + 5))}
+              >
+                <ThemedText style={styles.stepperText}>+</ThemedText>
+              </Pressable>
+            </View>
+
             <ThemedText style={styles.hint}>
               Any session counts as a first-level win. Hitting your target sessions
-              of at least your set minutes each lights up the circle (goal). Two or
-              more sessions of 15+ minutes lights up the star (ideal).
+              of at least your set minutes each lights up the circle (goal).
+              Meditating {meditationIdealTotalMinutes} total minutes in a day lights
+              up the star (ideal).
             </ThemedText>
           </>
         )}

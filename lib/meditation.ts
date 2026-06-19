@@ -14,23 +14,33 @@ const IDEAL_DURATION_SEC = IDEAL_SESSION_MIN_MINUTES * 60;
  * - 0 sessions → `'no'`
  * - At least one session of any length → `'yes'`
  * - At least `targetSessions` sessions of `>= targetMinutes` each → `'goal'`
- * - At least `IDEAL_SESSION_MIN_COUNT` sessions of `>= IDEAL_SESSION_MIN_MINUTES` each → `'ideal'`
+ * - `'ideal'` (star):
+ *     • if `idealTotalMinutes` is set → the day's TOTAL minutes (every session
+ *       summed) reach that threshold;
+ *     • otherwise (legacy habits with no configured total) → the gold-standard
+ *       fallback of `IDEAL_SESSION_MIN_COUNT` sessions of
+ *       `>= IDEAL_SESSION_MIN_MINUTES` each.
  *
- * Ideal is an INDEPENDENT rule (not "goal plus more"): a user with a 1×20-min
- * goal who does 2×15-min sessions hits ideal even though their configured
- * goal wasn't met. That's intentional — ideal is the universal gold-standard
- * meditation routine, not a multiple of the user's own target.
+ * Ideal is an INDEPENDENT rule (not "goal plus more"): a user can hit ideal
+ * even if their per-session `goal` wasn't met. That's intentional — ideal is
+ * the gold-standard day, not a multiple of the user's own target.
  */
 export function computeMeditationTier(
   sessions: MeditationSession[] | undefined,
   targetSessions: number,
   targetMinutes: number,
+  idealTotalMinutes?: number,
 ): QuadValue {
   if (!sessions || sessions.length === 0) return 'no';
 
   // Ideal first — overrides goal if both happen to be met (or only ideal).
-  const longSessions = sessions.filter((s) => s.durationSec >= IDEAL_DURATION_SEC).length;
-  if (longSessions >= IDEAL_SESSION_MIN_COUNT) return 'ideal';
+  if (idealTotalMinutes && idealTotalMinutes > 0) {
+    const totalMinutes = sessions.reduce((sum, s) => sum + s.durationSec, 0) / 60;
+    if (totalMinutes >= idealTotalMinutes) return 'ideal';
+  } else {
+    const longSessions = sessions.filter((s) => s.durationSec >= IDEAL_DURATION_SEC).length;
+    if (longSessions >= IDEAL_SESSION_MIN_COUNT) return 'ideal';
+  }
 
   const targetDurationSec = targetMinutes * 60;
   const qualifying = sessions.filter((s) => s.durationSec >= targetDurationSec).length;

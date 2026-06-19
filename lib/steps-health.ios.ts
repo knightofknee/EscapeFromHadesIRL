@@ -1,6 +1,6 @@
 import {
   isHealthDataAvailableAsync,
-  queryStatisticsForQuantity,
+  queryStatisticsCollectionForQuantity,
   requestAuthorization,
 } from '@kingstinct/react-native-healthkit';
 
@@ -31,20 +31,44 @@ export async function requestStepsPermission(): Promise<boolean> {
 }
 
 export async function getStepsForDay(dateStr: string): Promise<number | null> {
-  // Local-midnight day bounds (duplicated in the .android file — a shared
-  // helper can't live in steps-health.ts, which platform resolution shadows).
+  // The day is [local midnight, next local midnight). Anchoring a 1-day
+  // interval at this day's midnight makes the bucket boundaries line up with
+  // the local day.
   const [y, m, d] = dateStr.split('-').map(Number);
-  const startDate = new Date(y, m - 1, d, 0, 0, 0, 0);
-  const endDate = new Date(y, m - 1, d, 23, 59, 59, 999);
+  const dayStart = new Date(y, m - 1, d, 0, 0, 0, 0);
+  const nextDayStart = new Date(y, m - 1, d + 1, 0, 0, 0, 0);
 
   try {
-    // Must be a statistics query: iPhone and Apple Watch write overlapping
-    // step samples, and HealthKit de-duplicates them only in statistics.
-    // Summing raw queryQuantitySamples double-counts watch wearers.
-    const stats = await queryStatisticsForQuantity(HK_STEPS_ID, ['cumulativeSum'], {
-      filter: { date: { startDate, endDate } },
+    // Take the SAME number Apple Health shows for the day — no custom math.
+    //
+    // This must be a statistics COLLECTION query (HKStatisticsCollectionQuery),
+    // not a plain statistics query, for two reasons that both inflate the count
+    // otherwise:
+    //   1. De-dup: iPhone and Apple Watch write overlapping step samples;
+    //      statistics collapse them (raw queryQuantitySamples double-counts).
+    //   2. Boundary attribution: a sample that straddles midnight (a watch
+    //      "merge"/workout sample, or a walk across 12:00am) must contribute
+    //      only its in-day slice. A plain statistics query over a non-strict
+    //      day predicate adds the WHOLE straddling sample to the day, so a day
+    //      reads high by that sample's out-of-day portion — and stays high on
+    //      every re-read. A collection query anchored at local midnight with a
+    //      1-day interval apportions the sample by time overlap, exactly the
+    //      way the Health app attributes steps to a day.
+    const buckets = await queryStatisticsCollectionForQuantity(
+      HK_STEPS_ID,
+      ['cumulativeSum'],
+      dayStart, // anchor — aligns interval boundaries to local midnight
+      { day: 1 },
+      { filter: { date: { startDate: dayStart, endDate: nextDayStart } } },
+    );
+    const startMs = dayStart.getTime();
+    const endMs = nextDayStart.getTime();
+    const bucket = buckets.find((b) => {
+      if (b.startDate == null) return false;
+      const t = new Date(b.startDate).getTime();
+      return t >= startMs && t < endMs;
     });
-    return Math.round(stats.sumQuantity?.quantity ?? 0);
+    return Math.round(bucket?.sumQuantity?.quantity ?? 0);
   } catch (e) {
     console.error('getStepsForDay iOS failed:', e);
     return null;

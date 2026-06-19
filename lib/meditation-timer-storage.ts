@@ -31,6 +31,9 @@ export type PersistedTimerState = {
   remainingAtStart: number;
   /** id of the scheduled completion notification, if any. */
   notificationId: string | null;
+  /** id of the running Live Activity, if any (iOS only). Lets a relaunch
+   * reconcile/end the lock-screen activity it can no longer reach by ref. */
+  activityId?: string | null;
 };
 
 const KEY_PREFIX = 'meditation:timer:v1:';

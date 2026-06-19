@@ -66,10 +66,16 @@ export type Habit = {
   /**
    * For 'meditation' mode: target minutes per session (default 5). A session
    * shorter than this duration still earns the "yes" tier but does NOT count
-   * toward the goal tier. The "ideal" tier is independent — 2+ sessions of
-   * 15+ minutes each.
+   * toward the goal tier.
    */
   meditationMinutes?: number;
+  /**
+   * For 'meditation' mode: total minutes meditated in a day to reach the
+   * "ideal" tier (star). When set, the day is ideal once the summed duration
+   * of all sessions reaches this many minutes. When unset (legacy habits), the
+   * ideal tier falls back to "2+ sessions of 15+ minutes each".
+   */
+  meditationIdealTotalMinutes?: number;
   /**
    * When true, the habit's name renders at the bottom of the tile (below any
    * counter/value/step subtitle, above any goal/double bar). Defaults to

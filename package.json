@@ -9,12 +9,14 @@
     "lint": "expo lint"
   },
   "dependencies": {
+    "@bacons/apple-targets": "^4.0.7",
     "@expo/vector-icons": "^15.0.3",
     "@kingstinct/react-native-healthkit": "^14.0.1",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@shopify/react-native-skia": "2.6.2",
     "expo": "^56.0.0",
     "expo-apple-authentication": "~56.0.4",
+    "expo-audio": "~56.0.12",
     "expo-auth-session": "~56.0.14",
     "expo-build-properties": "~56.0.18",
     "expo-constants": "~56.0.18",
@@ -22,6 +24,7 @@
     "expo-file-system": "~56.0.8",
     "expo-font": "~56.0.6",
     "expo-haptics": "~56.0.3",
+    "expo-keep-awake": "~56.0.3",
     "expo-linear-gradient": "~56.0.4",
     "expo-linking": "~56.0.14",
     "expo-notifications": "~56.0.17",
