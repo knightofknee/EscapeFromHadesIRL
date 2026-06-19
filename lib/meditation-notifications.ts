@@ -93,6 +93,9 @@ export async function scheduleMeditationAlarm(
         title: 'Meditation complete',
         body: `Your ${habitName} session is done.`,
         sound: ALARM_SOUND,
+        // Tag so the foreground handler can mute it — the in-app looping bell
+        // already covers a foregrounded completion; without this both play.
+        data: { kind: 'meditation-alarm' },
         // Time-Sensitive breaks through Focus / Do Not Disturb (free
         // capability, no Apple approval). It does NOT override the hardware
         // ring/silent switch — only Apple's Critical Alerts can, which a

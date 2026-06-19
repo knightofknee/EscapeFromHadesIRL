@@ -15,12 +15,20 @@ import * as Notifications from 'expo-notifications';
 // when the app is in the foreground. Without this, iOS silently swallows
 // notifications that fire while the app is open.
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
+  handleNotification: async (notification) => {
+    // The meditation completion alarm rings in-app (looping bell + takeover)
+    // when foregrounded, so mute its notification sound here to avoid playing
+    // both at once. The banner still shows. This handler only runs in the
+    // foreground; backgrounded/locked delivery keeps the alarm sound.
+    const isMeditationAlarm =
+      notification.request.content.data?.kind === 'meditation-alarm';
+    return {
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: !isMeditationAlarm,
+      shouldSetBadge: false,
+    };
+  },
 });
 
 import { useColorScheme } from '@/hooks/use-color-scheme';

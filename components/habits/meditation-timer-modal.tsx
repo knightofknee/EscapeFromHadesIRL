@@ -111,6 +111,9 @@ export function MeditationTimerModal({
   // id of the running lock-screen Live Activity (iOS), managed in lockstep with
   // notificationIdRef at every start/pause/reset/complete/reconcile site.
   const activityIdRef = useRef<string | null>(null);
+  // Synchronous re-entrancy guard: setRunning is async, so a fast double-tap on
+  // Start could fire handleStart twice and leak a second Live Activity/alarm.
+  const startingRef = useRef(false);
 
   // Sub-modal for "Log Session" — small minutes-input prompt so the user
   // explicitly picks how long the manually-logged session is. Prefilled to
@@ -234,6 +237,7 @@ export function MeditationTimerModal({
       setTotalSec(defaultDurationSec);
       setRemainingSec(defaultDurationSec);
       setRunning(false);
+      setAlarming(false);
       startRef.current = null;
       notificationIdRef.current = null;
       activityIdRef.current = null;
@@ -390,33 +394,42 @@ export function MeditationTimerModal({
 
   async function handleStart() {
     if (!habit) return;
-    if (Platform.OS === 'ios' && !Platform.isPad) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    // Block a fast double-tap: setRunning is async, so without this a second
+    // tap before the Start button re-renders away would start a second timer,
+    // leaking a duplicate Live Activity + notification.
+    if (startingRef.current || running) return;
+    startingRef.current = true;
+    try {
+      if (Platform.OS === 'ios' && !Platform.isPad) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      }
+      const now = Date.now();
+      const remainAtStart = remainingSec;
+      startRef.current = { at: now, remainingAtStart: remainAtStart };
+      activeDateRef.current = date;
+      setRunning(true);
+
+      // Schedule completion alarm (best-effort; null if perms denied).
+      const endTime = new Date(now + remainAtStart * 1000);
+      const newId = await scheduleMeditationAlarm(endTime, habit.name);
+      notificationIdRef.current = newId;
+
+      // Start the lock-screen / Dynamic Island Live Activity (best-effort: null
+      // if Live Activities are disabled — the notification still rings).
+      activityIdRef.current = await startActivity(habit.name, now, endTime.getTime());
+
+      await saveTimerState({
+        habitId: habit.id,
+        date,
+        totalSec,
+        startedAt: now,
+        remainingAtStart: remainAtStart,
+        notificationId: newId,
+        activityId: activityIdRef.current,
+      });
+    } finally {
+      startingRef.current = false;
     }
-    const now = Date.now();
-    const remainAtStart = remainingSec;
-    startRef.current = { at: now, remainingAtStart: remainAtStart };
-    activeDateRef.current = date;
-    setRunning(true);
-
-    // Schedule completion alarm (best-effort; null if perms denied).
-    const endTime = new Date(now + remainAtStart * 1000);
-    const newId = await scheduleMeditationAlarm(endTime, habit.name);
-    notificationIdRef.current = newId;
-
-    // Start the lock-screen / Dynamic Island Live Activity (best-effort: null
-    // if Live Activities are disabled — the notification still rings).
-    activityIdRef.current = await startActivity(habit.name, now, endTime.getTime());
-
-    await saveTimerState({
-      habitId: habit.id,
-      date,
-      totalSec,
-      startedAt: now,
-      remainingAtStart: remainAtStart,
-      notificationId: newId,
-      activityId: activityIdRef.current,
-    });
   }
 
   async function handlePause() {
@@ -710,7 +723,7 @@ export function MeditationTimerModal({
               can ring a bell when the time’s up — tap the screen to silence it.
               {'\n\n'}
               If you leave this screen or lock your phone, the timer keeps running, but we
-              can only alert you with a local notification (a single chime) when it ends.
+              can only alert you with a local notification (a short repeating chime) when it ends.
             </ThemedText>
             <Pressable
               style={[styles.primary, { backgroundColor: tint, alignSelf: 'stretch' }]}

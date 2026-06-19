@@ -12,6 +12,11 @@
 module.exports = {
   type: 'widget',
   name: 'MeditationActivity',
+  // Leading dot = appended to the app's bundle id →
+  // com.briancarlisle.escapefromhadesirl.MeditationActivity. Without this,
+  // apple-targets derives ".widget" from `type`, which would NOT match the
+  // extension declared in app.json's EAS appExtensions and breaks signing.
+  bundleIdentifier: '.MeditationActivity',
   deploymentTarget: '16.4',
   frameworks: ['SwiftUI', 'WidgetKit', 'ActivityKit'],
 };

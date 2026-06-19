@@ -7,8 +7,10 @@ import Foundation
 // IMPORTANT: this struct is duplicated at
 // modules/meditation-activity/ios/MeditationAttributes.swift because a widget
 // extension and the app/module are separate compile targets with no shared
-// source. The two copies MUST stay byte-for-byte identical, or Activity.request
-// from the app won't match the widget's expected type.
+// source. The ContentState DECLARATION (field names + types + Codable/Hashable
+// conformance) MUST stay identical across both copies, or Activity.request from
+// the app won't match the widget's expected type. Comments/formatting may
+// differ — only the declaration matters.
 struct MeditationAttributes: ActivityAttributes {
   struct ContentState: Codable, Hashable {
     var habitName: String

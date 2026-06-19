@@ -77,6 +77,11 @@ export default function TileSettingsModal() {
   const [meditationIdealTotalMinutes, setMeditationIdealTotalMinutes] = useState<number>(
     existingHabit?.meditationIdealTotalMinutes ?? DEFAULT_MEDITATION_IDEAL_TOTAL_MINUTES,
   );
+  // Like showAllNamesTouched: only persist this value once the user actually
+  // changes the stepper. A legacy meditation habit with the field unset uses
+  // the 2×15 fallback in computeMeditationTier — we must not silently stamp the
+  // default 30 over it on an unrelated Save (rename/recolor).
+  const meditationIdealTouched = useRef(false);
   const [showName, setShowName] = useState<boolean>(existingHabit?.showName ?? false);
   // Global "show name on all tiles" — one on/off for the whole grid, surfaced
   // in every tile's settings. Staged like every other field: the toggle edits
@@ -200,6 +205,7 @@ export default function TileSettingsModal() {
       setMeditationIdealTotalMinutes(
         existingHabit.meditationIdealTotalMinutes ?? DEFAULT_MEDITATION_IDEAL_TOTAL_MINUTES,
       );
+      meditationIdealTouched.current = false;
       setShowName(existingHabit.showName ?? false);
       setTileSize(existingHabit.tileSize);
       setColor(existingHabit.color);
@@ -296,7 +302,16 @@ export default function TileSettingsModal() {
     const isMeditation = recordingMode === 'meditation';
     const meditationSessionsToSave = isMeditation ? Math.max(1, Math.round(meditationSessions)) : undefined;
     const meditationMinutesToSave = isMeditation ? Math.max(1, Math.round(meditationMinutes)) : undefined;
-    const meditationIdealTotalMinutesToSave = isMeditation
+    // Persist ideal-total-minutes only when it's a meditation habit AND either
+    // a new habit, the user touched the stepper, or the habit already had the
+    // field. Otherwise leave it unset so a legacy habit keeps its 2×15 fallback
+    // instead of silently acquiring the default on an unrelated Save.
+    const persistIdealTotal =
+      isMeditation &&
+      (isCreating ||
+        meditationIdealTouched.current ||
+        existingHabit?.meditationIdealTotalMinutes != null);
+    const meditationIdealTotalMinutesToSave = persistIdealTotal
       ? Math.max(1, Math.round(meditationIdealTotalMinutes))
       : undefined;
 
@@ -751,7 +766,10 @@ export default function TileSettingsModal() {
             <View style={styles.sizeRow}>
               <Pressable
                 style={[styles.stepperButton, { borderColor: colors.tileBorder }]}
-                onPress={() => setMeditationIdealTotalMinutes((n) => Math.max(1, n - 5))}
+                onPress={() => {
+                  meditationIdealTouched.current = true;
+                  setMeditationIdealTotalMinutes((n) => Math.max(1, n - 5));
+                }}
               >
                 <ThemedText style={styles.stepperText}>−</ThemedText>
               </Pressable>
@@ -759,6 +777,7 @@ export default function TileSettingsModal() {
                 style={[styles.sizeInput, { color: colors.text, borderColor: colors.tileBorder }]}
                 value={String(meditationIdealTotalMinutes)}
                 onChangeText={(t) => {
+                  meditationIdealTouched.current = true;
                   const n = parseInt(t.replace(/[^0-9]/g, ''), 10);
                   if (!isNaN(n)) setMeditationIdealTotalMinutes(Math.max(1, Math.min(600, n)));
                   else if (t === '') setMeditationIdealTotalMinutes(1);
@@ -768,7 +787,10 @@ export default function TileSettingsModal() {
               />
               <Pressable
                 style={[styles.stepperButton, { borderColor: colors.tileBorder }]}
-                onPress={() => setMeditationIdealTotalMinutes((n) => Math.min(600, n + 5))}
+                onPress={() => {
+                  meditationIdealTouched.current = true;
+                  setMeditationIdealTotalMinutes((n) => Math.min(600, n + 5));
+                }}
               >
                 <ThemedText style={styles.stepperText}>+</ThemedText>
               </Pressable>
