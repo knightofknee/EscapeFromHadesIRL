@@ -220,7 +220,16 @@ service cloud.firestore {
       allow update: if ownsExisting() && ownsIncoming();
     }
     match /notes/{docId} {
-      allow read, delete: if ownsExisting();
+      // `get` also allows MISSING docs (returns not-found, not denied) — same
+      // reasoning as `records` above. useNote() opens a single-doc listener by
+      // id the instant a note is created; if that create write hasn't reached
+      // the server yet, `resource` is null and the plain ownsExisting() rule
+      // evaluates `resource.data` on null and DENIES — which kills the
+      // listener (onSnapshot's error path doesn't retry), so the editor never
+      // reflects later writes (e.g. the text→checklist flip). Note ids are
+      // random, so allowing not-found responses leaks nothing.
+      allow get: if signedIn() && (resource == null || resource.data.userId == request.auth.uid);
+      allow list, delete: if ownsExisting();
       allow create: if ownsIncoming();
       allow update: if ownsExisting() && ownsIncoming();
 

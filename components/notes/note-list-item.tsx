@@ -91,7 +91,7 @@ export const NoteListItem = memo(function NoteListItem({ note, tags, onPress, on
       .split('\n')
       .map((l) => l.trim())
       .filter(Boolean);
-    displayTitle = hasTitle ? note.title : contentLines[0] || '—';
+    displayTitle = hasTitle ? note.title : contentLines[0] || 'Empty note';
     const previewLine = hasTitle
       ? contentLines[0] || ''
       : contentLines[1] || contentLines[0] || '';

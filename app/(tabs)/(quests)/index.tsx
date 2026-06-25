@@ -9,6 +9,7 @@ import { QuestCard } from '@/components/quests/quest-card';
 import { ScoreBar, flameColor } from '@/components/quests/score-bar';
 import { useQuests } from '@/hooks/use-quests';
 import { useHabits } from '@/hooks/use-habits';
+import { useTourTarget } from '@/contexts/tour-context';
 import { useQuestScores, questPointValue } from '@/hooks/use-quest-scores';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
@@ -21,6 +22,7 @@ import {
   type QuestTemplate,
 } from '@/constants/quest-templates';
 import { get18MonthWindow } from '@/lib/date-utils';
+import { runScoreWaypoint } from '@/lib/quest-narrative';
 import { useTodayDate } from '@/hooks/use-today-date';
 
 
@@ -30,6 +32,8 @@ export default function QuestsScreen() {
   const isFocused = useIsFocused();
   const { quests, isLoading: questsLoading } = useQuests();
   const { habits } = useHabits();
+  // Genesis-tour spotlight target — the "+ NEW" forge-a-quest entry point.
+  const forgeQuestRef = useTourTarget('forge-quest');
   const { todayStr } = useTodayDate();
   const { startDate, endDate } = useMemo(() => get18MonthWindow(todayStr), [todayStr]);
   const { records, isLoading: recordsLoading } = useRecordsSnapshot(startDate, endDate, isFocused);
@@ -125,12 +129,28 @@ export default function QuestsScreen() {
           </ThemedText>
           <ThemedText style={styles.runScoreLabel}>RUN SCORE · MAX {scores.totalAvailable}</ThemedText>
         </View>
-        <Pressable style={styles.addButton} onPress={() => router.push('/(tabs)/(quests)/create')}>
+        <Pressable
+          ref={forgeQuestRef}
+          style={styles.addButton}
+          onPress={() => router.push('/(tabs)/(quests)/create')}
+        >
           <ThemedText style={styles.addButtonText}>+ NEW</ThemedText>
         </Pressable>
       </View>
 
       <ScoreBar score={scores.runPct} showLabel={false} height={3} />
+
+      {/* Ascent waypoint — names the run-score band as a stop on the long ferry
+          out of Hades. Pure label beneath the score/bar. */}
+      {(() => {
+        const wp = runScoreWaypoint(scores.runPct);
+        return (
+          <View style={styles.waypointRow}>
+            <ThemedText style={styles.waypointBand}>{wp.band}</ThemedText>
+            {wp.toNext && <ThemedText style={styles.waypointNext}>{wp.toNext}</ThemedText>}
+          </View>
+        );
+      })()}
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
         {/* CHALLENGES — the quests you choose. Started ones show their score;
@@ -268,6 +288,23 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     fontVariant: ['tabular-nums'],
     lineHeight: 38,
+  },
+  waypointRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  waypointBand: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: QuestColors.gold,
+    letterSpacing: 0.5,
+  },
+  waypointNext: {
+    fontSize: 11,
+    color: QuestColors.textDim,
   },
   runScoreLabel: {
     fontSize: 9,

@@ -132,7 +132,7 @@ export default function AdditionalSettingsScreen() {
                 router.replace('/(auth)/sign-in');
                 Alert.alert(
                   'Account Data Deleted',
-                  'Your data was deleted and you have been signed out. We could not fully close your account — sign in and tap Delete Account again to finish.',
+                  'Your data was deleted and you have been signed out. We could not fully close your account. Sign in and tap Delete Account again to finish.',
                 );
               } else {
                 Alert.alert('Error', 'Failed to delete account. Please try again.');

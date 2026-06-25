@@ -8,6 +8,8 @@ type VacationMenuProps = {
   visible: boolean;
   onClose: () => void;
   onSelectVacation: () => void;
+  /** Launch the full tutorial (welcome → starter picker → guided tour). */
+  onGoToTutorial: () => void;
   /** Whether the currently-viewed day is already a vacation day. */
   isVacationDay: boolean;
   /** Size of the contiguous vacation block the viewed day belongs to. */
@@ -33,6 +35,7 @@ export function VacationMenu({
   visible,
   onClose,
   onSelectVacation,
+  onGoToTutorial,
   isVacationDay,
   blockSize,
   onRemoveDay,
@@ -59,6 +62,21 @@ export function VacationMenu({
           style={[styles.sheet, { backgroundColor: colors.tileBackground }]}
           onPress={(e) => e.stopPropagation()}
         >
+          {/* Full tutorial — welcome → starter picker → guided tour. */}
+          <Pressable
+            style={[styles.item, { borderColor: colors.tint, backgroundColor: `${colors.tint}15` }]}
+            onPress={() => {
+              onClose();
+              onGoToTutorial();
+            }}
+          >
+            <ThemedText style={[styles.itemLabel, { color: colors.tint }]}>
+              Go to Tutorial
+            </ThemedText>
+          </Pressable>
+
+          <View style={styles.divider} />
+
           {isVacationDay ? (
             <>
               <Pressable
@@ -88,7 +106,7 @@ export function VacationMenu({
               )}
 
               <ThemedText style={styles.instructions}>
-                Removing brings the day back to normal tracking — its habit
+                Removing brings the day back to normal tracking. Its habit
                 records resurface and count toward streaks and averages again.
                 Long-press a vacation day to change its label or color.
               </ThemedText>
@@ -109,7 +127,7 @@ export function VacationMenu({
 
               <ThemedText style={styles.instructions}>
                 Vacation days take a break from tracking. They don&apos;t break streaks
-                and aren&apos;t counted in averages — your stats roll right past them.
+                and aren&apos;t counted in averages. Your stats roll right past them.
                 Long-press a vacation day to change its label or color.
               </ThemedText>
             </>
@@ -129,7 +147,7 @@ export function VacationMenu({
 
           <ThemedText style={styles.instructions}>
             On Saturdays and Sundays, only habits you complete count toward your
-            stats. Anything left unmarked is skipped, like a mini-vacation — so
+            stats. Anything left unmarked is skipped, like a mini-vacation, so
             you can win on the weekend but never lose.
           </ThemedText>
         </Pressable>

@@ -26,7 +26,7 @@ type ModeOption = { value: RecordingMode; label: string; description: string; au
 const RECORDING_MODES: ModeOption[] = [
   // quad leads: 3 success tiers feed the tiered quests, so it's the
   // recommended default recording style.
-  { value: 'quad', label: 'No / Yes / Goal / Ideal · Recommended', description: 'Tap to cycle through 4 levels — powers tiered quests' },
+  { value: 'quad', label: 'No / Yes / Goal / Ideal · Recommended', description: 'Tap to cycle through 4 levels; powers tiered quests' },
   { value: 'boolean', label: 'Yes / No', description: 'Tap to toggle' },
   { value: 'triple', label: 'No / Yes / Goal', description: 'Tap to cycle through 3 levels' },
   { value: 'counter', label: 'Counter', description: 'Tap to increment' },
@@ -478,7 +478,7 @@ export default function TileSettingsModal() {
             <ThemedText style={{ fontSize: 14, fontWeight: '600' }}>Show name on tile</ThemedText>
             <ThemedText style={{ fontSize: 12, opacity: 0.6 }}>
               {showAllNames
-                ? 'On for every tile — controlled by the switch below.'
+                ? 'On for every tile, controlled by the switch below.'
                 : 'Adds the name as a small label at the bottom of the tile.'}
             </ThemedText>
           </View>
@@ -498,7 +498,7 @@ export default function TileSettingsModal() {
           <View style={{ flex: 1 }}>
             <ThemedText style={{ fontSize: 14, fontWeight: '600' }}>Show name on all tiles</ThemedText>
             <ThemedText style={{ fontSize: 12, opacity: 0.6 }}>
-              One switch for every tile — overrides the per-tile setting above.
+              One switch for every tile. Overrides the per-tile setting above.
             </ThemedText>
           </View>
           <Switch
@@ -526,7 +526,7 @@ export default function TileSettingsModal() {
 
         {/* Icon (optional) */}
         <ThemedText type="defaultSemiBold" style={styles.label}>
-          Icon (emoji, optional — overrides abbreviation)
+          Icon (emoji, optional; overrides abbreviation)
         </ThemedText>
         <TextInput
           style={[styles.input, { color: colors.text, borderColor: colors.tileBorder }]}
@@ -538,7 +538,7 @@ export default function TileSettingsModal() {
 
         {/* Custom Drawn Symbol */}
         <ThemedText type="defaultSemiBold" style={styles.label}>
-          Custom Symbol (draw your own — overrides icon & abbreviation)
+          Custom Symbol (draw your own; overrides icon & abbreviation)
         </ThemedText>
         <View style={styles.glyphRow}>
           {hasGlyph ? (
@@ -691,7 +691,7 @@ export default function TileSettingsModal() {
               </Pressable>
             )}
             <ThemedText style={styles.hint}>
-              Level 1 is required. Higher goals light up the next tier — a circle
+              Level 1 is required. Higher goals light up the next tier: a circle
               for Level 2, a star for Level 3.
             </ThemedText>
           </>
@@ -810,7 +810,7 @@ export default function TileSettingsModal() {
         {recordingMode === 'creativeWriting' && (
           <ThemedText style={styles.hint}>
             Writing or editing the first non-checklist note of the day marks
-            this tile &quot;yes.&quot; After that we don&apos;t touch it again today —
+            this tile &quot;yes.&quot; After that we don&apos;t touch it again today,
             even if you tap it back to zero. Tap the tile yourself for goal
             or ideal. Checklists don&apos;t count toward this habit.
           </ThemedText>
@@ -995,7 +995,7 @@ export default function TileSettingsModal() {
               Allow meditation alarm?
             </ThemedText>
             <ThemedText style={styles.notifBody}>
-              Notifications let your timer ring on time — even when the app
+              Notifications let your timer ring on time, even when the app
               is closed or your phone is locked. That&apos;s the only thing we
               use them for. We won&apos;t send anything else.
             </ThemedText>

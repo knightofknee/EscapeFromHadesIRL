@@ -30,8 +30,8 @@ const STREAK_HISTORY_DAYS = 1095;
 
 function getLevelLabel(habit: Habit, levelIndex: number): string {
   if (levelIndex === 0) return habit.name;
-  if (levelIndex === 1) return `${habit.name} — Goal`;
-  return `${habit.name} — Ideal`;
+  if (levelIndex === 1) return `${habit.name}: Goal`;
+  return `${habit.name}: Ideal`;
 }
 
 // --- Swipeable habit stats section ---

@@ -18,6 +18,7 @@ import { setPendingHabitCallback } from '@/lib/pending-habit-link';
 import { QuestColors } from '@/constants/theme';
 import { QUEST_TEMPLATES } from '@/constants/quest-templates';
 import { QuestPhilosophy } from '@/components/quests/quest-philosophy';
+import { suggestPactWhy } from '@/lib/quest-narrative';
 import { isTieredMode } from '@/lib/habit-scoring';
 import type { QuestType } from '@/types/quest';
 
@@ -62,6 +63,7 @@ export default function CreateQuestScreen() {
   // Custom fields
   const [customName, setCustomName] = useState('');
   const [customDescription, setCustomDescription] = useState('');
+  const [customWhy, setCustomWhy] = useState('');
   const [customQuestType, setCustomQuestType] = useState<QuestType>('positive');
   const [targetDays, setTargetDays] = useState(5);
   const [successLevel, setSuccessLevel] = useState<1 | 2 | 3>(1);
@@ -80,6 +82,7 @@ export default function CreateQuestScreen() {
     didPrefill.current = true;
     setCustomName(editQuest.name);
     setCustomDescription(editQuest.description);
+    setCustomWhy(editQuest.personalPactWhy ?? '');
     setCustomQuestType(editQuest.questType);
     setTargetDays(editQuest.targetDaysPerWeek);
     setSuccessLevel((editQuest.successLevel ?? 1) as 1 | 2 | 3);
@@ -150,6 +153,7 @@ export default function CreateQuestScreen() {
           targetDaysPerWeek: targetDays,
           successLevel: customQuestType === 'positive' && isQuadHabit ? successLevel : 1,
           scoreWindow: customWindow,
+          personalPactWhy: customWhy.trim(),
           linkedHabitIds: habitIds,
         });
         // Blocked write (offline guard already alerted) → stay on the form
@@ -195,6 +199,7 @@ export default function CreateQuestScreen() {
           // Only meaningful for a positive quest on a quad habit; else basic.
           successLevel: customQuestType === 'positive' && isQuadHabit ? successLevel : 1,
           scoreWindow: customWindow,
+          personalPactWhy: customWhy.trim(),
           allHabits: false,
           status: 'active',
         });
@@ -314,6 +319,38 @@ export default function CreateQuestScreen() {
               maxLength={1000}
             />
 
+            <View style={styles.whyHeader}>
+              <ThemedText style={styles.sectionLabel}>WHY THIS PACT</ThemedText>
+              <Pressable
+                onPress={() =>
+                  setCustomWhy(
+                    suggestPactWhy({
+                      name: customName,
+                      habitName: linkedHabit?.name,
+                      targetDays,
+                      questType: customQuestType,
+                    }),
+                  )
+                }
+              >
+                <ThemedText style={styles.suggestLink}>Suggest</ThemedText>
+              </Pressable>
+            </View>
+            <ThemedText style={styles.sectionHint}>
+              The stakes, in your own words. Shown as this pact&apos;s &ldquo;why&rdquo; on its
+              detail screen. Leave blank for the default.
+            </ThemedText>
+            <TextInput
+              style={[styles.input, styles.inputMulti]}
+              value={customWhy}
+              onChangeText={setCustomWhy}
+              placeholder="Why does this pact matter?"
+              placeholderTextColor={QuestColors.textDim}
+              multiline
+              numberOfLines={4}
+              maxLength={2000}
+            />
+
             <ThemedText style={styles.sectionLabel}>QUEST TYPE</ThemedText>
             <View style={styles.chipRow}>
               <Pressable
@@ -375,7 +412,7 @@ export default function CreateQuestScreen() {
             {/* Habit linker */}
             <ThemedText style={styles.sectionLabel}>LINK A HABIT</ThemedText>
             <ThemedText style={styles.sectionHint}>
-              A linked habit feeds this quest&apos;s score — required, or the
+              A linked habit feeds this quest&apos;s score. Required, or the
               quest has nothing to track.
             </ThemedText>
             {habits.map((h) => {
@@ -409,7 +446,7 @@ export default function CreateQuestScreen() {
               <>
                 <ThemedText style={styles.sectionLabel}>LEVEL OF SUCCESS</ThemedText>
                 <ThemedText style={styles.sectionHint}>
-                  Which tier of {linkedHabit?.name} counts as a win — make a second
+                  Which tier of {linkedHabit?.name} counts as a win. Make a second
                   quest at a higher tier for a tougher goal on the same habit.
                 </ThemedText>
                 <View style={styles.chipRow}>
@@ -486,6 +523,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: QuestColors.textDim,
     lineHeight: 17,
+  },
+  whyHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  suggestLink: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: QuestColors.flameHigh,
   },
   input: {
     backgroundColor: QuestColors.surface,

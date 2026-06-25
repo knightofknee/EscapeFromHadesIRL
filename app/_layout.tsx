@@ -36,6 +36,7 @@ import { ErrorToast } from '@/components/ui/error-toast';
 import { AuthProvider, useAuth } from '@/contexts/auth-context';
 import { OfflineProvider } from '@/contexts/offline-context';
 import { AppDataProviders } from '@/contexts/app-data-providers';
+import { TourProvider } from '@/contexts/tour-context';
 import { getHomeScreen } from '@/hooks/use-home-screen';
 import { db, collection, doc, setDoc } from '@/lib/firebase/firestore';
 import type { User } from 'firebase/auth';
@@ -124,6 +125,9 @@ function RootNavigator() {
           tile-settings) — without this entry it gets a default native bar
           titled "revive-habit" stacked above its own. */}
       <Stack.Screen name="revive-habit" options={{ presentation: 'modal', headerShown: false }} />
+      {/* Starter-tasks intro picker (draws its own header). Opened as the start
+          of the Genesis tour for new users and from the habits ••• menu. */}
+      <Stack.Screen name="starter-setup" options={{ presentation: 'modal', headerShown: false }} />
       <Stack.Screen name="export-notes" options={{ presentation: 'modal', title: 'Export Notes' }} />
     </Stack>
   );
@@ -144,7 +148,12 @@ export default function RootLayout() {
           <OfflineProvider>
             <AppDataProviders>
               <ThemeProvider value={effectiveScheme === 'dark' ? DarkTheme : DefaultTheme}>
-                <RootNavigator />
+                {/* TourProvider wraps the navigator so the spotlight overlay
+                    paints above the tabs + tab bar. ErrorToast/StatusBar stay
+                    outside it so toasts still render above the tour. */}
+                <TourProvider>
+                  <RootNavigator />
+                </TourProvider>
                 <ErrorToast />
                 <StatusBar style={effectiveScheme === 'dark' ? 'light' : 'dark'} />
               </ThemeProvider>

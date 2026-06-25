@@ -27,6 +27,7 @@ const MAPPING = {
   'doc.text.fill': 'description',
   'gearshape.fill': 'settings',
   'keyboard.chevron.compact.down': 'keyboard-hide',
+  'questionmark.circle': 'help-outline',
   strikethrough: 'format-strikethrough',
   'list.bullet': 'format-list-bulleted',
   'list.number': 'format-list-numbered',

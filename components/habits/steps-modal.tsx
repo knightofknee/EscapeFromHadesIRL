@@ -237,10 +237,10 @@ export function StepsModal({
                     {currentLevel === 0
                       ? 'Below Level 1'
                       : currentLevel === 1
-                        ? 'Level 1 — yes'
+                        ? 'Level 1: yes'
                         : currentLevel === 2
-                          ? 'Level 2 — goal'
-                          : 'Level 3 — ideal'}
+                          ? 'Level 2: goal'
+                          : 'Level 3: ideal'}
                   </ThemedText>
                 </View>
 

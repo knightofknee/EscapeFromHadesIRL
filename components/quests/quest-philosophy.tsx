@@ -8,27 +8,29 @@ type Props = {
 };
 
 /**
- * Expandable "why this quest" section — the philosophy and inspiration
- * behind a quest. Collapsed by default so the screen stays scannable;
- * the chevron header toggles it open.
+ * Expandable "why this quest" section. Collapsed shows a 2-line TEASER of the
+ * philosophy + a "Read more" — so it's clear there's more to open (a bare
+ * chevron hid that entirely). The whole card toggles.
  */
 export function QuestPhilosophy({ text }: Props) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <View style={styles.card}>
-      <Pressable
-        style={styles.header}
-        onPress={() => setExpanded((v) => !v)}
-        hitSlop={6}
-        accessibilityRole="button"
-        accessibilityLabel={expanded ? 'Collapse quest philosophy' : 'Expand quest philosophy'}
-      >
+    <Pressable
+      style={styles.card}
+      onPress={() => setExpanded((v) => !v)}
+      accessibilityRole="button"
+      accessibilityLabel={expanded ? 'Collapse quest philosophy' : 'Expand quest philosophy'}
+    >
+      <View style={styles.header}>
         <ThemedText style={styles.label}>WHY THIS QUEST</ThemedText>
         <ThemedText style={styles.chevron}>{expanded ? '▾' : '▸'}</ThemedText>
-      </Pressable>
-      {expanded && <ThemedText style={styles.body}>{text}</ThemedText>}
-    </View>
+      </View>
+      <ThemedText style={styles.body} numberOfLines={expanded ? undefined : 2}>
+        {text}
+      </ThemedText>
+      <ThemedText style={styles.more}>{expanded ? 'Show less' : 'Read more'}</ThemedText>
+    </Pressable>
   );
 }
 
@@ -61,5 +63,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 20,
     color: QuestColors.text,
+  },
+  more: {
+    marginTop: 8,
+    fontSize: 12,
+    fontWeight: '700',
+    color: QuestColors.flameHigh,
+    letterSpacing: 0.3,
   },
 });

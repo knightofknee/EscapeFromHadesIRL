@@ -2,16 +2,18 @@ import type { ChecklistItem } from '@/types/note';
 
 /**
  * Format a checklist back to plain markdown text. Used when toggling a
- * checklist note → text mode. Output is round-trip parseable by
- * `parseChecklistFromText` below, so an untouched dump can be cleanly
- * rebuilt into the same items with the same checked states.
+ * checklist note → text mode (and by the markdown export). Items dump as
+ * `- [ ] X` / `- [x] X`, which `parseChecklistFromText` reads straight
+ * back into the same items with the same checked states — so a
+ * checklist→text→checklist round trip restores the list.
  *
  * Format: description (if any) on top, blank line, then items in
  *   `- [ ] X` / `- [x] X` markdown style.
  *
  *   Sorting at dump time follows the on-screen order (uncompleted first
  *   in creation order, then completed), so the round-trip preserves
- *   that ordering too.
+ *   that ordering too. (A leading description, being plain lines, comes
+ *   back as leading items on re-parse rather than as a description.)
  */
 export function formatChecklistAsText(
   description: string,
@@ -33,84 +35,148 @@ export function formatChecklistAsText(
 }
 
 /**
- * Match a single markdown checkbox line. Captures: "x"/" " for state,
- * the item text. Case-insensitive on `x` so external markdown (e.g.
- * GitHub-flavored using uppercase X) parses correctly too.
+ * Match a markdown checkbox line, tolerant of how both the dump and
+ * humans actually write them: an optional leading bullet (`-`, `*`, `•`),
+ * any spacing, and `[ ]` / `[]` / `[x]` / `[X]`. Captures the `x`/`X`
+ * (undefined when unchecked) and the trailing item text.
+ *   matches: "- [ ] buy milk", "- [x] done", "-[] terse", "[ ] no dash"
  */
-const CHECKLIST_LINE_RE = /^- \[([ xX])\] (.*)$/;
+const CHECKBOX_LINE_RE = /^\s*[-*•]?\s*\[\s*([xX])?\s*\]\s?(.*)$/;
+// A plain bullet line (no checkbox), e.g. "- milk" / "* milk" / "• milk".
+const BULLET_MARKER_RE = /^[-*•]\s+(.*)$/;
+// A numbered line, e.g. "1. milk" / "2) milk".
+const NUMBER_MARKER_RE = /^\d+[.)]\s+(.*)$/;
 
 type ParsedChecklist = {
-  /** Description = text content above the checklist block, trimmed. */
+  /** Text NOT turned into items — kept as the checklist's description. */
   description: string;
-  /** Parsed items in the order they appeared in the source text. */
+  /** Parsed items in source order. */
   items: ChecklistItem[];
 };
 
+/** A character range (TextInput selection offsets) into the note content. */
+export type TextRange = { start: number; end: number };
+
 /**
- * Parse a text content string into description + checklist items.
+ * Parse note text into checklist items + a leftover description, for the
+ * "Create Checklist" toggle. Two modes — the user is in control of which:
  *
- * Rule: scan from the BOTTOM of the text. Take a contiguous run of
- * markdown checkbox lines. Stop at the first non-matching line.
- * Everything above (trimmed) becomes the description. If the scan
- * finds no items, the entire text becomes the description and items
- * is an empty array.
+ * SELECTION MODE (a non-empty `selection` is passed — the user highlighted
+ * lines before tapping): ONLY the highlighted lines become items. The
+ * selection is expanded to whole lines; blank lines in it are skipped; a
+ * checkbox line keeps its checked state, any other line becomes an
+ * unchecked item with its bullet/number marker stripped. Everything OUTSIDE
+ * the highlight is preserved verbatim as the description. This is the
+ * deliberate, non-heavy-handed path: write a description, highlight the
+ * part that's a list, convert just that.
  *
- * The "scan from the bottom" rule is what makes the round-trip work:
- * `formatChecklistAsText` always puts items at the end, so a clean
- * dump → parse cycle restores the original structure exactly.
+ * NO-SELECTION MODE (no/empty `selection`): only lines already written as
+ * checkboxes (`- [ ]` / `- [x]`) become items; all other prose stays as the
+ * description. This is the revert path — "Undo Checklist" dumps items as
+ * `- [ ]` lines (see formatChecklistAsText), so re-tapping Create Checklist
+ * restores them without needing a highlight, while a plain note is NOT
+ * sloppily turned into items.
  *
- * @param genId  caller-supplied id generator so the parser stays pure
- *               (no random imports). Default uses Math.random.
+ * @param genId      caller-supplied id generator so the parser stays pure.
+ * @param selection  the editor's current selection; only its line span
+ *                   matters. Omitted or collapsed (start === end) → no-sel.
  */
 export function parseChecklistFromText(
   text: string,
   genId: () => string = defaultId,
+  selection?: TextRange,
 ): ParsedChecklist {
-  if (!text || text.length === 0) {
-    return { description: '', items: [] };
-  }
+  if (!text) return { description: '', items: [] };
 
   const lines = text.split('\n');
-  // Walk backwards collecting matching lines. Stop at the first line
-  // that doesn't match, but skip pure-whitespace trailing lines first
-  // (so a trailing newline doesn't break parsing).
-  let lastNonEmpty = lines.length - 1;
-  while (lastNonEmpty >= 0 && lines[lastNonEmpty].trim() === '') {
-    lastNonEmpty--;
-  }
-  if (lastNonEmpty < 0) return { description: '', items: [] };
+  const range =
+    selection && selection.end > selection.start
+      ? selectedLineRange(lines, selection)
+      : null;
 
-  // Scan backwards to find the trailing checkbox block; then assign IDs
-  // in display order (top-to-bottom) so id-1 is the first item.
-  const matchedReversed: { text: string; completed: boolean }[] = [];
-  let firstMatchIndex = lastNonEmpty + 1; // exclusive
-  for (let i = lastNonEmpty; i >= 0; i--) {
-    const m = lines[i].match(CHECKLIST_LINE_RE);
-    if (!m) break;
-    matchedReversed.push({
-      text: m[2],
-      completed: m[1].toLowerCase() === 'x',
-    });
-    firstMatchIndex = i;
-  }
+  const items: ChecklistItem[] = [];
+  const descLines: string[] = [];
 
-  if (matchedReversed.length === 0) {
-    // No trailing checklist block — the whole thing is description.
-    return { description: text.trim(), items: [] };
-  }
+  lines.forEach((rawLine, i) => {
+    if (range) {
+      // SELECTION MODE: highlighted lines → items, the rest → description.
+      if (i >= range.first && i <= range.last) {
+        const item = lineToItem(rawLine, genId);
+        if (item) items.push(item); // blank lines in the selection are skipped
+      } else {
+        descLines.push(rawLine);
+      }
+      return;
+    }
+    // NO-SELECTION MODE: only checkbox lines → items, the rest → description.
+    const checkbox = parseCheckboxLine(rawLine);
+    if (checkbox) {
+      if (checkbox.text.length > 0) {
+        items.push({ id: genId(), text: checkbox.text, completed: checkbox.completed });
+      }
+      // an empty checkbox carries nothing — drop it from both
+    } else {
+      descLines.push(rawLine);
+    }
+  });
 
-  // Items in original (top-to-bottom) order. IDs assigned now so they
-  // align with display order.
-  const items: ChecklistItem[] = matchedReversed
-    .reverse()
-    .map((m) => ({ id: genId(), text: m.text, completed: m.completed }));
-  // Description = everything before the matched block, trimmed.
-  // Strip a single trailing blank line separator if present.
-  const descLines = lines.slice(0, firstMatchIndex);
-  while (descLines.length > 0 && descLines[descLines.length - 1].trim() === '') {
-    descLines.pop();
-  }
   return { description: descLines.join('\n').trim(), items };
+}
+
+/** Parse a checkbox line → {text, completed}, or null if it isn't one. */
+function parseCheckboxLine(rawLine: string): { text: string; completed: boolean } | null {
+  const m = rawLine.trim().match(CHECKBOX_LINE_RE);
+  if (!m) return null;
+  return { text: m[2].trim(), completed: !!m[1] };
+}
+
+/** A highlighted line → an item. Checkbox lines keep their state; other
+ *  lines become unchecked items (bullet/number marker stripped). Blank
+ *  lines yield null so they're skipped. */
+function lineToItem(rawLine: string, genId: () => string): ChecklistItem | null {
+  const checkbox = parseCheckboxLine(rawLine);
+  if (checkbox) {
+    if (checkbox.text.length === 0) return null;
+    return { id: genId(), text: checkbox.text, completed: checkbox.completed };
+  }
+  const text = stripLineMarker(rawLine.trim());
+  if (text.length === 0) return null;
+  return { id: genId(), text, completed: false };
+}
+
+/** Map a character selection to the inclusive [first,last] line indices it
+ *  covers, expanded to whole lines. Returns null if the selection touches no
+ *  line's content (degenerate — caller falls back to no-selection mode).
+ *  A line counts as selected when the selection overlaps its span; `end >
+ *  lineStart` is strict so a selection ending exactly at a line's first char
+ *  doesn't pull that whole line in. */
+function selectedLineRange(
+  lines: string[],
+  selection: TextRange,
+): { first: number; last: number } | null {
+  let first = -1;
+  let last = -1;
+  let pos = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const lineStart = pos;
+    const lineEnd = pos + lines[i].length; // position of this line's '\n'
+    if (selection.start <= lineEnd && selection.end > lineStart) {
+      if (first === -1) first = i;
+      last = i;
+    }
+    pos = lineEnd + 1; // + 1 for the '\n'
+  }
+  return first === -1 ? null : { first, last };
+}
+
+/** Strip a leading bullet/number list marker so "- milk" / "1. milk"
+ *  convert to the item text "milk". Non-list lines pass through. */
+function stripLineMarker(line: string): string {
+  const bullet = line.match(BULLET_MARKER_RE);
+  if (bullet) return bullet[1].trim();
+  const numbered = line.match(NUMBER_MARKER_RE);
+  if (numbered) return numbered[1].trim();
+  return line;
 }
 
 function defaultId(): string {

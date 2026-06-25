@@ -75,7 +75,7 @@ export default function ExportScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <ThemedText type="title">Export Notes</ThemedText>
         <ThemedText style={styles.description}>
-          Export as Markdown (.md) with YAML frontmatter — optimized for AI agents and standard editors.
+          Export as Markdown (.md) with YAML frontmatter, optimized for AI agents and standard editors.
         </ThemedText>
 
         {/* Filter */}

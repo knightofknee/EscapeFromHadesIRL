@@ -22,7 +22,7 @@ export async function persistHabitRecord(
     console.error('persistHabitRecord failed:', record.id, e);
     if (!opts?.silent) {
       emitError(
-        opts?.errorMessage ?? "Couldn't save — check your connection and try again.",
+        opts?.errorMessage ?? "Couldn't save. Check your connection and try again.",
         () => void persistHabitRecord(record, opts),
       );
     }

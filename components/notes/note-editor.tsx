@@ -50,6 +50,13 @@ export type NoteEditorHandle = {
   getLatestContent: () => string;
   /** Same as getLatestContent, for the title field. */
   getLatestTitle: () => string;
+  /**
+   * The content field's current selection (caret/highlight) as char offsets.
+   * The text→checklist toggle reads this so a highlight scopes which lines
+   * become items. Snapshot it on the button's onPressIn — by the time the
+   * press completes the input may have blurred and collapsed the selection.
+   */
+  getSelection: () => { start: number; end: number };
 };
 
 // U+0336 is the Unicode combining long stroke overlay — visually strikes through
@@ -387,6 +394,12 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     contentValueRef.current = content;
     titleValueRef.current = title;
   }, [content, title]);
+  // Mirror the selection too, so getSelection() returns the live caret/
+  // highlight even when read from a stale handle closure.
+  const selectionValueRef = useRef(selection);
+  useEffect(() => {
+    selectionValueRef.current = selection;
+  }, [selection]);
 
   useImperativeHandle(ref, () => ({
     applyStrikethrough: () => applyFormatting(formatStrikethrough(content, selection)),
@@ -396,6 +409,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     redo: handleRedo,
     getLatestContent: () => contentValueRef.current,
     getLatestTitle: () => titleValueRef.current,
+    getSelection: () => selectionValueRef.current,
   }));
 
   const noteTagIds = [...new Set(note.tags.map((t) => t.tagId))];

@@ -16,6 +16,7 @@ import { useTodayDate } from '@/hooks/use-today-date';
 import { QuestColors } from '@/constants/theme';
 import { CATEGORY_NAMES, TEMPLATE_BY_KEY, findVirtualQuestById, CUSTOM_QUEST_PHILOSOPHY } from '@/constants/quest-templates';
 import { QuestPhilosophy } from '@/components/quests/quest-philosophy';
+import { questStandingLine } from '@/lib/quest-narrative';
 import { get18MonthWindow } from '@/lib/date-utils';
 import { isTieredMode } from '@/lib/habit-scoring';
 import { setPendingHabitCallback } from '@/lib/pending-habit-link';
@@ -143,8 +144,12 @@ export default function QuestDetailScreen() {
           </View>
         </View>
 
-        {/* Expandable philosophy/inspiration — the "why" behind the quest. */}
-        <QuestPhilosophy text={template?.philosophy ?? CUSTOM_QUEST_PHILOSOPHY} />
+        {/* Expandable philosophy/inspiration — the "why" behind the quest.
+            Custom pacts use the user's authored why (falling back to the shared
+            blurb when blank); templates use their own philosophy. */}
+        <QuestPhilosophy
+          text={template?.philosophy ?? (quest.personalPactWhy?.trim() || CUSTOM_QUEST_PHILOSOPHY)}
+        />
 
         {/* Score block. Single-window quests headline the window they're
             scored on and hide the other bar entirely. */}
@@ -209,6 +214,18 @@ export default function QuestDetailScreen() {
                   <ScoreBar score={questScore?.score18mo ?? 0} height={8} color={QuestColors.gold} />
                 </>
               )}
+
+              {/* WHERE YOU STAND — the live readout of your default for this
+                  quest, narrated in voice. Always visible (no expand needed). */}
+              {(() => {
+                const standing = questStandingLine(quest, questScore);
+                return standing ? (
+                  <View style={styles.standingBox}>
+                    <ThemedText style={styles.standingLabel}>WHERE YOU STAND</ThemedText>
+                    <ThemedText style={styles.standingText}>{standing}</ThemedText>
+                  </View>
+                ) : null;
+              })()}
             </View>
           );
         })()}
@@ -234,7 +251,7 @@ export default function QuestDetailScreen() {
               );
             })()}
             <ThemedText style={styles.dimText}>
-              Watches every habit automatically — showing your highest scorer
+              Watches every habit automatically, showing your highest scorer
               for this goal. No linking needed.
             </ThemedText>
           </View>
@@ -337,8 +354,8 @@ export default function QuestDetailScreen() {
               <ThemedText style={styles.sectionLabel}>LEVEL OF SUCCESS</ThemedText>
               <ThemedText style={styles.dimText}>
                 {locked
-                  ? 'Fixed for this challenge — the tier is the quest.'
-                  : `Which tier of ${linkedHabits[0]?.name} counts as a win. Changing it just re-scores your existing records — nothing is lost.`}
+                  ? 'Fixed for this challenge. The tier is the quest.'
+                  : `Which tier of ${linkedHabits[0]?.name} counts as a win. Changing it just re-scores your existing records, so nothing is lost.`}
               </ThemedText>
               <View style={styles.levelRow}>
                 {([1, 2, 3] as const).map((lvl) => {
@@ -513,6 +530,25 @@ const styles = StyleSheet.create({
   doubleDetail: {
     fontSize: 12,
     color: QuestColors.gold,
+  },
+  standingBox: {
+    marginTop: 4,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: QuestColors.border,
+    gap: 4,
+  },
+  standingLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: QuestColors.textDim,
+    letterSpacing: 1.5,
+  },
+  standingText: {
+    fontSize: 13,
+    color: QuestColors.text,
+    fontStyle: 'italic',
+    lineHeight: 19,
   },
   section: {
     gap: 8,

@@ -26,6 +26,11 @@ export type Quest = {
   // counts when ANY habit reaches the required success level. linkedHabitIds
   // stays [] for these.
   allHabits?: boolean;
+  // Custom pacts only: the user's own authored "why this quest" (shown in the
+  // expandable philosophy card instead of the shared generic blurb). Empty/
+  // absent → falls back to CUSTOM_QUEST_PHILOSOPHY. Templates use their own
+  // template.philosophy and ignore this.
+  personalPactWhy?: string;
   status: 'active' | 'paused';
   activatedAt: number;
   createdAt: number;

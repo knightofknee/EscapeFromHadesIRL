@@ -577,7 +577,7 @@ export function MeditationTimerModal({
           </View>
           {!isToday && (
             <ThemedText style={styles.subdued}>
-              Editing {date}. Live timer disabled — use Log Session to backfill.
+              Editing {date}. Live timer disabled. Use Log Session to backfill.
             </ThemedText>
           )}
 
@@ -729,7 +729,7 @@ export function MeditationTimerModal({
             </ThemedText>
             <ThemedText style={styles.helpBody}>
               While a timer is running with this screen open, your device stays awake so it
-              can ring a bell when the time’s up — tap the screen to silence it.
+              can ring a bell when the time’s up. Tap the screen to silence it.
               {'\n\n'}
               If you leave this screen or lock your phone, the timer keeps running, but we
               can only alert you with a local notification (a short repeating chime) when it ends.

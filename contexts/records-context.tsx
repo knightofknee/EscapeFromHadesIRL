@@ -213,7 +213,7 @@ export function RecordsProvider({ children }: { children: ReactNode }) {
         // Optimistic update already showed it as recorded; the write failed
         // (token expiry, quota, mid-request drop), so tell the user and offer a
         // retry of the same write rather than letting it vanish silently.
-        emitError("Couldn't save that — tap Retry.", () => {
+        emitError("Couldn't save that. Tap Retry.", () => {
           setDoc(doc(db, 'records', docId), record).catch((e) =>
             console.error('Habit record retry failed:', e),
           );

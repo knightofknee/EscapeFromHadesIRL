@@ -34,6 +34,7 @@ import {
   deleteVacationDaysBulk,
 } from '@/lib/vacation-days';
 import { useHabits } from '@/hooks/use-habits';
+import { useTourTarget } from '@/contexts/tour-context';
 import { useTodayRecords } from '@/hooks/use-today-records';
 import { useTodayDate } from '@/hooks/use-today-date';
 import { useNotes } from '@/hooks/use-notes';
@@ -58,6 +59,9 @@ export default function HabitsDayScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const { width: screenWidth } = useWindowDimensions();
+  // Genesis-tour spotlight target — both add-habit buttons share the key
+  // (only one is mounted at a time, depending on whether any habit exists).
+  const addHabitRef = useTourTarget('add-first-habit');
 
   const { createNote } = useNotes();
   const [valueInputHabit, setValueInputHabit] = useState<Habit | null>(null);
@@ -312,6 +316,7 @@ export default function HabitsDayScreen() {
                   <>
                     <ThemedText style={styles.emptyText}>No habits yet</ThemedText>
                     <Pressable
+                      ref={addHabitRef}
                       style={[styles.addButton, { backgroundColor: colors.tint }]}
                       onPress={() => router.push({ pathname: '/tile-settings', params: { mode: 'create' } })}
                     >
@@ -343,6 +348,7 @@ export default function HabitsDayScreen() {
                 {/* Bottom action buttons */}
                 <View style={styles.bottomButtons}>
                   <Pressable
+                    ref={addHabitRef}
                     style={[styles.addTileButton, { borderColor: colors.tint, backgroundColor: `${colors.tint}15` }]}
                     onPress={() => router.push({ pathname: '/tile-settings', params: { mode: 'create' } })}
                   >
@@ -398,6 +404,7 @@ export default function HabitsDayScreen() {
           visible={vacationMenuVisible}
           onClose={() => setVacationMenuVisible(false)}
           onSelectVacation={() => setVacationRangeVisible(true)}
+          onGoToTutorial={() => router.push('/starter-setup?intro=1')}
           isVacationDay={isVacationDay}
           blockSize={isVacationDay ? getContiguousBlock(viewedDate).length : 0}
           onRemoveDay={async () => {

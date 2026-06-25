@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, StyleSheet, View, Pressable, Keyboard, ActivityIndicator, useWindowDimensions } from 'react-native';
+import { Modal, StyleSheet, View, Pressable, Keyboard, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { useLocalSearchParams, useNavigation, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useBottomTabBarHeight } from 'expo-router/js-tabs';
@@ -55,6 +55,12 @@ export default function NoteEditorScreen() {
   const { height: screenHeight } = useWindowDimensions();
   const [isFocused, setIsFocused] = useState(false);
   const [tagPickerOpen, setTagPickerOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  // Snapshot of the editor's selection at the instant "Create Checklist" is
+  // pressed (onPressIn) — see NoteEditorHandle.getSelection. A highlight here
+  // scopes which lines become items; captured on press-in because completing
+  // the tap can blur the input and collapse the selection first.
+  const pendingSelection = useRef<{ start: number; end: number } | null>(null);
   // Undo/redo availability, reported by NoteEditor only when it flips —
   // so typing doesn't re-render this screen on every keystroke.
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
@@ -73,6 +79,13 @@ export default function NoteEditorScreen() {
   // ChecklistEditor has actually mounted (the Firestore round-trip means
   // the type transition is async, so we can't focus inline).
   const justToggledToChecklist = useRef(false);
+  // Re-entrancy guard for the text↔checklist toggle. The conversion isn't
+  // reflected until `note.type` flips (an async Firestore round-trip), so
+  // without this a second tap before the flip would run the seed again with
+  // fresh item ids and DUPLICATE the list. Cleared once the type settles
+  // (the effect below). Stays set if a conversion somehow never lands —
+  // which safely blocks the dupe spam rather than piling rows up.
+  const convertingType = useRef(false);
 
   // Animated scroll ref — required for scrollTo worklet from Reanimated.
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
@@ -252,13 +265,19 @@ export default function NoteEditorScreen() {
   );
 
   // Toggle between text and checklist modes. Round-trip is data-preserving:
-  //   text → checklist: parse the bottom of `content` for markdown checkbox
-  //                     lines as items; everything above becomes description.
+  //   text → checklist: selection-aware (see parseChecklistFromText) — a
+  //                     highlight converts just those lines to items and
+  //                     keeps the rest as description; with no highlight,
+  //                     only existing `- [ ]` lines convert (revert path).
   //   checklist → text: dump description + items as markdown content. The
   //                     dump format is round-trip parseable so a clean cycle
   //                     restores everything exactly.
   const handleToggleType = useCallback(() => {
     if (!id || !note) return;
+    // Ignore taps until the in-flight conversion's type flip lands — see
+    // convertingType above. Prevents double-seed duplicates.
+    if (convertingType.current) return;
+    convertingType.current = true;
     // Dismiss keyboard before swapping editors. Without this, the
     // currently-focused input (NoteEditor's content or a checklist row)
     // briefly fights with the new editor's focus call, producing a
@@ -292,7 +311,15 @@ export default function NoteEditorScreen() {
       // any in-flight typing. Falls back to the prop value if the
       // editor handle isn't available yet.
       const latestContent = noteEditorRef.current?.getLatestContent() ?? note.content ?? '';
-      const { description, items: parsed } = parseChecklistFromText(latestContent, makeItemId);
+      // A highlight (captured on press-in) scopes which lines become items;
+      // with none, only existing `- [ ]` lines convert (the revert path).
+      const selection = pendingSelection.current ?? undefined;
+      pendingSelection.current = null;
+      const { description, items: parsed } = parseChecklistFromText(
+        latestContent,
+        makeItemId,
+        selection,
+      );
       const now = Date.now();
       const itemDocs = parsed.map((it, idx) => toItemDoc(it, idx, user?.uid ?? '', now));
       const summary = summaryOf(itemDocs);
@@ -315,29 +342,18 @@ export default function NoteEditorScreen() {
     }
   }, [id, note, updateNote, checklist, user?.uid]);
 
-  // Going text → checklist is one tap (non-destructive). The reverse
-  // ("Undo Checklist") discards every checkbox's completed state, so gate
-  // that direction behind a confirm — it's a top-center button that's
-  // easy to hit by accident, and the loss isn't recoverable.
-  const confirmToggleType = useCallback(() => {
-    if (note?.type !== 'checklist') {
-      handleToggleType();
-      return;
-    }
-    Alert.alert(
-      'Convert to text?',
-      "This removes the checklist's completed states. The text is preserved.",
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Convert', style: 'destructive', onPress: handleToggleType },
-      ],
-    );
-  }, [note?.type, handleToggleType]);
+  // Both directions are one tap and fully reversible: "Undo Checklist" dumps
+  // items as `- [ ]` / `- [x]` text (checked state preserved in the box), and
+  // re-converting reads that back — so nothing is lost and no confirm alert
+  // is needed.
 
   // Focus first item once ChecklistEditor has actually mounted following
   // a text→checklist toggle. requestAnimationFrame defers one render
   // tick so the new editor's refs are wired up.
   useEffect(() => {
+    // The type has settled (initial mount, or a conversion landed) — release
+    // the re-entrancy guard so the next toggle is allowed.
+    convertingType.current = false;
     if (note?.type === 'checklist' && justToggledToChecklist.current) {
       justToggledToChecklist.current = false;
       requestAnimationFrame(() => {
@@ -410,7 +426,13 @@ export default function NoteEditorScreen() {
           {/* Centered toggle: text ↔ checklist. Always visible — round-trip
               is data-preserving via the markdown dump format. */}
           <Pressable
-            onPress={confirmToggleType}
+            onPress={handleToggleType}
+            // Snapshot the editor's highlight the instant the press starts —
+            // completing the tap can blur the input and collapse it. Read in
+            // handleToggleType to scope which lines convert to items.
+            onPressIn={() => {
+              pendingSelection.current = noteEditorRef.current?.getSelection() ?? null;
+            }}
             style={styles.headerCenterButton}
             hitSlop={8}
             accessibilityLabel={
@@ -424,21 +446,76 @@ export default function NoteEditorScreen() {
               {note.type === 'checklist' ? 'Undo Checklist' : 'Create Checklist'}
             </ThemedText>
           </Pressable>
-          <Pressable
-            onPress={() => { setIsFocused(false); Keyboard.dismiss(); }}
-            disabled={!isFocused}
-            style={styles.headerButton}
-            hitSlop={8}
-          >
-            <ThemedText style={[styles.headerButtonText, { color: isFocused ? colors.tint : colors.icon }]}>Done</ThemedText>
-          </Pressable>
+          <View style={styles.headerRight}>
+            {/* Help for the highlight-to-pick-items flow. Only shown in text
+                mode, where "Create Checklist" is the relevant action. */}
+            {note.type !== 'checklist' && (
+              <Pressable
+                onPress={() => setHelpOpen(true)}
+                style={styles.headerIconButton}
+                hitSlop={8}
+                accessibilityLabel="How Create Checklist works"
+                accessibilityRole="button"
+              >
+                <IconSymbol name="questionmark.circle" size={20} color={colors.icon} />
+              </Pressable>
+            )}
+            <Pressable
+              onPress={() => { setIsFocused(false); Keyboard.dismiss(); }}
+              disabled={!isFocused}
+              style={styles.headerButton}
+              hitSlop={8}
+            >
+              <ThemedText style={[styles.headerButtonText, { color: isFocused ? colors.tint : colors.icon }]}>Done</ThemedText>
+            </Pressable>
+          </View>
         </View>
       </SafeAreaView>
+
+      <Modal
+        visible={helpOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setHelpOpen(false)}
+      >
+        <Pressable style={styles.helpBackdrop} onPress={() => setHelpOpen(false)}>
+          {/* Inner press swallows taps so tapping the card doesn't dismiss. */}
+          <Pressable
+            style={[styles.helpCard, { backgroundColor: colors.background, borderColor: colors.tileBorder }]}
+            onPress={() => {}}
+          >
+            <ThemedText style={styles.helpTitle}>Creating a checklist</ThemedText>
+            <ThemedText style={[styles.helpHeading, { color: colors.tint }]}>Highlight to pick items</ThemedText>
+            <ThemedText style={styles.helpBody}>
+              Select the lines you want as checklist items, then tap Create Checklist.
+              Only the highlighted lines become items (blank lines are skipped). The
+              rest of your note stays as the description. A highlighted line already
+              written as “- [ ]” / “- [x]” keeps just its text, and the box decides
+              whether it starts checked.
+            </ThemedText>
+            <ThemedText style={[styles.helpHeading, { color: colors.tint }]}>Automatic conversion</ThemedText>
+            <ThemedText style={styles.helpBody}>
+              With nothing highlighted, lines written as “- [ ]” (to-do) or “- [x]”
+              (done) become items. Undo Checklist turns your items back into those
+              “- [ ]” / “- [x]” lines, so converting back and forth keeps everything,
+              including what’s checked off. A note with no “- [ ]” lines just becomes a
+              checklist with your text as the description and an empty list.
+            </ThemedText>
+            <Pressable
+              onPress={() => setHelpOpen(false)}
+              style={[styles.helpButton, { backgroundColor: colors.tint }]}
+              accessibilityRole="button"
+            >
+              <ThemedText style={styles.helpButtonText}>Got it</ThemedText>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {isOffline && (
         <View style={styles.offlineBanner}>
           <ThemedText style={styles.offlineBannerText}>
-            Offline — force-quitting the app may lose unsaved changes.
+            Offline. Force-quitting the app may lose unsaved changes.
           </ThemedText>
         </View>
       )}
@@ -591,6 +668,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 8,
   },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerIconButton: {
+    padding: 8,
+  },
   headerCenterButton: {
     position: 'absolute',
     left: 0,
@@ -654,5 +738,48 @@ const styles = StyleSheet.create({
     color: '#1F2937',
     fontWeight: '600',
     textAlign: 'center',
+  },
+  helpBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 28,
+  },
+  helpCard: {
+    width: '100%',
+    maxWidth: 420,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 20,
+  },
+  helpTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 12,
+  },
+  helpHeading: {
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  helpBody: {
+    fontSize: 15,
+    lineHeight: 21,
+    marginBottom: 12,
+  },
+  helpButton: {
+    marginTop: 4,
+    alignSelf: 'flex-end',
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+    borderRadius: 10,
+  },
+  helpButtonText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
   },
 });
