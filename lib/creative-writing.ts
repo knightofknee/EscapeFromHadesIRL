@@ -8,6 +8,18 @@ function flagKey(habitId: string): string {
   return `${FLAG_KEY_PREFIX}${habitId}`;
 }
 
+/** Remove every "already bumped today" flag. Used on sign-out/account deletion
+ *  so no per-habit local flag outlives the account. */
+export async function clearAllCreativeWritingFlags(): Promise<void> {
+  try {
+    const keys = await AsyncStorage.getAllKeys();
+    const mine = keys.filter((k) => k.startsWith(FLAG_KEY_PREFIX));
+    if (mine.length > 0) await AsyncStorage.multiRemove(mine);
+  } catch (e) {
+    console.error('clearAllCreativeWritingFlags failed:', e);
+  }
+}
+
 /**
  * Auto-bump every active Creative Writing habit to 'yes' on the FIRST note
  * save of the day — and only the first.

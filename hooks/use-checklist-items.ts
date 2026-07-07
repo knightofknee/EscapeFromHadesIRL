@@ -26,6 +26,7 @@ import type {
   ChecklistItemDoc,
   ChecklistSummary,
 } from '@/types/note';
+import { useOfflineGuard } from '@/contexts/offline-context';
 
 // Matches the editor's old debounce: typing in an item text field writes
 // the item doc once the user pauses, not on every keystroke.
@@ -109,6 +110,13 @@ export function useChecklistItems({
   itemsMigrated,
   initialSummary,
 }: Params): UseChecklistItems {
+  // Firestore uses a memory-only cache (Web JS SDK — no RN disk persistence),
+  // so an offline write is queued in RAM and lost if the app is killed before
+  // reconnect. Guard the discrete structural mutations the same way the rest
+  // of the app does (recordHabit, notes, vacation): block + a deduped "connect
+  // to save" alert, rather than silently accepting an edit that will vanish.
+  const { requireOnline } = useOfflineGuard();
+
   // Server truth (null until the first snapshot) and the optimistic overlay.
   const [serverItems, setServerItems] = useState<ChecklistItemDoc[] | null>(null);
   const [pending, setPending] = useState<Map<string, PendingOp>>(() => new Map());
@@ -194,6 +202,7 @@ export function useChecklistItems({
   // ----- mutations (read itemsRef.current so identity = [noteId]) -----
 
   const addItem = useCallback((): string => {
+    if (!requireOnline()) return '';
     const id = makeItemId();
     const now = Date.now();
     const cur = itemsRef.current;
@@ -214,10 +223,11 @@ export function useChecklistItems({
     );
     writeNoteState(noteId, [...cur, item], { touch: true });
     return id;
-  }, [noteId, userId, writeNoteState]);
+  }, [noteId, userId, writeNoteState, requireOnline]);
 
   const toggleItem = useCallback(
     (id: string) => {
+      if (!requireOnline()) return;
       const cur = itemsRef.current;
       const target = cur.find((i) => i.id === id);
       if (!target) return;
@@ -247,7 +257,7 @@ export function useChecklistItems({
         { touch: false },
       );
     },
-    [noteId, writeNoteState],
+    [noteId, writeNoteState, requireOnline],
   );
 
   const setItemText = useCallback(
@@ -269,6 +279,7 @@ export function useChecklistItems({
 
   const deleteItem = useCallback(
     (id: string) => {
+      if (!requireOnline()) return;
       const cur = itemsRef.current;
       if (!cur.some((i) => i.id === id)) return;
       setPending((p) => new Map(p).set(id, { kind: 'delete' }));
@@ -279,11 +290,12 @@ export function useChecklistItems({
       );
       writeNoteState(noteId, cur.filter((i) => i.id !== id), { touch: true });
     },
-    [noteId, writeNoteState],
+    [noteId, writeNoteState, requireOnline],
   );
 
   const restoreItem = useCallback(
     (item: ChecklistItemDoc) => {
+      if (!requireOnline()) return;
       // Re-create with the original fields (its `order` lands it back in
       // place; a completed item re-sorts by completedAt).
       setPending((p) => new Map(p).set(item.id, { kind: 'write', item }));
@@ -293,11 +305,12 @@ export function useChecklistItems({
       const cur = itemsRef.current.filter((i) => i.id !== item.id);
       writeNoteState(noteId, [...cur, item], { touch: true });
     },
-    [noteId, writeNoteState],
+    [noteId, writeNoteState, requireOnline],
   );
 
   const reorderUncompleted = useCallback(
     (newUncompleted: ChecklistItemDoc[]) => {
+      if (!requireOnline()) return;
       // Renumber the uncompleted group to its new positions; write only the
       // items whose order actually changed (completed items are untouched —
       // they sort by completedAt).
@@ -323,11 +336,12 @@ export function useChecklistItems({
         { touch: false },
       );
     },
-    [noteId, writeNoteState],
+    [noteId, writeNoteState, requireOnline],
   );
 
   const seedItems = useCallback(
     (newItems: ChecklistItemDoc[], summary: ChecklistSummary) => {
+      if (!requireOnline()) return;
       // Optimistic display so the editor shows items the instant it mounts;
       // the union guard keeps them until the listener confirms.
       migratedRef.current = true;
@@ -344,10 +358,11 @@ export function useChecklistItems({
           migratingRef.current = false;
         });
     },
-    [noteId],
+    [noteId, requireOnline],
   );
 
   const clearItems = useCallback(async () => {
+    if (!requireOnline()) return;
     // Cancel queued text writes so a late debounce can't re-create a doc
     // after we delete everything.
     if (textTimer.current) {
@@ -358,7 +373,7 @@ export function useChecklistItems({
     setPending(new Map());
     setServerItems([]);
     await deleteAllItems(noteId, userId ?? '');
-  }, [noteId, userId]);
+  }, [noteId, userId, requireOnline]);
 
   const getItems = useCallback(() => itemsRef.current, []);
 

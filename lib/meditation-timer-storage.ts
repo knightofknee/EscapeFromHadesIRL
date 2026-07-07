@@ -69,6 +69,18 @@ export async function clearTimerState(habitId: string): Promise<void> {
   }
 }
 
+/** Remove every persisted timer slot (all habits). Used on sign-out/account
+ *  deletion so no in-flight timer leaks to the next session. */
+export async function clearAllTimerState(): Promise<void> {
+  try {
+    const keys = await AsyncStorage.getAllKeys();
+    const mine = keys.filter((k) => k.startsWith(KEY_PREFIX));
+    if (mine.length > 0) await AsyncStorage.multiRemove(mine);
+  } catch (e) {
+    console.error('clearAllTimerState failed:', e);
+  }
+}
+
 /**
  * Compute the remaining seconds for the given persisted state at `now` (ms).
  * Paused → returns the stored `remainingAtStart`. Running → derives by

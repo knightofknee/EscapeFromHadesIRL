@@ -8,6 +8,7 @@ import {
 } from '../lib/starter-tasks';
 import { STARTER_TASKS } from '../constants/starter-tasks';
 import type { Habit, RecordingMode } from '../types/habit';
+import type { Quest } from '../types/quest';
 
 const task = (key: string) => STARTER_TASKS.find((t) => t.key === key)!;
 
@@ -112,5 +113,43 @@ describe('resolveStarterTasks', () => {
     const habits = [h({ recordingMode: 'steps' })]; // walk already added
     const out = resolveStarterTasks(['music', 'walk', 'read'], habits);
     expect(out.map((t) => t.key)).toEqual(['read', 'music']); // canonical order, walk dropped
+  });
+});
+
+describe('partial-failure heal (habit created, quest failed)', () => {
+  const q = (partial: Partial<Quest>): Quest =>
+    ({
+      id: 'q',
+      userId: 'u',
+      templateKey: null,
+      name: '',
+      description: '',
+      category: 'custom',
+      questType: 'positive',
+      linkedHabitIds: [],
+      targetDaysPerWeek: 5,
+      status: 'active',
+      createdAt: 0,
+      updatedAt: 0,
+      ...partial,
+    }) as Quest;
+
+  test('walk with a habit but NO quest is not "added" when quests are known', () => {
+    const walk = task('walk');
+    const habits = [h({ id: 'hw', recordingMode: 'steps' })];
+    // habit-only check (no quests) still reports added — back-compat.
+    expect(isStarterAdded(walk, habits)).toBe(true);
+    // With quests supplied and none linked, it is NOT fully added.
+    expect(isStarterAdded(walk, habits, [])).toBe(false);
+    // So it survives resolve and can be re-run to create the missing quest.
+    expect(resolveStarterTasks(['walk'], habits, []).map((t) => t.key)).toEqual(['walk']);
+  });
+
+  test('walk with both habit and its linked quest is fully added', () => {
+    const walk = task('walk');
+    const habits = [h({ id: 'hw', recordingMode: 'steps' })];
+    const quests = [q({ templateKey: walk.questTemplateKey, linkedHabitIds: ['hw'] })];
+    expect(isStarterAdded(walk, habits, quests)).toBe(true);
+    expect(resolveStarterTasks(['walk'], habits, quests)).toEqual([]);
   });
 });

@@ -16,11 +16,25 @@ import { useTodayDate } from '@/hooks/use-today-date';
 import { QuestColors } from '@/constants/theme';
 import { CATEGORY_NAMES, TEMPLATE_BY_KEY, findVirtualQuestById, CUSTOM_QUEST_PHILOSOPHY } from '@/constants/quest-templates';
 import { QuestPhilosophy } from '@/components/quests/quest-philosophy';
+import { KIND_COLOR, type QuestKind } from '@/components/quests/quest-card';
 import { questStandingLine } from '@/lib/quest-narrative';
+import { emitError } from '@/lib/error-bus';
 import { get18MonthWindow } from '@/lib/date-utils';
 import { isTieredMode } from '@/lib/habit-scoring';
 import { setPendingHabitCallback } from '@/lib/pending-habit-link';
 
+
+// Plain display names for the raw recordingMode enum shown on habit rows.
+const MODE_NAMES: Record<string, string> = {
+  boolean: 'check-in',
+  triple: 'tiered check-in',
+  quad: 'tiered check-in',
+  counter: 'counter',
+  value: 'value',
+  steps: 'step counter',
+  meditation: 'meditation timer',
+  creativeWriting: 'writing',
+};
 
 export default function QuestDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -92,23 +106,50 @@ export default function QuestDetailScreen() {
   }
 
   const template = quest.templateKey ? TEMPLATE_BY_KEY[quest.templateKey] : null;
-  const categoryColor = QuestColors[quest.category] ?? QuestColors.custom;
+  // Which of the three kinds this quest is — drives the accent color and the
+  // plain-words identity line (matches the home screen's sections).
+  const kind: QuestKind = isVirtual ? 'trial' : template ? 'challenge' : 'pact';
+  const kindColor = KIND_COLOR[kind];
+  const kindLine =
+    kind === 'trial'
+      ? 'Eternal trial. Always on, watches every habit, cannot be abandoned.'
+      : kind === 'challenge'
+        ? 'Challenge. Scores the habit you linked.'
+        : 'Your pact. Yours to edit or abandon.';
+  const rungLine =
+    kind === 'trial'
+      ? `Rung ${['', 'I', 'II', 'III'][quest.successLevel ?? 1]} of the ${
+          quest.scoreWindow === '18mo' ? '18-month' : '30-day'
+        } ladder.`
+      : null;
 
   // Captured after the !quest guard above — keeps the async delete closure
   // free of non-null assertions.
   const q = quest;
   function confirmDelete() {
+    // A template challenge is restartable from its Begin stub — say so, or
+    // "permanently removed" reads scarier than it is. Pacts really are gone.
     Alert.alert(
       'Abandon quest?',
-      `"${q.name}" will be permanently removed.`,
+      template
+        ? `"${q.name}" will be removed. Your habit and its records stay, and you can begin it again anytime.`
+        : `"${q.name}" will be permanently removed.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Abandon',
           style: 'destructive',
-          onPress: async () => {
+          onPress: () => {
+            // Fire-and-forget: the listener drops the quest locally at once,
+            // so leave immediately instead of trapping the user behind a
+            // spinner waiting on a server ack that can stall for minutes.
             setDeleting(true);
-            await deleteQuest(q.id);
+            deleteQuest(q.id).catch((err) => {
+              console.error('Failed to abandon quest:', err);
+              emitError("Couldn't abandon the quest. Check your connection and try again.", () =>
+                void deleteQuest(q.id),
+              );
+            });
             router.back();
           },
         },
@@ -129,14 +170,19 @@ export default function QuestDetailScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        {/* Title block */}
+        {/* Title block — the accent bar carries the KIND color (matching the
+            home sections), and one plain line says what kind this is. */}
         <View style={styles.titleBlock}>
-          <View style={[styles.categoryBar, { backgroundColor: categoryColor }]} />
+          <View style={[styles.categoryBar, { backgroundColor: kindColor }]} />
           <View style={styles.titleText}>
             <ThemedText style={styles.name}>{quest.name}</ThemedText>
             <ThemedText style={styles.category}>
               {CATEGORY_NAMES[quest.category]}
               {quest.questType === 'reduce' ? ' · REDUCE' : ''}
+            </ThemedText>
+            <ThemedText style={styles.kindLine}>
+              {kindLine}
+              {rungLine ? ` ${rungLine}` : ''}
             </ThemedText>
             {quest.description ? (
               <ThemedText style={styles.description}>{quest.description}</ThemedText>
@@ -157,7 +203,7 @@ export default function QuestDetailScreen() {
           const window = quest.scoreWindow ?? 'both';
           const is18 = window === '18mo';
           const headlineScore = (is18 ? questScore?.score18mo : questScore?.score) ?? 0;
-          const headlineColor = is18 ? QuestColors.gold : flameColor(headlineScore);
+          const headlineColor = is18 ? QuestColors.styx : flameColor(headlineScore);
           // Day counts for the scored window (18mo quests show their own run).
           const done = (is18 ? questScore?.completedDays18 : questScore?.completedDays) ?? 0;
           const goal = (is18 ? questScore?.targetDays18 : questScore?.targetDays) ?? 0;
@@ -199,7 +245,7 @@ export default function QuestDetailScreen() {
               <ScoreBar
                 score={headlineScore}
                 height={8}
-                color={is18 ? QuestColors.gold : undefined}
+                color={is18 ? QuestColors.styx : undefined}
               />
 
               {window === 'both' && (
@@ -207,12 +253,21 @@ export default function QuestDetailScreen() {
                   <View style={styles.scoreDivider} />
                   <View style={styles.score18Header}>
                     <ThemedText style={styles.scoreLabel}>18-MONTH AVERAGE</ThemedText>
-                    <ThemedText style={[styles.score18Value, { color: QuestColors.gold }]}>
+                    <ThemedText style={[styles.score18Value, { color: QuestColors.styx }]}>
                       {questScore?.score18mo ?? 0}%
                     </ThemedText>
                   </View>
-                  <ScoreBar score={questScore?.score18mo ?? 0} height={8} color={QuestColors.gold} />
+                  <ScoreBar score={questScore?.score18mo ?? 0} height={8} color={QuestColors.styx} />
                 </>
+              )}
+
+              {/* The long window includes time before tracking began — say so,
+                  or a young account reads its near-empty bar as a bug. */}
+              {window !== '30d' && (
+                <ThemedText style={styles.windowNote}>
+                  The 18-month average counts the full window, even the time
+                  before you started. It fills as your history grows.
+                </ThemedText>
               )}
 
               {/* WHERE YOU STAND — the live readout of your default for this
@@ -242,7 +297,7 @@ export default function QuestDetailScreen() {
                 <View style={styles.habitRow}>
                   <View style={[styles.habitDot, { backgroundColor: best.color }]} />
                   <ThemedText style={styles.habitName}>{best.name}</ThemedText>
-                  <ThemedText style={styles.habitMode}>{best.recordingMode}</ThemedText>
+                  <ThemedText style={styles.habitMode}>{MODE_NAMES[best.recordingMode] ?? best.recordingMode}</ThemedText>
                 </View>
               ) : (
                 <ThemedText style={styles.dimText}>
@@ -336,7 +391,7 @@ export default function QuestDetailScreen() {
               <View key={h.id} style={styles.habitRow}>
                 <View style={[styles.habitDot, { backgroundColor: h.color }]} />
                 <ThemedText style={styles.habitName}>{h.name}</ThemedText>
-                <ThemedText style={styles.habitMode}>{h.recordingMode}</ThemedText>
+                <ThemedText style={styles.habitMode}>{MODE_NAMES[h.recordingMode] ?? h.recordingMode}</ThemedText>
               </View>
             ))
           )}
@@ -360,18 +415,30 @@ export default function QuestDetailScreen() {
               <View style={styles.levelRow}>
                 {([1, 2, 3] as const).map((lvl) => {
                   const active = (quest.successLevel ?? 1) === lvl;
+                  // Bronze / silver / gold — same tier colors as the cards.
+                  const tierColor =
+                    lvl === 1 ? QuestColors.tierPart : lvl === 2 ? QuestColors.tierGoal : QuestColors.tierIdeal;
+                  const tierBg =
+                    lvl === 1 ? QuestColors.tierPartDim : lvl === 2 ? QuestColors.tierGoalDim : QuestColors.tierIdealDim;
                   return (
                     <Pressable
                       key={lvl}
                       disabled={locked}
                       style={[
                         styles.levelChip,
-                        active && styles.levelChipActive,
+                        active && { backgroundColor: tierBg, borderColor: tierColor },
                         locked && !active && styles.levelChipLocked,
                       ]}
                       onPress={() => updateQuest(quest.id, { successLevel: lvl })}>
-                      <ThemedText style={[styles.levelChipText, active && styles.levelChipTextActive]}>
-                        {lvl === 1 ? 'BASIC' : lvl === 2 ? 'GOAL' : 'IDEAL'}
+                      {/* PARTICIPATION is tight in a 3-up flex chip — shrink,
+                          never wrap. */}
+                      <ThemedText
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.7}
+                        style={[styles.levelChipText, active && { color: tierColor }]}
+                      >
+                        {lvl === 1 ? 'PARTICIPATION' : lvl === 2 ? 'GOAL' : 'IDEAL'}
                       </ThemedText>
                     </Pressable>
                   );
@@ -386,8 +453,10 @@ export default function QuestDetailScreen() {
         {!isVirtual && (
           <View style={styles.actions}>
             {/* Personal pacts reopen the create form in edit mode with every
-                create-time field prefilled. */}
-            {quest.templateKey === null && (
+                create-time field prefilled. Gate on !template (not a null
+                templateKey) so orphaned legacy-template quests — classified
+                and labeled as pacts — actually get the promised Edit. */}
+            {!template && (
               <Pressable
                 style={styles.editBtn}
                 onPress={() => router.push(`/(tabs)/(quests)/create?editQuestId=${quest.id}`)}
@@ -470,6 +539,16 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: QuestColors.textDim,
     letterSpacing: 1,
+  },
+  kindLine: {
+    fontSize: 12,
+    color: QuestColors.textDim,
+    lineHeight: 17,
+  },
+  windowNote: {
+    fontSize: 11,
+    color: QuestColors.textDim,
+    lineHeight: 16,
   },
   description: {
     fontSize: 14,

@@ -72,17 +72,24 @@ export function SpotlightTour() {
     const poll = async () => {
       if (cancelled) return;
       const r = await measureTarget(step.target!);
-      if (!cancelled && r && r.width > 0) {
-        setMeasured((prev) =>
-          prev &&
-          prev.index === index &&
-          Math.abs(prev.rect.x - r.x) < 0.5 &&
-          Math.abs(prev.rect.y - r.y) < 0.5 &&
-          Math.abs(prev.rect.width - r.width) < 0.5 &&
-          Math.abs(prev.rect.height - r.height) < 0.5
-            ? prev
-            : { index, rect: r },
-        );
+      if (!cancelled) {
+        if (r && r.width > 0) {
+          setMeasured((prev) =>
+            prev &&
+            prev.index === index &&
+            Math.abs(prev.rect.x - r.x) < 0.5 &&
+            Math.abs(prev.rect.y - r.y) < 0.5 &&
+            Math.abs(prev.rect.width - r.width) < 0.5 &&
+            Math.abs(prev.rect.height - r.height) < 0.5
+              ? prev
+              : { index, rect: r },
+          );
+        } else {
+          // Target unmounted mid-step (e.g. the spotlighted Begin stub became
+          // a QuestCard) — drop the stale rect so the step degrades to the
+          // centered beat instead of ringing whatever now sits there.
+          setMeasured((prev) => (prev && prev.index === index ? null : prev));
+        }
       }
       if (!cancelled) timer = setTimeout(poll, 180);
     };
@@ -95,7 +102,19 @@ export function SpotlightTour() {
 
   if (!visible || !step) return null;
 
-  const rect = measured && measured.index === index ? measured.rect : null;
+  const measuredRect = measured && measured.index === index ? measured.rect : null;
+  // A target scrolled fully off-screen clamps to a zero-area hole, which
+  // would render four dim bars covering 100% of the screen with no way
+  // through. Treat a degenerate hole as target-lost: the centered layout
+  // keeps the callout (and Back/Next) reachable.
+  const rect =
+    measuredRect &&
+    measuredRect.y + measuredRect.height > 0 &&
+    measuredRect.y < H &&
+    measuredRect.x + measuredRect.width > 0 &&
+    measuredRect.x < W
+      ? measuredRect
+      : null;
 
   const isLast = index === total - 1;
   const gateOk = !step.gate || step.gate(taskState);

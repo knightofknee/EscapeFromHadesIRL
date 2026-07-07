@@ -38,25 +38,34 @@ export function questStandingLine(
 }
 
 /**
- * Names the run-score band as a stop on the long ferry out of Hades, with how
- * far to the next shore. Pure derivation of runPct (0-100) — the big number
- * and bar stay; this is a label beneath them.
+ * The four shores of the ascent, in order — one source of truth shared by the
+ * home-screen waypoint row, the score-bar tick marks, and the Ascent sheet.
  */
-export function runScoreWaypoint(runPct: number): { band: string; toNext: string | null } {
-  const bands = [
-    { min: 0, name: 'Shores of the Styx' },
-    { min: 25, name: 'Asphodel Meadows' },
-    { min: 50, name: 'Elysium Fields' },
-    { min: 75, name: 'Gates of Olympus' },
-  ];
+export const ASCENT_BANDS = [
+  { min: 0, name: 'Shores of the Styx' },
+  { min: 25, name: 'Asphodel Meadows' },
+  { min: 50, name: 'Elysium Fields' },
+  { min: 75, name: 'Gates of Olympus' },
+] as const;
+
+/**
+ * Names the run-score band as a stop on the long ferry out of Hades, plus the
+ * next shore and its fixed threshold. Pure derivation of runPct (0-100).
+ * (The old "N% to X" moving delta is gone — a fixed "X at 50%" is the number
+ * the user can actually anchor to.)
+ */
+export function runScoreWaypoint(runPct: number): {
+  band: string;
+  next: { name: string; min: number } | null;
+} {
   let i = 0;
-  for (let k = 0; k < bands.length; k++) {
-    if (runPct >= bands[k].min) i = k;
+  for (let k = 0; k < ASCENT_BANDS.length; k++) {
+    if (runPct >= ASCENT_BANDS[k].min) i = k;
   }
-  const next = bands[i + 1];
+  const next = ASCENT_BANDS[i + 1];
   return {
-    band: bands[i].name,
-    toNext: next ? `${Math.max(1, Math.ceil(next.min - runPct))}% to ${next.name}` : null,
+    band: ASCENT_BANDS[i].name,
+    next: next ? { name: next.name, min: next.min } : null,
   };
 }
 

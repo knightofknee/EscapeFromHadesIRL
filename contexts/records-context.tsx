@@ -12,6 +12,7 @@ import { useAuth } from '@/contexts/auth-context';
 import { useOfflineGuard } from '@/contexts/offline-context';
 import { db, collection, query, where, doc, setDoc, onSnapshot } from '@/lib/firebase/firestore';
 import { emitError } from '@/lib/error-bus';
+import { invalidateRecordsSnapshotCache } from '@/hooks/use-records-snapshot';
 import { addDays } from '@/lib/date-utils';
 import type { HabitRecord, TripleValue, QuadValue } from '@/types/habit';
 
@@ -158,15 +159,24 @@ export function RecordsProvider({ children }: { children: ReactNode }) {
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        // Rebuild from the full snapshot: the map then always equals exactly
-        // the current query result (no stale/cross-account docs, no per-delta
-        // removed-doc bookkeeping). Equivalent cost to the old per-screen
-        // listeners, now fired once instead of N times.
-        const map = new Map<string, HabitRecord>();
-        for (const d of snapshot.docs) {
-          map.set(d.id, { id: d.id, ...d.data() } as HabitRecord);
+        // Apply only the CHANGED docs onto the previous map rather than
+        // rebuilding every record object each delivery. Unchanged records keep
+        // their identity (so memoized tiles don't all re-render) and we skip
+        // d.data() deserialization for the thousands of untouched docs — the
+        // dominant cost once the window is wide (e.g. after a Stats visit
+        // grows it to ~1095 days). The window is grow-only and an account
+        // switch resets the map to empty upstream, so a new listener's initial
+        // "all added" delivery merges onto the prior map into the correct
+        // superset with no stale out-of-window docs.
+        const next = new Map(recordsMapRef.current);
+        for (const change of snapshot.docChanges()) {
+          if (change.type === 'removed') {
+            next.delete(change.doc.id);
+          } else {
+            next.set(change.doc.id, { id: change.doc.id, ...change.doc.data() } as HabitRecord);
+          }
         }
-        setRecordsMap(map);
+        setRecordsMap(next);
         setLoadedRange({ start: win.start, end: win.end });
       },
       (error) => {
@@ -208,6 +218,9 @@ export function RecordsProvider({ children }: { children: ReactNode }) {
       const next = new Map(recordsMapRef.current);
       next.set(docId, record);
       setRecordsMap(next);
+      // The quests 18-month snapshot is a cached one-shot; drop it so quest
+      // scores refetch and reflect this write on the next quests focus.
+      invalidateRecordsSnapshotCache();
       setDoc(doc(db, 'records', docId), record).catch((err) => {
         console.error('Failed to save habit record:', err);
         // Optimistic update already showed it as recorded; the write failed

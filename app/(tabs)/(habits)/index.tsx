@@ -41,6 +41,7 @@ import { useNotes } from '@/hooks/use-notes';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { addDays, parseDate } from '@/lib/date-utils';
+import { emitError } from '@/lib/error-bus';
 import type { Habit } from '@/types/habit';
 
 export default function HabitsDayScreen() {
@@ -78,6 +79,11 @@ export default function HabitsDayScreen() {
     isLoading: vacationLoading,
     getContiguousBlock,
   } = useVacationDays();
+  // Latest set, read at write-time so a deferred retry skips days that already
+  // exist NOW (a batch.set would otherwise overwrite edits the user made to an
+  // overlapping range between the failed attempt and the retry tap).
+  const vacationDateSetRef = useRef(vacationDateSet);
+  vacationDateSetRef.current = vacationDateSet;
   // Foreground sync: re-fetch today's steps for every Steps Counter habit
   // on mount + when the app foregrounds, so tiles stay fresh without taps.
   useStepsBackfill();
@@ -322,6 +328,21 @@ export default function HabitsDayScreen() {
                     >
                       <ThemedText style={styles.addButtonText}>+ Add Your First Habit</ThemedText>
                     </Pressable>
+                    {/* Same ••• menu as the grid view — without it, a user
+                        with zero habits has no way back to the tutorial. */}
+                    <Pressable
+                      style={[
+                        styles.emptyMenuButton,
+                        { borderColor: colors.vacationButton, backgroundColor: `${colors.vacationButton}15` },
+                      ]}
+                      onPress={() => setVacationMenuVisible(true)}
+                      accessibilityLabel="More options"
+                      hitSlop={6}
+                    >
+                      <ThemedText style={[styles.menuTileText, { color: colors.vacationButton }]}>
+                        •••
+                      </ThemedText>
+                    </Pressable>
                   </>
                 )}
               </View>
@@ -407,26 +428,31 @@ export default function HabitsDayScreen() {
           onGoToTutorial={() => router.push('/starter-setup?intro=1')}
           isVacationDay={isVacationDay}
           blockSize={isVacationDay ? getContiguousBlock(viewedDate).length : 0}
-          onRemoveDay={async () => {
+          onRemoveDay={() => {
             if (!user) return;
             if (!requireOnline()) return;
-            try {
-              await deleteVacationDay({ userId: user.uid, date: viewedDate });
-            } catch (err) {
-              console.error('Failed to remove vacation day:', err);
-            }
-          }}
-          onRemoveBlock={async () => {
-            if (!user) return;
-            if (!requireOnline()) return;
-            try {
-              await deleteVacationDaysBulk({
-                userId: user.uid,
-                dates: getContiguousBlock(viewedDate),
+            // Fire-and-forget (see the vacation-set path): the tile updates
+            // from the local cache immediately; awaiting the ack could hang.
+            const date = viewedDate;
+            const write = () => {
+              deleteVacationDay({ userId: user.uid, date }).catch((err) => {
+                console.error('Failed to remove vacation day:', err);
+                emitError("Couldn't remove the vacation day. Check your connection and try again.", write);
               });
-            } catch (err) {
-              console.error('Failed to remove vacation block:', err);
-            }
+            };
+            write();
+          }}
+          onRemoveBlock={() => {
+            if (!user) return;
+            if (!requireOnline()) return;
+            const dates = getContiguousBlock(viewedDate);
+            const write = () => {
+              deleteVacationDaysBulk({ userId: user.uid, dates }).catch((err) => {
+                console.error('Failed to remove vacation block:', err);
+                emitError("Couldn't remove the vacation. Check your connection and try again.", write);
+              });
+            };
+            write();
           }}
         />
 
@@ -434,17 +460,30 @@ export default function HabitsDayScreen() {
           visible={vacationRangeVisible}
           defaultDate={viewedDate}
           onCancel={() => setVacationRangeVisible(false)}
-          onConfirm={async (startDate, endDate) => {
+          onConfirm={(startDate, endDate) => {
             if (!user) return;
             if (!requireOnline()) return;
-            const dates = buildDateRange(startDate, endDate);
-            await createVacationDays({
-              userId: user.uid,
-              dates,
-              existingDates: vacationDateSet,
-              defaultLabel: 'V',
-              defaultColor: colors.vacationDefault,
-            });
+            // Don't await the commit: latency compensation shows the days
+            // immediately, and server ack can hang for minutes on a flaky
+            // connection, leaving the modal stuck on "Saving".
+            const write = () => {
+              createVacationDays({
+                userId: user.uid,
+                dates: buildDateRange(startDate, endDate),
+                // Read the CURRENT set (not the confirm-time snapshot) so a
+                // retry doesn't clobber days edited in the meantime.
+                existingDates: vacationDateSetRef.current,
+                defaultLabel: 'V',
+                defaultColor: colors.vacationDefault,
+              }).catch((err) => {
+                console.error('Failed to create vacation days:', err);
+                emitError(
+                  "Couldn't save vacation days. Check your connection and try again.",
+                  write,
+                );
+              });
+            };
+            write();
             setVacationRangeVisible(false);
           }}
         />
@@ -629,5 +668,16 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     lineHeight: 18,
+  },
+  // Empty-state variant of the ⋯ button: same dashed look, but sized by
+  // padding instead of flex since the empty state is a centered column.
+  emptyMenuButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 28,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

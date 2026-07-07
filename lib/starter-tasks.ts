@@ -32,8 +32,38 @@ export function findExistingStarter(task: StarterTask, habits: Habit[]): Habit |
   return habits.find((h) => h.name.trim().toLowerCase() === name);
 }
 
-export function isStarterAdded(task: StarterTask, habits: Habit[]): boolean {
-  return findExistingStarter(task, habits) !== undefined;
+/**
+ * The active quest a template-backed starter would create, if it already
+ * exists (matched by template key + a link to this starter's habit).
+ */
+export function findExistingStarterQuest(
+  task: StarterTask,
+  habit: Habit,
+  quests: Quest[],
+): Quest | undefined {
+  if (!task.questTemplateKey) return undefined;
+  return quests.find(
+    (q) =>
+      q.status === 'active' &&
+      q.templateKey === task.questTemplateKey &&
+      q.linkedHabitIds.includes(habit.id),
+  );
+}
+
+/**
+ * Whether this starter is fully present. With `quests` supplied, a
+ * template-backed starter counts as added only once BOTH its habit and its
+ * linked quest exist — otherwise a habit-created-but-quest-failed starter
+ * would be grayed out in the picker and skipped forever, stranding the quest.
+ * Called without `quests` (e.g. unit tests), it keeps the habit-only meaning.
+ */
+export function isStarterAdded(task: StarterTask, habits: Habit[], quests?: Quest[]): boolean {
+  const habit = findExistingStarter(task, habits);
+  if (!habit) return false;
+  if (quests && task.questTemplateKey) {
+    return findExistingStarterQuest(task, habit, quests) !== undefined;
+  }
+  return true;
 }
 
 /** First acronym form not already in `used` (uppercased). Falls back to the
@@ -76,10 +106,15 @@ export function computeFreePositions(habits: Habit[], count: number): GridPositi
   return out;
 }
 
-/** The selected, not-already-added starter tasks in canonical order. */
-export function resolveStarterTasks(selectedKeys: string[], habits: Habit[]): StarterTask[] {
+/** The selected, not-already-added starter tasks in canonical order. With
+ *  `quests`, "added" also requires the linked quest (see isStarterAdded). */
+export function resolveStarterTasks(
+  selectedKeys: string[],
+  habits: Habit[],
+  quests?: Quest[],
+): StarterTask[] {
   const keys = new Set(selectedKeys);
-  return STARTER_TASKS.filter((t) => keys.has(t.key) && !isStarterAdded(t, habits));
+  return STARTER_TASKS.filter((t) => keys.has(t.key) && !isStarterAdded(t, habits, quests));
 }
 
 /**
@@ -93,8 +128,9 @@ export async function applyStarterTasks(
   habits: Habit[],
   todayStr: string,
   ctx: StarterContext,
+  quests?: Quest[],
 ): Promise<Habit[]> {
-  const tasks = resolveStarterTasks(selectedKeys, habits);
+  const tasks = resolveStarterTasks(selectedKeys, habits, quests);
   if (tasks.length === 0) return [];
 
   const usedAbbr = new Set(
@@ -103,43 +139,52 @@ export async function applyStarterTasks(
   const usedColor = new Set(
     habits.map((h) => (h.color ?? '').toUpperCase()).filter(Boolean),
   );
+  // Upper bound: at most one new position per task (fewer when a task only
+  // needs its missing quest healed). Allocated lazily via posIdx below.
   const positions = computeFreePositions(habits, tasks.length);
+  let posIdx = 0;
 
   const created: Habit[] = [];
-  for (let i = 0; i < tasks.length; i++) {
-    const task = tasks[i];
-    const abbreviation = pickAcronym(task, usedAbbr);
-    usedAbbr.add(abbreviation.toUpperCase());
-    const color = pickColor(task, usedColor);
-    usedColor.add(color.toUpperCase());
+  for (const task of tasks) {
+    // A prior partial run may have created the habit but not its quest —
+    // reuse the existing habit and just create the missing quest.
+    let habit = findExistingStarter(task, habits);
+    if (!habit) {
+      const abbreviation = pickAcronym(task, usedAbbr);
+      usedAbbr.add(abbreviation.toUpperCase());
+      const color = pickColor(task, usedColor);
+      usedColor.add(color.toUpperCase());
 
-    const habitInput: Omit<Habit, 'id' | 'userId' | 'createdAt' | 'updatedAt'> = {
-      name: task.label,
-      abbreviation,
-      recordingMode: task.recordingMode,
-      tileSize: 1,
-      position: positions[i] ?? { row: 0, col: 0 },
-      color,
-      showName: true,
-      isArchived: false,
-      ...(task.stepGoals ? { stepGoals: task.stepGoals } : {}),
-      ...(task.recordingMode === 'steps'
-        ? { stepsConfirmedThrough: addDays(todayStr, -1) }
-        : {}),
-      ...(task.meditationSessions != null ? { meditationSessions: task.meditationSessions } : {}),
-      ...(task.meditationMinutes != null ? { meditationMinutes: task.meditationMinutes } : {}),
-      ...(task.meditationIdealTotalMinutes != null
-        ? { meditationIdealTotalMinutes: task.meditationIdealTotalMinutes }
-        : {}),
-    };
+      const habitInput: Omit<Habit, 'id' | 'userId' | 'createdAt' | 'updatedAt'> = {
+        name: task.label,
+        abbreviation,
+        recordingMode: task.recordingMode,
+        tileSize: 1,
+        position: positions[posIdx++] ?? { row: 0, col: 0 },
+        color,
+        showName: true,
+        isArchived: false,
+        ...(task.stepGoals ? { stepGoals: task.stepGoals } : {}),
+        ...(task.recordingMode === 'steps'
+          ? { stepsConfirmedThrough: addDays(todayStr, -1) }
+          : {}),
+        ...(task.meditationSessions != null ? { meditationSessions: task.meditationSessions } : {}),
+        ...(task.meditationMinutes != null ? { meditationMinutes: task.meditationMinutes } : {}),
+        ...(task.meditationIdealTotalMinutes != null
+          ? { meditationIdealTotalMinutes: task.meditationIdealTotalMinutes }
+          : {}),
+      };
 
-    const habit = await ctx.createHabit(habitInput);
-    if (!habit) continue; // blocked (offline guard already alerted) — keep going
-    created.push(habit);
+      habit = await ctx.createHabit(habitInput);
+      if (!habit) continue; // blocked (offline guard already alerted) — keep going
+      created.push(habit);
+    }
 
     if (task.questTemplateKey) {
+      // Skip if the linked quest already exists (partial-run heal path).
+      const questExists = quests && findExistingStarterQuest(task, habit, quests);
       const t = TEMPLATE_BY_KEY[task.questTemplateKey];
-      if (t) {
+      if (!questExists && t) {
         await ctx.createQuest({
           templateKey: t.key,
           name: t.name,

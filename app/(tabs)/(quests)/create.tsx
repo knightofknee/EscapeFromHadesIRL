@@ -70,11 +70,6 @@ export default function CreateQuestScreen() {
   const [linkedHabitIds, setLinkedHabitIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
 
-  // Which rolling average the pact targets — the single-window choice that
-  // used to live on the Stygian Pact template. BOTH keeps the classic
-  // dual-bar behavior.
-  const [customWindow, setCustomWindow] = useState<'30d' | '18mo' | 'both'>('both');
-
   // Edit mode: prefill every create-time field from the pact, once.
   const didPrefill = useRef(false);
   useEffect(() => {
@@ -86,7 +81,6 @@ export default function CreateQuestScreen() {
     setCustomQuestType(editQuest.questType);
     setTargetDays(editQuest.targetDaysPerWeek);
     setSuccessLevel((editQuest.successLevel ?? 1) as 1 | 2 | 3);
-    setCustomWindow(editQuest.scoreWindow ?? 'both');
     setLinkedHabitIds(editQuest.linkedHabitIds);
   }, [editQuest]);
 
@@ -152,7 +146,6 @@ export default function CreateQuestScreen() {
           questType: customQuestType,
           targetDaysPerWeek: targetDays,
           successLevel: customQuestType === 'positive' && isQuadHabit ? successLevel : 1,
-          scoreWindow: customWindow,
           personalPactWhy: customWhy.trim(),
           linkedHabitIds: habitIds,
         });
@@ -198,7 +191,8 @@ export default function CreateQuestScreen() {
           linkedHabitIds: habitIds,
           // Only meaningful for a positive quest on a quad habit; else basic.
           successLevel: customQuestType === 'positive' && isQuadHabit ? successLevel : 1,
-          scoreWindow: customWindow,
+          // Custom pacts always score both windows; only templates narrow it.
+          scoreWindow: 'both',
           personalPactWhy: customWhy.trim(),
           allHabits: false,
           status: 'active',
@@ -386,29 +380,6 @@ export default function CreateQuestScreen() {
               ))}
             </View>
 
-            {/* Scored window — the single-window choice that used to live on
-                the Stygian Pact template. BOTH = the classic dual bars. */}
-            <ThemedText style={styles.sectionLabel}>ROLLING AVERAGE</ThemedText>
-            <View style={styles.chipRow}>
-              {(
-                [
-                  { value: '30d', label: '30 DAYS' },
-                  { value: '18mo', label: '18 MONTHS' },
-                  { value: 'both', label: 'BOTH' },
-                ] as const
-              ).map((opt) => (
-                <Pressable
-                  key={opt.value}
-                  style={[styles.chip, customWindow === opt.value && styles.chipPositiveActive]}
-                  onPress={() => setCustomWindow(opt.value)}>
-                  <ThemedText
-                    style={[styles.chipText, customWindow === opt.value && styles.chipTextActive]}>
-                    {opt.label}
-                  </ThemedText>
-                </Pressable>
-              ))}
-            </View>
-
             {/* Habit linker */}
             <ThemedText style={styles.sectionLabel}>LINK A HABIT</ThemedText>
             <ThemedText style={styles.sectionHint}>
@@ -450,17 +421,24 @@ export default function CreateQuestScreen() {
                   quest at a higher tier for a tougher goal on the same habit.
                 </ThemedText>
                 <View style={styles.chipRow}>
-                  {([1, 2, 3] as const).map((lvl) => (
-                    <Pressable
-                      key={lvl}
-                      style={[styles.chip, successLevel === lvl && styles.chipPositiveActive]}
-                      onPress={() => setSuccessLevel(lvl)}>
-                      <ThemedText
-                        style={[styles.chipText, successLevel === lvl && styles.chipTextActive]}>
-                        {lvl === 1 ? 'BASIC' : lvl === 2 ? 'GOAL' : 'IDEAL'}
-                      </ThemedText>
-                    </Pressable>
-                  ))}
+                  {([1, 2, 3] as const).map((lvl) => {
+                    // Bronze / silver / gold — same tier colors as the cards.
+                    const tierColor =
+                      lvl === 1 ? QuestColors.tierPart : lvl === 2 ? QuestColors.tierGoal : QuestColors.tierIdeal;
+                    const tierBg =
+                      lvl === 1 ? QuestColors.tierPartDim : lvl === 2 ? QuestColors.tierGoalDim : QuestColors.tierIdealDim;
+                    const active = successLevel === lvl;
+                    return (
+                      <Pressable
+                        key={lvl}
+                        style={[styles.chip, active && { backgroundColor: tierBg, borderColor: tierColor }]}
+                        onPress={() => setSuccessLevel(lvl)}>
+                        <ThemedText style={[styles.chipText, active && { color: tierColor }]}>
+                          {lvl === 1 ? 'PARTICIPATION' : lvl === 2 ? 'GOAL' : 'IDEAL'}
+                        </ThemedText>
+                      </Pressable>
+                    );
+                  })}
                 </View>
               </>
             )}

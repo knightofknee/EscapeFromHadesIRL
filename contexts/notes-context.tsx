@@ -440,7 +440,14 @@ export function NotesProvider({ children }: { children: ReactNode }) {
       try {
         await setDoc(ref, payload, { merge: true });
       } catch (err) {
+        // The optimistic pin above reverts on the next snapshot — surface the
+        // failure with a Retry instead of silently flipping it back.
         console.error('togglePinNote: Firestore write failed', err);
+        emitError(`Couldn't ${pinned ? 'pin' : 'unpin'} the note. Tap Retry.`, () => {
+          setDoc(ref, payload, { merge: true }).catch((e) =>
+            console.error('togglePinNote retry failed', e),
+          );
+        });
       }
     },
     [user, requireOnline],
@@ -459,7 +466,15 @@ export function NotesProvider({ children }: { children: ReactNode }) {
         await deleteAllItems(noteId, user.uid);
         await deleteDoc(doc(db, 'notes', noteId));
       } catch (err) {
+        // Surface the failure with a Retry — otherwise the note just stays in
+        // the list with no explanation (delete is idempotent, safe to retry).
         console.error('deleteNote: Firestore delete failed', err);
+        const uid = user.uid;
+        emitError("Couldn't delete the note. Tap Retry.", () => {
+          deleteAllItems(noteId, uid)
+            .then(() => deleteDoc(doc(db, 'notes', noteId)))
+            .catch((e) => console.error('deleteNote retry failed', e));
+        });
       }
     },
     [user, requireOnline],

@@ -15,6 +15,7 @@ import {
 } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { app } from './app';
+import { clearLocalUserState } from '@/lib/local-user-state';
 
 // Metro resolves @firebase/auth with the "react-native" condition, which exports
 // getReactNativePersistence. TypeScript can't see it because TSC uses the default
@@ -36,7 +37,10 @@ export function signUp(email: string, password: string) {
   return createUserWithEmailAndPassword(auth, email, password);
 }
 
-export function signOut() {
+export async function signOut() {
+  // Clear device-local, account-scoped state (scheduled alarms + per-habit
+  // AsyncStorage) before dropping auth — best-effort, never blocks sign-out.
+  await clearLocalUserState().catch(() => {});
   return firebaseSignOut(auth);
 }
 

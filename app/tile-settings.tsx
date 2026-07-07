@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { StyleSheet, ScrollView, TextInput, Pressable, Switch, View, Alert, Modal } from 'react-native';
+import { StyleSheet, ScrollView, TextInput, Pressable, Switch, View, Alert, Modal, Image } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
@@ -15,6 +15,9 @@ import { useUserSettingsContext } from '@/contexts/user-settings-context';
 import { consumePendingHabitCallback, clearPendingHabitCallback } from '@/lib/pending-habit-link';
 import { addDays, getTodayString } from '@/lib/date-utils';
 import type { RecordingMode, GlyphData } from '@/types/habit';
+import { pickTileIconImage } from '@/lib/tile-icon';
+import { emitError } from '@/lib/error-bus';
+import { useOfflineGuard } from '@/contexts/offline-context';
 import { requestStepsPermission } from '@/lib/steps-health';
 import {
   getNotificationPermissionBucket,
@@ -114,7 +117,12 @@ export default function TileSettingsModal() {
   const [color, setColor] = useState(existingHabit?.color ?? DEFAULT_TILE_COLOR);
   const [glyph, setGlyph] = useState<GlyphData | undefined>(existingHabit?.glyph);
   const [showGlyphEditor, setShowGlyphEditor] = useState(false);
+  const [iconImage, setIconImage] = useState<string | undefined>(existingHabit?.iconImage);
   const didSave = useRef(false);
+  // Synchronous re-entrancy guard for Save — React state lags a frame, so a
+  // fast double-tap on create would fire createHabit twice (duplicate habits).
+  const savingRef = useRef(false);
+  const { requireOnline } = useOfflineGuard();
 
   // Scroll-into-view plumbing for the "auto" recording-type subgroup.
   // We capture the auto-section's y in scroll content and each auto tile's
@@ -210,6 +218,7 @@ export default function TileSettingsModal() {
       setTileSize(existingHabit.tileSize);
       setColor(existingHabit.color);
       setGlyph(existingHabit.glyph);
+      setIconImage(existingHabit.iconImage);
     }
   }, [existingHabit]);
 
@@ -251,6 +260,7 @@ export default function TileSettingsModal() {
     tileSize !== (existingHabit?.tileSize ?? 1) ||
     color !== (existingHabit?.color ?? DEFAULT_TILE_COLOR) ||
     glyph !== existingHabit?.glyph ||
+    iconImage !== existingHabit?.iconImage ||
     meditationSessions !== (existingHabit?.meditationSessions ?? DEFAULT_MEDITATION_SESSIONS) ||
     meditationMinutes !== (existingHabit?.meditationMinutes ?? DEFAULT_MEDITATION_MINUTES) ||
     meditationIdealTotalMinutes !==
@@ -266,6 +276,11 @@ export default function TileSettingsModal() {
       Alert.alert('Name required', 'Please enter a name for this habit.');
       return;
     }
+    // Bail before any work if offline (requireOnline alerts): otherwise the
+    // write is a silent no-op and router.back() below would discard the edits.
+    if (!requireOnline()) return;
+    if (savingRef.current) return;
+    savingRef.current = true;
 
     const abbr = abbreviation.trim() || name.trim().slice(0, 2).toUpperCase();
 
@@ -321,6 +336,7 @@ export default function TileSettingsModal() {
       setShowAllTileNames(showAllNames);
     }
 
+    try {
     if (isCreating) {
       // Find next available position
       const maxRow = habits.reduce((max, h) => Math.max(max, h.position.row), -1);
@@ -329,6 +345,7 @@ export default function TileSettingsModal() {
         abbreviation: abbr,
         icon: icon.trim() || undefined,
         glyph: glyph && glyph.paths.length > 0 ? glyph : undefined,
+        iconImage,
         recordingMode,
         stepGoals: goalsToSave,
         ...(recordingMode === 'steps'
@@ -353,6 +370,10 @@ export default function TileSettingsModal() {
         abbreviation: abbr,
         icon: icon.trim() || undefined,
         glyph: glyph && glyph.paths.length > 0 ? glyph : undefined,
+        // Only resend the (potentially ~300KB base64) icon when it actually
+        // changed — otherwise a rename/recolor re-uploads it for nothing.
+        // Changed-to-undefined (removed) is included so updateHabit deleteFields it.
+        ...(iconImage !== existingHabit.iconImage ? { iconImage } : {}),
         recordingMode,
         stepGoals: goalsToSave,
         ...stepsPointerUpdate,
@@ -396,6 +417,14 @@ export default function TileSettingsModal() {
     }
 
     router.back();
+    } catch (e) {
+      // Surface the failure (e.g. doc rejected) instead of a dead Save button;
+      // stay on the form so the user's edits aren't lost.
+      console.error('Failed to save habit:', e);
+      emitError("Couldn't save the habit. Check your connection and try again.");
+    } finally {
+      savingRef.current = false;
+    }
   }
 
   function handleDelete() {
@@ -420,6 +449,19 @@ export default function TileSettingsModal() {
   function handleGlyphSave(newGlyph: GlyphData) {
     setGlyph(newGlyph.paths.length > 0 ? newGlyph : undefined);
     setShowGlyphEditor(false);
+  }
+
+  async function handlePickIconImage() {
+    try {
+      const dataUri = await pickTileIconImage();
+      if (dataUri) setIconImage(dataUri);
+    } catch (e) {
+      console.error('Tile icon import failed:', e);
+      Alert.alert(
+        'Import failed',
+        e instanceof Error ? e.message : 'Could not import that image.',
+      );
+    }
   }
 
   const hasGlyph = glyph && glyph.paths.length > 0;
@@ -573,6 +615,52 @@ export default function TileSettingsModal() {
               <Pressable
                 style={[styles.glyphButton, { backgroundColor: '#E74C3C' }]}
                 onPress={() => setGlyph(undefined)}
+              >
+                <ThemedText style={styles.glyphButtonText}>Remove</ThemedText>
+              </Pressable>
+            )}
+          </View>
+        </View>
+
+        {/* Custom Uploaded Icon — mirrors the Custom Symbol row above.
+            Stored inline on the habit doc as a small base64 PNG (square-
+            cropped + resized at import), so it syncs like every other field. */}
+        <ThemedText type="defaultSemiBold" style={styles.label}>
+          Custom Icon (upload an image; overrides everything above)
+        </ThemedText>
+        <View style={styles.glyphRow}>
+          {iconImage ? (
+            <View
+              style={[
+                styles.glyphPreview,
+                { backgroundColor: colors.tileBackground, borderColor: color },
+              ]}
+            >
+              <Image source={{ uri: iconImage }} style={styles.iconImagePreview} resizeMode="contain" />
+            </View>
+          ) : (
+            <View
+              style={[
+                styles.glyphPreview,
+                { backgroundColor: colors.tileBackground, borderColor: colors.tileBorder },
+              ]}
+            >
+              <ThemedText style={{ opacity: 0.3, fontSize: 12 }}>None</ThemedText>
+            </View>
+          )}
+          <View style={styles.glyphActions}>
+            <Pressable
+              style={[styles.glyphButton, { backgroundColor: colors.tint }]}
+              onPress={handlePickIconImage}
+            >
+              <ThemedText style={styles.glyphButtonText}>
+                {iconImage ? 'Replace Image' : 'Choose Image'}
+              </ThemedText>
+            </Pressable>
+            {iconImage && (
+              <Pressable
+                style={[styles.glyphButton, { backgroundColor: '#E74C3C' }]}
+                onPress={() => setIconImage(undefined)}
               >
                 <ThemedText style={styles.glyphButtonText}>Remove</ThemedText>
               </Pressable>
@@ -940,7 +1028,9 @@ export default function TileSettingsModal() {
           Preview
         </ThemedText>
         <View style={[styles.preview, { backgroundColor: colors.tileBackground, borderColor: color }]}>
-          {hasGlyph ? (
+          {iconImage ? (
+            <Image source={{ uri: iconImage }} style={styles.iconImagePreview} resizeMode="contain" />
+          ) : hasGlyph ? (
             <GlyphRenderer glyph={glyph!} width={60} height={60} />
           ) : (
             <ThemedText style={{ color, fontWeight: '700', fontSize: 20 }}>
@@ -1290,5 +1380,10 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
     fontSize: 14,
+  },
+  iconImagePreview: {
+    width: 60,
+    height: 60,
+    borderRadius: 6,
   },
 });

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState, type Ref } from 'react';
 import { ActivityIndicator, ScrollView, View, Pressable, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from 'expo-router';
@@ -6,10 +6,11 @@ import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { QuestCard } from '@/components/quests/quest-card';
+import { AscentSheet } from '@/components/quests/ascent-sheet';
 import { ScoreBar, flameColor } from '@/components/quests/score-bar';
 import { useQuests } from '@/hooks/use-quests';
 import { useHabits } from '@/hooks/use-habits';
-import { useTourTarget } from '@/contexts/tour-context';
+import { useTour, useTourTarget } from '@/contexts/tour-context';
 import { useQuestScores, questPointValue } from '@/hooks/use-quest-scores';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
@@ -22,7 +23,7 @@ import {
   type QuestTemplate,
 } from '@/constants/quest-templates';
 import { get18MonthWindow } from '@/lib/date-utils';
-import { runScoreWaypoint } from '@/lib/quest-narrative';
+import { runScoreWaypoint, ASCENT_BANDS } from '@/lib/quest-narrative';
 import { useTodayDate } from '@/hooks/use-today-date';
 
 
@@ -32,8 +33,23 @@ export default function QuestsScreen() {
   const isFocused = useIsFocused();
   const { quests, isLoading: questsLoading } = useQuests();
   const { habits } = useHabits();
-  // Genesis-tour spotlight target — the "+ NEW" forge-a-quest entry point.
+  // Genesis-tour spotlight targets. The tour's quest step points at the first
+  // unstarted Begin stub (the one-tap path); '+ NEW' stays registered as the
+  // fallback for a user who already began every challenge.
   const forgeQuestRef = useTourTarget('forge-quest');
+  const beginChallengeRef = useTourTarget('begin-challenge');
+  const [ascentVisible, setAscentVisible] = useState(false);
+
+  // While the tour spotlights the Begin stub (which lives INSIDE this
+  // ScrollView), pin the list to the top and freeze scrolling — a flick
+  // through the interactive spotlight hole could otherwise scroll the target
+  // away, collapsing the hole into a full-screen dim with no way through.
+  const { isActive: tourActive, steps: tourSteps, index: tourIndex } = useTour();
+  const spotlightingStub = tourActive && tourSteps?.[tourIndex]?.target === 'begin-challenge';
+  const scrollRef = useRef<ScrollView>(null);
+  useEffect(() => {
+    if (spotlightingStub) scrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [spotlightingStub]);
   const { todayStr } = useTodayDate();
   const { startDate, endDate } = useMemo(() => get18MonthWindow(todayStr), [todayStr]);
   const { records, isLoading: recordsLoading } = useRecordsSnapshot(startDate, endDate, isFocused);
@@ -97,6 +113,20 @@ export default function QuestsScreen() {
     [quests, singleInstanceKeys],
   );
 
+  // The six trials are two 3-rung ladders — same climb, two windows.
+  const trials30 = useMemo(() => autoQuests.filter((q) => q.scoreWindow === '30d'), [autoQuests]);
+  const trials18 = useMemo(() => autoQuests.filter((q) => q.scoreWindow === '18mo'), [autoQuests]);
+
+  // Trials score the single best habit for their bar — name it on the card
+  // so score shifts aren't mysterious.
+  const carriedBy = (questId: string): string | undefined => {
+    const id = scores.byQuest.get(questId)?.bestHabitId;
+    return id ? habits.find((h) => h.id === id)?.name : undefined;
+  };
+
+  // Tour target lands on the FIRST unstarted challenge stub.
+  const firstStubKey = selectedChallenges.find((c) => !c.quest)?.template.key ?? null;
+
 
   // Hold until quests and the score history arrive — otherwise started
   // quests flash as "Begin" stubs and the run score flashes 0. Keeps the
@@ -123,12 +153,18 @@ export default function QuestsScreen() {
           <ThemedText style={styles.headerTitle}>QUESTS</ThemedText>
           <ThemedText style={styles.headerSub}>Current run</ThemedText>
         </View>
-        <View style={styles.headerRight}>
+        <Pressable
+          style={styles.headerRight}
+          onPress={() => setAscentVisible(true)}
+          accessibilityRole="button"
+          accessibilityLabel={`Run score ${scores.runScore} of ${scores.totalAvailable} points`}
+          accessibilityHint="Opens the Ascent scoring guide"
+        >
           <ThemedText style={[styles.runScore, { color: flameColor(scores.runPct) }]}>
             {scores.runScore}
           </ThemedText>
           <ThemedText style={styles.runScoreLabel}>RUN SCORE · MAX {scores.totalAvailable}</ThemedText>
-        </View>
+        </Pressable>
         <Pressable
           ref={forgeQuestRef}
           style={styles.addButton}
@@ -138,26 +174,52 @@ export default function QuestsScreen() {
         </Pressable>
       </View>
 
-      <ScoreBar score={scores.runPct} showLabel={false} height={3} />
+      {/* The run bar IS the band ladder — ticks mark the shore thresholds. */}
+      <ScoreBar
+        score={scores.runPct}
+        showLabel={false}
+        height={6}
+        ticks={ASCENT_BANDS.filter((b) => b.min > 0).map((b) => b.min)}
+      />
 
-      {/* Ascent waypoint — names the run-score band as a stop on the long ferry
-          out of Hades. Pure label beneath the score/bar. */}
+      {/* Ascent waypoint — current shore with the run %, and the next shore's
+          fixed threshold. Taps open the full ladder + scoring explainer. */}
       {(() => {
         const wp = runScoreWaypoint(scores.runPct);
         return (
-          <View style={styles.waypointRow}>
-            <ThemedText style={styles.waypointBand}>{wp.band}</ThemedText>
-            {wp.toNext && <ThemedText style={styles.waypointNext}>{wp.toNext}</ThemedText>}
-          </View>
+          <Pressable
+            style={styles.waypointRow}
+            onPress={() => setAscentVisible(true)}
+            accessibilityRole="button"
+            accessibilityLabel={`${wp.band}, ${scores.runPct}%`}
+            accessibilityHint="Opens the Ascent scoring guide"
+            hitSlop={{ top: 4, bottom: 10 }}
+          >
+            <ThemedText style={styles.waypointBand} numberOfLines={1}>
+              {wp.band}
+              <ThemedText style={styles.waypointPct}> · {scores.runPct}%</ThemedText>
+            </ThemedText>
+            <ThemedText style={styles.waypointNext}>
+              {wp.next ? `next: ${wp.next.name} at ${wp.next.min}%  ›` : 'the highest shore  ›'}
+            </ThemedText>
+          </Pressable>
         );
       })()}
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        scrollEnabled={!spotlightingStub}
+      >
         {/* CHALLENGES — the quests you choose. Started ones show their score;
             the rest show a "Begin" stub that links a habit + starts them. */}
         <View style={styles.section}>
           <ThemedText style={[styles.sectionHeader, { color: QuestColors.flameMid }]}>
             CHALLENGES
+          </ThemedText>
+          <ThemedText style={styles.sectionSub}>
+            Ready-made quests. Begin one and link a habit.
           </ThemedText>
           {selectedChallenges.map(({ template, quest }) =>
             quest ? (
@@ -165,73 +227,128 @@ export default function QuestsScreen() {
                 key={template.key}
                 quest={quest}
                 questScore={scores.byQuest.get(quest.id)}
+                kind="challenge"
                 onPress={() => router.push(`/(tabs)/(quests)/${quest.id}`)}
               />
             ) : (
               <ChallengeStub
                 key={template.key}
                 template={template}
+                targetRef={template.key === firstStubKey ? beginChallengeRef : undefined}
                 onPress={() => router.push(`/(tabs)/(quests)/create?templateKey=${template.key}`)}
               />
             ),
           )}
         </View>
 
-        {/* ETERNAL TRIALS — the always-on all-habit ladder. No Begin, no
+        {/* ETERNAL TRIALS — the always-on all-habit ladders. No Begin, no
             linking: they watch every habit automatically, forever. */}
         <View style={styles.section}>
           <ThemedText style={[styles.sectionHeader, { color: QuestColors.gold }]}>
             ETERNAL TRIALS
           </ThemedText>
-          {autoQuests.map((q) => (
+          <ThemedText style={styles.sectionSub}>
+            Always on. They watch every habit automatically, nothing to start.
+          </ThemedText>
+
+          <ThemedText style={styles.ladderHeader}>THE 30-DAY LADDER</ThemedText>
+          <ThemedText style={styles.ladderSub}>
+            Any habit, four days a week. Three rising bars.
+          </ThemedText>
+          {trials30.map((q) => (
             <QuestCard
               key={q.id}
               quest={q}
               questScore={scores.byQuest.get(q.id)}
+              kind="trial"
+              carriedBy={carriedBy(q.id)}
+              onPress={() => router.push(`/(tabs)/(quests)/${q.id}`)}
+            />
+          ))}
+
+          <ThemedText style={[styles.ladderHeader, styles.ladderHeaderGap]}>
+            THE 18-MONTH LADDER
+          </ThemedText>
+          <ThemedText style={styles.ladderSub}>
+            The same climb, held for eighteen months.
+          </ThemedText>
+          {trials18.map((q) => (
+            <QuestCard
+              key={q.id}
+              quest={q}
+              questScore={scores.byQuest.get(q.id)}
+              kind="trial"
+              carriedBy={carriedBy(q.id)}
               onPress={() => router.push(`/(tabs)/(quests)/${q.id}`)}
             />
           ))}
         </View>
 
-        {/* Custom pacts + any legacy quests. "+ NEW" in the header is the
-            create entry point. */}
-        {otherQuests.length > 0 && (
-          <View style={styles.section}>
-            <ThemedText style={[styles.sectionHeader, { color: QuestColors.custom }]}>
-              YOUR PACTS
-            </ThemedText>
-            {otherQuests.map((q) => (
+        {/* Custom pacts + any legacy quests. Always rendered so "+ NEW" has a
+            visible destination even before the first pact exists. */}
+        <View style={styles.section}>
+          <ThemedText style={[styles.sectionHeader, { color: QuestColors.custom }]}>
+            YOUR PACTS
+          </ThemedText>
+          <ThemedText style={styles.sectionSub}>Quests you write yourself.</ThemedText>
+          {otherQuests.length === 0 ? (
+            <Pressable
+              style={styles.emptyPactStub}
+              onPress={() => router.push('/(tabs)/(quests)/create')}
+              accessibilityRole="button"
+              accessibilityLabel="No pacts yet. Forge one."
+            >
+              <ThemedText style={styles.emptyPactText}>
+                No pacts yet. Forge one with + NEW ›
+              </ThemedText>
+            </Pressable>
+          ) : (
+            otherQuests.map((q) => (
               <QuestCard
                 key={q.id}
                 quest={q}
                 questScore={scores.byQuest.get(q.id)}
+                kind="pact"
                 onPress={() => router.push(`/(tabs)/(quests)/${q.id}`)}
               />
-            ))}
-          </View>
-        )}
+            ))
+          )}
+        </View>
       </ScrollView>
+
+      <AscentSheet
+        visible={ascentVisible}
+        onClose={() => setAscentVisible(false)}
+        runPct={scores.runPct}
+        runScore={scores.runScore}
+        totalAvailable={scores.totalAvailable}
+      />
     </View>
   );
 }
 
 // A not-yet-started base challenge: dashed/dimmed card with a "Begin" tap that
 // routes into the link-habit flow (with the template + matching auto-record
-// habit pre-selected).
+// habit pre-selected). `targetRef` lets the Genesis tour spotlight the first
+// stub as the one-tap way to swear a quest.
 function ChallengeStub({
   template,
   onPress,
+  targetRef,
 }: {
   template: QuestTemplate;
   onPress: () => void;
+  targetRef?: Ref<View>;
 }) {
   return (
-    <Pressable style={styles.stubCard} onPress={onPress}>
+    <Pressable ref={targetRef} style={styles.stubCard} onPress={onPress}>
       <View style={styles.stubHeader}>
         <ThemedText style={styles.stubName} numberOfLines={1}>
           {template.name}
         </ThemedText>
-        <ThemedText style={styles.beginText}>BEGIN ›</ThemedText>
+        <View style={styles.beginPill}>
+          <ThemedText style={styles.beginText}>BEGIN ›</ThemedText>
+        </View>
       </View>
       {/* Wraps — never truncate the description to an ellipsis. */}
       <ThemedText style={styles.stubDesc}>
@@ -246,6 +363,7 @@ function ChallengeStub({
               : ''
         } · worth ${questPointValue(template).total} pts`}
       </ThemedText>
+      <ThemedText style={styles.stubHint}>Links one habit. You choose which.</ThemedText>
     </Pressable>
   );
 }
@@ -301,6 +419,14 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: QuestColors.gold,
     letterSpacing: 0.5,
+    // The band name yields before the tappable "next" label clips.
+    flexShrink: 1,
+    marginRight: 8,
+  },
+  waypointPct: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: QuestColors.textDim,
   },
   waypointNext: {
     fontSize: 11,
@@ -341,7 +467,39 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     letterSpacing: 1.5,
+  },
+  // One plain-words line naming what the section's quests ARE — the kind
+  // distinction lives here, not in myth literacy.
+  sectionSub: {
+    fontSize: 11,
+    color: QuestColors.textDim,
+    marginBottom: 4,
+  },
+  ladderHeader: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: QuestColors.textDim,
+    letterSpacing: 1.5,
+  },
+  ladderHeaderGap: {
+    marginTop: 8,
+  },
+  ladderSub: {
+    fontSize: 11,
+    color: QuestColors.textDim,
     marginBottom: 2,
+  },
+  emptyPactStub: {
+    borderWidth: 1,
+    borderColor: QuestColors.border,
+    borderStyle: 'dashed',
+    borderRadius: 8,
+    padding: 14,
+    alignItems: 'center',
+  },
+  emptyPactText: {
+    fontSize: 12,
+    color: QuestColors.textDim,
   },
   stubCard: {
     backgroundColor: QuestColors.surface,
@@ -363,6 +521,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: QuestColors.text,
   },
+  // BEGIN reads as a button, not a label — same pill treatment as "+ NEW".
+  beginPill: {
+    borderWidth: 1,
+    borderColor: QuestColors.flameMid,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
   beginText: {
     fontSize: 11,
     fontWeight: '800',
@@ -377,5 +543,10 @@ const styles = StyleSheet.create({
   stubMeta: {
     fontSize: 11,
     color: QuestColors.textDim,
+  },
+  stubHint: {
+    fontSize: 10,
+    color: QuestColors.textDim,
+    opacity: 0.8,
   },
 });

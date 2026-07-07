@@ -20,6 +20,7 @@ import {
   deleteVacationDaysBulk,
 } from '@/lib/vacation-days';
 import { useOfflineGuard } from '@/contexts/offline-context';
+import { emitError } from '@/lib/error-bus';
 
 const MAX_LABEL_CHARS = 500;
 
@@ -78,49 +79,46 @@ export function VacationEditModal({
     return scope === 'block' ? contiguousBlock : [date];
   }, [scope, contiguousBlock, date]);
 
-  async function handleSave() {
+  // Both writes are fire-and-forget: latency compensation updates the tile
+  // immediately, and awaiting the server ack behind a disabled button would
+  // hang the modal for minutes on a flaky-but-"online" connection (the same
+  // bug fixed for setting vacation days). On failure we surface a toast with
+  // a Retry instead of freezing.
+  function handleSave() {
     if (submitting) return;
     if (!requireOnline()) return;
-    setSubmitting(true);
     const trimmed = label.slice(0, MAX_LABEL_CHARS);
-    try {
-      if (scope === 'block' && hasBlock) {
-        await updateVacationDaysBulk({
-          userId,
-          dates: targetDates,
-          label: trimmed,
-          color,
-        });
-      } else {
-        await updateVacationDay({
-          userId,
-          date,
-          label: trimmed,
-          color,
-        });
-      }
-      onClose();
-    } catch (err) {
-      console.error('Failed to save vacation day:', err);
-      setSubmitting(false);
-    }
+    const isBlock = scope === 'block' && hasBlock;
+    const dates = targetDates;
+    const write = () => {
+      const p = isBlock
+        ? updateVacationDaysBulk({ userId, dates, label: trimmed, color })
+        : updateVacationDay({ userId, date, label: trimmed, color });
+      p.catch((err) => {
+        console.error('Failed to save vacation day:', err);
+        emitError("Couldn't save the vacation day. Check your connection and try again.", write);
+      });
+    };
+    write();
+    onClose();
   }
 
-  async function handleRemove() {
+  function handleRemove() {
     if (submitting) return;
     if (!requireOnline()) return;
-    setSubmitting(true);
-    try {
-      if (scope === 'block' && hasBlock) {
-        await deleteVacationDaysBulk({ userId, dates: targetDates });
-      } else {
-        await deleteVacationDay({ userId, date });
-      }
-      onClose();
-    } catch (err) {
-      console.error('Failed to remove vacation day:', err);
-      setSubmitting(false);
-    }
+    const isBlock = scope === 'block' && hasBlock;
+    const dates = targetDates;
+    const write = () => {
+      const p = isBlock
+        ? deleteVacationDaysBulk({ userId, dates })
+        : deleteVacationDay({ userId, date });
+      p.catch((err) => {
+        console.error('Failed to remove vacation day:', err);
+        emitError("Couldn't remove the vacation day. Check your connection and try again.", write);
+      });
+    };
+    write();
+    onClose();
   }
 
   return (

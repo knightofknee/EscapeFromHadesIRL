@@ -66,7 +66,17 @@ export function subscribeWithOfflineState(
       // never answers.
       const isEmptyResult =
         typeof snapshot.empty === 'boolean' ? snapshot.empty : !snapshot.exists?.();
-      if (delivered || !snapshot.metadata.fromCache || !isEmptyResult) {
+      // includeMetadataChanges re-fires the listener on the pending-write →
+      // server-ack transition with IDENTICAL data. For query snapshots,
+      // docChanges() (metadata excluded by default) is empty on those re-fires
+      // — skip the redundant onNext so consumers don't rebuild every doc twice
+      // per write. Document snapshots (no docChanges) fall through unchanged;
+      // their consumers are cheap/no-op. Never skip before the first delivery.
+      const metadataOnlyRefire =
+        delivered &&
+        typeof snapshot.docChanges === 'function' &&
+        snapshot.docChanges().length === 0;
+      if (!metadataOnlyRefire && (delivered || !snapshot.metadata.fromCache || !isEmptyResult)) {
         delivered = true;
         onNext(snapshot);
       }

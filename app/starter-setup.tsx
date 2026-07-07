@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -17,6 +17,7 @@ import {
   type StarterTask,
 } from '@/constants/starter-tasks';
 import { applyStarterTasks, isStarterAdded } from '@/lib/starter-tasks';
+import { emitError } from '@/lib/error-bus';
 
 /**
  * Intro bubble-picker for adding preset habits + their linked quests. Two
@@ -35,25 +36,28 @@ export default function StarterSetupScreen() {
   const colors = Colors[colorScheme ?? 'light'];
 
   const { habits, createHabit } = useHabits();
-  const { createQuest } = useQuests();
+  const { quests, createQuest } = useQuests();
   const { setShowAllTileNames } = useUserSettingsContext();
   const { todayStr } = useTodayDate();
   const { startGenesis } = useTour();
   const [busy, setBusy] = useState(false);
+  // Synchronous guard: `busy` state lags a frame, so two fast taps could both
+  // run applyStarterTasks concurrently and create duplicate habits.
+  const finishingRef = useRef(false);
   // The tutorial opens on a welcome page (hello + the concept), then the
   // picker. Standalone (non-intro) opens straight to the picker.
   const [page, setPage] = useState<'welcome' | 'pick'>(isIntro ? 'welcome' : 'pick');
 
   const addedKeys = useMemo(() => {
     const s = new Set<string>();
-    for (const t of STARTER_TASKS) if (isStarterAdded(t, habits)) s.add(t.key);
+    for (const t of STARTER_TASKS) if (isStarterAdded(t, habits, quests)) s.add(t.key);
     return s;
-  }, [habits]);
+  }, [habits, quests]);
 
   // Core pre-selected (opt-out); pursuits start empty (opt-in). Already-added
   // are never auto-selected — applyStarterTasks skips them regardless.
   const [selected, setSelected] = useState<Set<string>>(
-    () => new Set(CORE_STARTER_KEYS.filter((k) => !isStarterAdded(byKey(k), habits))),
+    () => new Set(CORE_STARTER_KEYS.filter((k) => !isStarterAdded(byKey(k), habits, quests))),
   );
 
   const toggle = useCallback((key: string) => {
@@ -72,22 +76,29 @@ export default function StarterSetupScreen() {
 
   const finish = useCallback(
     async (keys: string[]) => {
-      if (busy) return;
+      if (finishingRef.current) return;
+      finishingRef.current = true;
       setBusy(true);
       try {
         const created = await applyStarterTasks(keys, habits, todayStr, {
           createHabit,
           createQuest,
-        });
+        }, quests);
         if (created.length > 0) setShowAllTileNames(true);
+      } catch (e) {
+        // A rejected write must not escape the async onPress: surface it and
+        // still hand off, or the intro user is stranded on the picker.
+        console.error('Failed to apply starter tasks:', e);
+        emitError("Some starter tasks couldn't be created. Check your connection and try again.");
       } finally {
         setBusy(false);
+        finishingRef.current = false;
       }
       // Intro: hand off to the spotlight tour (gated on having a habit).
       if (isIntro) startGenesis();
       router.back();
     },
-    [busy, habits, todayStr, createHabit, createQuest, setShowAllTileNames, isIntro, startGenesis],
+    [habits, quests, todayStr, createHabit, createQuest, setShowAllTileNames, isIntro, startGenesis],
   );
 
   const core = STARTER_TASKS.filter((t) => t.category === 'core');

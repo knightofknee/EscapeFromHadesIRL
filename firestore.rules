@@ -264,17 +264,22 @@ service cloud.firestore {
     }
 
     // -------- Catch-all --------
-    // SECURITY: read is DENY by default (was `if true`, which made every
-    // unmatched collection — including this app's notes/habits/records/
-    // tags/quests — world-readable to anyone, unauthenticated). Social-app
-    // collections that need public read declare their own `allow read: if
-    // true` above, so this does not affect them. If something in the OTHER
-    // app on this shared project relied on the public catch-all read, add
-    // an explicit rule for that collection above instead.
+    // SECURITY: DENY by default across the board. Firestore uses OR-semantics
+    // over matching rules, so a permissive catch-all silently OVERRIDES the
+    // strict per-collection rules above. The old `allow create: if request.auth
+    // != null` let any signed-in user create docs in ANY collection — including
+    // this app's habits/records/notes/tags/quests/vacationDays with a VICTIM's
+    // userId (uids are discoverable via the public social collections), which
+    // the victim's `where('userId','==',uid)` listeners would then render; and
+    // with an `author` field the old update/delete clause handed the attacker
+    // ongoing control of the injected doc. Read was already hardened to `if
+    // false`; create/update/delete now match it. Every collection either app
+    // actually uses declares its own create rule above, so nothing legitimate
+    // relied on this. If the OTHER app on this shared project ever needs to
+    // write a new collection, give it an explicit owner-scoped rule above —
+    // never reopen this catch-all.
     match /{document=**} {
-      allow read: if false;
-      allow create: if request.auth != null;
-      allow update, delete: if request.auth != null && request.auth.uid == resource.data.author;
+      allow read, write: if false;
     }
   }
 }

@@ -13,16 +13,28 @@ import type { HabitRecord } from '@/types/habit';
  */
 // The quests home and detail fetch the IDENTICAL window back-to-back when
 // navigating between them (push refetches, pop refocus refetches again) —
-// up to habits×549 billed reads each. Share the last result and any
-// in-flight fetch per (uid, range) for a short TTL instead. 15s comfortably
-// covers an index → detail → back round-trip while keeping cross-tab
-// freshness (a habit recorded elsewhere shows up on the next focus past it).
-const SNAPSHOT_TTL_MS = 15_000;
+// up to habits×549 billed reads each. Share the last result and any in-flight
+// fetch per (uid, range). Freshness comes from `invalidateRecordsSnapshotCache`
+// (called on every local record write), so the TTL only needs to bound
+// cross-device staleness — 5 minutes, versus the old 15s that refetched the
+// whole window on nearly every tab hop.
+const SNAPSHOT_TTL_MS = 300_000;
 let cacheKey: string | null = null;
 let cacheRecords: HabitRecord[] | null = null;
 let cacheAt = 0;
 let inflightKey: string | null = null;
 let inflight: Promise<HabitRecord[]> | null = null;
+
+/**
+ * Drop the cached snapshot so the next focus refetches. Called when a record
+ * is written locally (records-context.recordHabit) so quest scores reflect the
+ * change immediately instead of waiting out the TTL.
+ */
+export function invalidateRecordsSnapshotCache(): void {
+  cacheKey = null;
+  cacheRecords = null;
+  cacheAt = 0;
+}
 
 export function useRecordsSnapshot(
   startDate: string,

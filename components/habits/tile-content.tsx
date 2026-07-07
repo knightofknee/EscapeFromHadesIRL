@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Image, StyleSheet, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ThemedText } from '@/components/themed-text';
 import { useUserSettingsContext } from '@/contexts/user-settings-context';
@@ -170,6 +170,7 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
 
   const face = getFaceState(habit, record);
   const hasGlyph = habit.glyph && habit.glyph.paths.length > 0;
+  const hasIconImage = !!habit.iconImage;
 
   // Name overlay, pinned to the tile bottom so the centered content never
   // moves or resizes when the name is toggled. The font floor is a
@@ -191,7 +192,30 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
   let starFontPx = D.starFont * s;
   let starTopPx = D.glyphStarTop * s;
 
-  if (hasGlyph && habit.glyph) {
+  if (hasIconImage) {
+    // Uploaded icon: a square image centered in the tile with the same
+    // proportional padding as the glyph. State marks follow the glyph rules —
+    // a ring would fight the image, so 2nd level is the underline bar and
+    // 3rd level the star badge.
+    const pad = D.glyphPad * s;
+    const imgSize = square - pad * 2;
+
+    if (face.showCircle) {
+      barInfo = {
+        colors: [habit.color],
+        width: D.barWidth * s,
+        height: D.barHeight * s,
+      };
+    }
+
+    content = (
+      <Image
+        source={{ uri: habit.iconImage }}
+        style={{ width: imgSize, height: imgSize, borderRadius: 6 * s, opacity: face.opacity }}
+        resizeMode="contain"
+      />
+    );
+  } else if (hasGlyph && habit.glyph) {
     // Glyph fills the tile with proportional padding; the renderer preserves
     // the drawing's aspect and centers it.
     const pad = D.glyphPad * s;

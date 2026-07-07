@@ -119,7 +119,11 @@ export function buildGenesisTour(ctx: GenesisCtx): TourStep[] {
     // ── Swear a pact (TASK: create a quest) ──────────────────────────────
     {
       id: 'first-quest',
-      target: 'forge-quest',
+      // Spotlights the first unstarted challenge's Begin stub — the one-tap
+      // path. If every challenge is already begun the target won't resolve,
+      // but then the gate (quests > 0) is already met and the tour degrades
+      // to a centered beat with Next available.
+      target: 'begin-challenge',
       interactive: true,
       match: onQuestsHome,
       onEnter: ctx.goQuests,
@@ -127,14 +131,14 @@ export function buildGenesisTour(ctx: GenesisCtx): TourStep[] {
       eyebrow: 'SWEAR A PACT',
       title: 'Bind that habit to a quest.',
       body:
-        'A habit is the footstep; a quest is the road you swear to walk. Forge one and link the habit you just lit, and now the climb scores itself, shore by shore: the Styx, the Asphodel Meadows, Elysium, the Gates of Olympus. (A quest needs a habit, which is why we lit one first.)',
+        'A habit is the footstep; a quest is the road you swear to walk. Begin a challenge and link the habit you just lit, and the climb scores itself, shore by shore: the Styx, the Asphodel Meadows, Elysium, the Gates of Olympus. (A quest needs a habit, which is why we lit one first.)',
       quote: {
         text: 'First say to yourself what you would be; and then do what you have to do.',
         source: 'Epictetus, Discourses',
         gloss: 'Name the road out loud. Then it has somewhere to lead.',
       },
       gate: (s) => s.quests > 0,
-      ctaLocked: 'Forge a quest to continue',
+      ctaLocked: 'Begin a quest to continue',
       cta: 'The pact is sworn ›',
     },
 

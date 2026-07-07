@@ -60,10 +60,26 @@ export const QuestColors = {
   // Flame gradient endpoints
   flameHigh: '#FF6E3A',  // bright orange — high score
   flameMid: '#E74C3C',   // red — mid score
-  flameLow: '#7B1A1A',   // deep dark red — low score
+  flameLow: '#7B1A1A',   // deep dark red — borders/accents only
+  // Readable low-score fill — flameLow on the dark background is illegible,
+  // and sub-50 is every new user's starting state.
+  ember: '#A93226',
+  // The 18-month window's own hue (river teal). Gold used to mean both
+  // "long window" and "top tier"; now gold = excellence, styx = the long road.
+  styx: '#4FA3B8',
   // Gold for top scores / foundation bonus
   gold: '#D4AC0D',
   goldDim: '#5C4A00',
+  // Success-tier ladder — bronze / silver / gold, self-ordering.
+  tierPart: '#C08552',
+  tierPartDim: '#3A2418',
+  tierGoal: '#BDC3C7',
+  tierGoalDim: '#2E3440',
+  tierIdeal: '#D4AC0D',
+  tierIdealDim: '#5C4A00',
+  // Reduce badge background — distinct from tier chips so quest TYPE and
+  // success TIER don't read as the same kind of tag.
+  reduceDim: '#3E2E0A',
   // Category accents
   physical: '#E74C3C',
   mental: '#5B8DD9',

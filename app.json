@@ -2,7 +2,7 @@
   "expo": {
     "name": "Escape from Hades IRL",
     "slug": "EscapeFromHadesIRL",
-    "version": "1.0.12",
+    "version": "1.0.15",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "escapefromhadesirl",
@@ -20,7 +20,7 @@
       "entitlements": {
         "com.apple.developer.usernotifications.time-sensitive": true
       },
-      "buildNumber": "1"
+      "buildNumber": "3"
     },
     "android": {
       "adaptiveIcon": {
@@ -50,6 +50,12 @@
         }
       ],
       "expo-web-browser",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "We access the photo you pick so it can be used as a habit tile icon. Nothing else in your library is read."
+        }
+      ],
       [
         "expo-build-properties",
         {

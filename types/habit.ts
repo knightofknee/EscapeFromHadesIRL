@@ -40,6 +40,14 @@ export type Habit = {
   abbreviation: string;
   icon?: string;
   glyph?: GlyphData; // custom hand-drawn symbol
+  /**
+   * Custom uploaded icon as a base64 data URI. Stored inline on the doc
+   * (not Firebase Storage) so it syncs through the existing habits listener
+   * and dies with the habit. Kept small by construction: square-cropped and
+   * resized to TILE_ICON_SIZE at import, so it stays a few tens of KB —
+   * see lib/tile-icon.ts. Takes precedence over glyph, icon & abbreviation.
+   */
+  iconImage?: string;
   recordingMode: RecordingMode;
   /**
    * Ascending step thresholds for 'steps' mode, 1-3 entries. Index 0 is the

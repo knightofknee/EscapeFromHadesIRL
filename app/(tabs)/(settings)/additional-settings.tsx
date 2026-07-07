@@ -1,4 +1,5 @@
-import { StyleSheet, ScrollView, View, Pressable, Alert, Linking, Platform } from 'react-native';
+import { StyleSheet, ScrollView, View, Pressable, Alert, Linking, Platform, Modal, TextInput } from 'react-native';
+import { useState } from 'react';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as WebBrowser from 'expo-web-browser';
@@ -30,6 +31,19 @@ export default function AdditionalSettingsScreen() {
   const { user } = useAuth();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
+
+  // Android password re-entry modal (Alert.prompt is iOS-only). `pwSubmit`
+  // holds the pending reauth's resolver so the modal buttons can answer it.
+  const [pwPromptVisible, setPwPromptVisible] = useState(false);
+  const [pwInput, setPwInput] = useState('');
+  const [pwSubmit, setPwSubmit] = useState<{ fn: (pw: string | null) => void } | null>(null);
+
+  function closePwPrompt(pw: string | null) {
+    pwSubmit?.fn(pw);
+    setPwSubmit(null);
+    setPwInput('');
+    setPwPromptVisible(false);
+  }
 
   // Google reauth re-runs the same id-token flow the sign-in screen uses.
   const [, , promptGoogle] = useIdTokenAuthRequest({
@@ -71,9 +85,23 @@ export default function AdditionalSettingsScreen() {
       return false;
     }
 
-    // Email/password. Alert.prompt is iOS-only (same constraint the existing
-    // forgot-password flow has); on Android we fall through and let the
-    // requires-recent-login error guide the user to re-login.
+    // Email/password. iOS uses the native Alert.prompt; Android has no prompt
+    // API, so it drives an in-app password modal. Both reauth on submit — the
+    // old Android path returned false silently, making Delete Account a no-op.
+    const verify = async (pw: string | null, resolve: (ok: boolean) => void) => {
+      if (pw == null) {
+        resolve(false);
+        return;
+      }
+      try {
+        await reauthenticateWithPassword(user, pw);
+        resolve(true);
+      } catch {
+        Alert.alert('Incorrect Password', 'Could not verify your password.');
+        resolve(false);
+      }
+    };
+
     if (Platform.OS === 'ios') {
       return new Promise<boolean>((resolve) => {
         Alert.prompt(
@@ -84,22 +112,19 @@ export default function AdditionalSettingsScreen() {
             {
               text: 'Confirm',
               style: 'destructive',
-              onPress: async (pw?: string) => {
-                try {
-                  await reauthenticateWithPassword(user, pw ?? '');
-                  resolve(true);
-                } catch {
-                  Alert.alert('Incorrect Password', 'Could not verify your password.');
-                  resolve(false);
-                }
-              },
+              onPress: (pw?: string) => verify(pw ?? '', resolve),
             },
           ],
           'secure-text',
         );
       });
     }
-    return false;
+
+    return new Promise<boolean>((resolve) => {
+      setPwInput('');
+      setPwSubmit({ fn: (pw) => verify(pw, resolve) });
+      setPwPromptVisible(true);
+    });
   }
 
   function handleDeleteAccount() {
@@ -184,6 +209,47 @@ export default function AdditionalSettingsScreen() {
           <ThemedText style={styles.deleteText}>Delete Account</ThemedText>
         </Pressable>
       </ScrollView>
+
+      {/* Android password re-entry (iOS uses the native Alert.prompt). */}
+      <Modal
+        visible={pwPromptVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => closePwPrompt(null)}
+      >
+        <Pressable style={styles.pwOverlay} onPress={() => closePwPrompt(null)}>
+          <Pressable
+            style={[styles.pwSheet, { backgroundColor: colors.tileBackground }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <ThemedText type="defaultSemiBold" style={styles.pwTitle}>Confirm Password</ThemedText>
+            <ThemedText style={styles.pwBody}>
+              Re-enter your password to permanently delete your account.
+            </ThemedText>
+            <TextInput
+              style={[styles.pwInput, { color: colors.text, borderColor: colors.tileBorder }]}
+              value={pwInput}
+              onChangeText={setPwInput}
+              secureTextEntry
+              autoFocus
+              placeholder="Password"
+              placeholderTextColor={colors.icon}
+            />
+            <View style={styles.pwButtons}>
+              <Pressable style={styles.pwCancel} onPress={() => closePwPrompt(null)}>
+                <ThemedText style={styles.pwCancelText}>Cancel</ThemedText>
+              </Pressable>
+              <Pressable
+                style={[styles.pwConfirm, { opacity: pwInput.length === 0 ? 0.5 : 1 }]}
+                disabled={pwInput.length === 0}
+                onPress={() => closePwPrompt(pwInput)}
+              >
+                <ThemedText style={styles.pwConfirmText}>Confirm</ThemedText>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ThemedView>
   );
 }
@@ -219,4 +285,40 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   deleteText: { color: '#E74C3C', fontWeight: '600', fontSize: 16 },
+  pwOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingHorizontal: 24,
+  },
+  pwSheet: { width: '100%', maxWidth: 360, borderRadius: 12, padding: 20, gap: 12 },
+  pwTitle: { fontSize: 16, textAlign: 'center' },
+  pwBody: { fontSize: 13, textAlign: 'center', opacity: 0.8, lineHeight: 18 },
+  pwInput: {
+    height: 44,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    fontSize: 16,
+  },
+  pwButtons: { flexDirection: 'row', gap: 12 },
+  pwCancel: {
+    flex: 1,
+    height: 44,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(128,128,128,0.2)',
+  },
+  pwCancelText: { fontWeight: '600' },
+  pwConfirm: {
+    flex: 1,
+    height: 44,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#E74C3C',
+  },
+  pwConfirmText: { color: '#fff', fontWeight: '700' },
 });
