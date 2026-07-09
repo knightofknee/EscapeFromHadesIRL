@@ -33,6 +33,7 @@ Notifications.setNotificationHandler({
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { ErrorToast } from '@/components/ui/error-toast';
+import { OfflineModal } from '@/components/ui/offline-modal';
 import { AuthProvider, useAuth } from '@/contexts/auth-context';
 import { OfflineProvider } from '@/contexts/offline-context';
 import { AppDataProviders } from '@/contexts/app-data-providers';
@@ -155,6 +156,7 @@ export default function RootLayout() {
                   <RootNavigator />
                 </TourProvider>
                 <ErrorToast />
+                <OfflineModal />
                 <StatusBar style={effectiveScheme === 'dark' ? 'light' : 'dark'} />
               </ThemeProvider>
             </AppDataProviders>

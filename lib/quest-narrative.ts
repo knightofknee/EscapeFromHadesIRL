@@ -38,38 +38,6 @@ export function questStandingLine(
 }
 
 /**
- * The four shores of the ascent, in order — one source of truth shared by the
- * home-screen waypoint row, the score-bar tick marks, and the Ascent sheet.
- */
-export const ASCENT_BANDS = [
-  { min: 0, name: 'Shores of the Styx' },
-  { min: 25, name: 'Asphodel Meadows' },
-  { min: 50, name: 'Elysium Fields' },
-  { min: 75, name: 'Gates of Olympus' },
-] as const;
-
-/**
- * Names the run-score band as a stop on the long ferry out of Hades, plus the
- * next shore and its fixed threshold. Pure derivation of runPct (0-100).
- * (The old "N% to X" moving delta is gone — a fixed "X at 50%" is the number
- * the user can actually anchor to.)
- */
-export function runScoreWaypoint(runPct: number): {
-  band: string;
-  next: { name: string; min: number } | null;
-} {
-  let i = 0;
-  for (let k = 0; k < ASCENT_BANDS.length; k++) {
-    if (runPct >= ASCENT_BANDS[k].min) i = k;
-  }
-  const next = ASCENT_BANDS[i + 1];
-  return {
-    band: ASCENT_BANDS[i].name,
-    next: next ? { name: next.name, min: next.min } : null,
-  };
-}
-
-/**
  * In-voice opener for a CUSTOM pact's "why", woven from its own terms. This is
  * a starting draft the user edits — never auto-saved. Closes the canon gap
  * where every custom pact shared one generic blurb.

@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "844071641525",
+    "project_id": "escape-from-hades-irl",
+    "storage_bucket": "escape-from-hades-irl.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:844071641525:android:7ec827d6aa794c411cf9fc",
+        "android_client_info": {
+          "package_name": "com.briancarlisle.escapefromhadesirl"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "844071641525-gevfkii274b28110sib5pu16c80tm966.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBSmOZjlpFbwwCxBkDDNRe0svevoSpkdkc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "844071641525-gevfkii274b28110sib5pu16c80tm966.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "844071641525-k377d19aur4otk2ttcr10dr1pjfi6312.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.briancarlisle.escapefromhadesirl"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

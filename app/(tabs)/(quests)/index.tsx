@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type Ref } from 'react';
+import { useEffect, useMemo, useRef, type Ref } from 'react';
 import { ActivityIndicator, ScrollView, View, Pressable, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from 'expo-router';
@@ -6,7 +6,6 @@ import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { QuestCard } from '@/components/quests/quest-card';
-import { AscentSheet } from '@/components/quests/ascent-sheet';
 import { ScoreBar, flameColor } from '@/components/quests/score-bar';
 import { useQuests } from '@/hooks/use-quests';
 import { useHabits } from '@/hooks/use-habits';
@@ -23,7 +22,6 @@ import {
   type QuestTemplate,
 } from '@/constants/quest-templates';
 import { get18MonthWindow } from '@/lib/date-utils';
-import { runScoreWaypoint, ASCENT_BANDS } from '@/lib/quest-narrative';
 import { useTodayDate } from '@/hooks/use-today-date';
 
 
@@ -38,7 +36,6 @@ export default function QuestsScreen() {
   // fallback for a user who already began every challenge.
   const forgeQuestRef = useTourTarget('forge-quest');
   const beginChallengeRef = useTourTarget('begin-challenge');
-  const [ascentVisible, setAscentVisible] = useState(false);
 
   // While the tour spotlights the Begin stub (which lives INSIDE this
   // ScrollView), pin the list to the top and freeze scrolling — a flick
@@ -153,18 +150,12 @@ export default function QuestsScreen() {
           <ThemedText style={styles.headerTitle}>QUESTS</ThemedText>
           <ThemedText style={styles.headerSub}>Current run</ThemedText>
         </View>
-        <Pressable
-          style={styles.headerRight}
-          onPress={() => setAscentVisible(true)}
-          accessibilityRole="button"
-          accessibilityLabel={`Run score ${scores.runScore} of ${scores.totalAvailable} points`}
-          accessibilityHint="Opens the Ascent scoring guide"
-        >
+        <View style={styles.headerRight}>
           <ThemedText style={[styles.runScore, { color: flameColor(scores.runPct) }]}>
             {scores.runScore}
           </ThemedText>
           <ThemedText style={styles.runScoreLabel}>RUN SCORE · MAX {scores.totalAvailable}</ThemedText>
-        </Pressable>
+        </View>
         <Pressable
           ref={forgeQuestRef}
           style={styles.addButton}
@@ -174,37 +165,7 @@ export default function QuestsScreen() {
         </Pressable>
       </View>
 
-      {/* The run bar IS the band ladder — ticks mark the shore thresholds. */}
-      <ScoreBar
-        score={scores.runPct}
-        showLabel={false}
-        height={6}
-        ticks={ASCENT_BANDS.filter((b) => b.min > 0).map((b) => b.min)}
-      />
-
-      {/* Ascent waypoint — current shore with the run %, and the next shore's
-          fixed threshold. Taps open the full ladder + scoring explainer. */}
-      {(() => {
-        const wp = runScoreWaypoint(scores.runPct);
-        return (
-          <Pressable
-            style={styles.waypointRow}
-            onPress={() => setAscentVisible(true)}
-            accessibilityRole="button"
-            accessibilityLabel={`${wp.band}, ${scores.runPct}%`}
-            accessibilityHint="Opens the Ascent scoring guide"
-            hitSlop={{ top: 4, bottom: 10 }}
-          >
-            <ThemedText style={styles.waypointBand} numberOfLines={1}>
-              {wp.band}
-              <ThemedText style={styles.waypointPct}> · {scores.runPct}%</ThemedText>
-            </ThemedText>
-            <ThemedText style={styles.waypointNext}>
-              {wp.next ? `next: ${wp.next.name} at ${wp.next.min}%  ›` : 'the highest shore  ›'}
-            </ThemedText>
-          </Pressable>
-        );
-      })()}
+      <ScoreBar score={scores.runPct} showLabel={false} height={6} />
 
       <ScrollView
         ref={scrollRef}
@@ -315,14 +276,6 @@ export default function QuestsScreen() {
           )}
         </View>
       </ScrollView>
-
-      <AscentSheet
-        visible={ascentVisible}
-        onClose={() => setAscentVisible(false)}
-        runPct={scores.runPct}
-        runScore={scores.runScore}
-        totalAvailable={scores.totalAvailable}
-      />
     </View>
   );
 }
@@ -406,31 +359,6 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     fontVariant: ['tabular-nums'],
     lineHeight: 38,
-  },
-  waypointRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 8,
-  },
-  waypointBand: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: QuestColors.gold,
-    letterSpacing: 0.5,
-    // The band name yields before the tappable "next" label clips.
-    flexShrink: 1,
-    marginRight: 8,
-  },
-  waypointPct: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: QuestColors.textDim,
-  },
-  waypointNext: {
-    fontSize: 11,
-    color: QuestColors.textDim,
   },
   runScoreLabel: {
     fontSize: 9,

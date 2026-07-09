@@ -19,6 +19,9 @@ export type TourQuote = {
   source: string;
   /** A new light on the classic — the line reframed through the electric forest. */
   gloss?: string;
+  /** Accent bar color. Defaults to the flame accent; set to set a quote apart
+   *  (e.g. the celebratory blue Carl quote). */
+  accent?: string;
 };
 
 export type TourStep = {
@@ -30,6 +33,8 @@ export type TourStep = {
   title: string;
   body: string;
   quote?: TourQuote;
+  /** Optional second quote, rendered beneath the first (own accent bar). */
+  quote2?: TourQuote;
   /** The three world-mantras, listed on the closing beat. */
   mantras?: string[];
   /** CTA label once the step is cleared (gate met, or no gate). */
@@ -61,6 +66,9 @@ export type GenesisCtx = {
   goQuests: () => void;
 };
 
+// Celebratory blue for Carl's quote — set apart from the classical (flame) ones.
+const CARL_BLUE = '#5B8DD9';
+
 const onHabitsHome = (s: string[]) =>
   s[0] === '(tabs)' && s[1] === '(habits)' && s.length <= 2;
 const onQuestsHome = (s: string[]) =>
@@ -83,23 +91,29 @@ export function buildGenesisTour(ctx: GenesisCtx): TourStep[] {
       onEnter: ctx.goHabits,
     },
 
-    // ── The first ember (TASK: create a habit) ───────────────────────────
+    // ── Your habits live here (spotlight the add button) ─────────────────
     {
       id: 'first-habit',
       target: 'add-first-habit',
       interactive: true,
       match: onHabitsHome,
       onEnter: ctx.goHabits,
-      eyebrow: 'THE FIRST EMBER',
-      title: 'Light a single habit.',
+      eyebrow: 'YOUR HABITS',
+      title: 'This is home. Your habits live here.',
       body:
-        "Don't reach for perfection. Choose incremental goals. Value process over product, participation over excellence. Success will follow. Tap below to plant your first.",
+        "The habits you just chose are here on your home screen. Tap below to add more whenever you like. Aim for small and repeatable, not perfect: participation over excellence, process over product.",
       quote: {
         text: 'The beginnings of all things are small.',
         source: 'Cicero, De Finibus',
       },
+      quote2: {
+        text: 'The beginning is the hardest part, celebrate!',
+        source: 'Carl',
+        accent: CARL_BLUE,
+      },
+      // Pre-met once starter-setup created a habit; still guards a skipped setup.
       gate: (s) => s.habits > 0,
-      ctaLocked: 'Plant a habit to continue',
+      ctaLocked: 'Add a habit to continue',
     },
 
     // ── A path appears (read-only beat) ──────────────────────────────────
@@ -116,44 +130,35 @@ export function buildGenesisTour(ctx: GenesisCtx): TourStep[] {
       cta: 'On to quests ›',
     },
 
-    // ── Swear a pact (TASK: create a quest) ──────────────────────────────
+    // ── Quests: challenges to track (informational, over the quests tab) ──
     {
       id: 'first-quest',
-      // Spotlights the first unstarted challenge's Begin stub — the one-tap
-      // path. If every challenge is already begun the target won't resolve,
-      // but then the gate (quests > 0) is already met and the tour degrades
-      // to a centered beat with Next available.
-      target: 'begin-challenge',
-      interactive: true,
       match: onQuestsHome,
       onEnter: ctx.goQuests,
-      placement: 'low',
-      eyebrow: 'SWEAR A PACT',
-      title: 'Bind that habit to a quest.',
+      eyebrow: 'YOUR CHALLENGES',
+      title: 'Quests are challenges to meet.',
       body:
-        'A habit is the footstep; a quest is the road you swear to walk. Begin a challenge and link the habit you just lit, and the climb scores itself, shore by shore: the Styx, the Asphodel Meadows, Elysium, the Gates of Olympus. (A quest needs a habit, which is why we lit one first.)',
+        "This is the quests tab. Most challenges are already running, quietly watching your habits. You don't set them up. Come here to see how you're doing. (You can also write your own, but you don't have to.)",
       quote: {
-        text: 'First say to yourself what you would be; and then do what you have to do.',
-        source: 'Epictetus, Discourses',
-        gloss: 'Name the road out loud. Then it has somewhere to lead.',
+        text: 'Fire is the test of gold; adversity, of strong men.',
+        source: 'Seneca, On Providence',
       },
-      gate: (s) => s.quests > 0,
-      ctaLocked: 'Begin a quest to continue',
-      cta: 'The pact is sworn ›',
+      cta: 'Got it ›',
     },
 
-    // ── The long ascent (closing) ────────────────────────────────────────
+    // ── The long ascent (closing — lands back on home) ───────────────────
     {
       id: 'ascent',
+      // Close the tour on the home screen, not on quests.
+      onEnter: ctx.goHabits,
       eyebrow: 'THE LONG ASCENT',
       title: 'This is the whole game.',
       body:
-        'Footsteps become paths, paths become roads, and roads rewrite your eighteen-month default, and that rewrite is the escape. Hesiod said the gods set sweat before the gates of excellence; the long climb is the reward. Hold three things and you cannot lose.',
+        'Footsteps become paths, paths become roads, and roads rewrite your default. That rewrite is the escape. Hold three things and you cannot lose.',
       mantras: ['Show up small.', 'Return often.', 'Let the road rise to meet you.'],
       quote: {
         text: 'Become such as you are, having learned what that is.',
         source: 'Pindar, Pythian Odes',
-        gloss: 'The way out of Hades and the way into yourself are the same road.',
       },
       cta: 'Enter the forest ›',
     },

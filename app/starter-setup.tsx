@@ -1,23 +1,24 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { router, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import {
+  CORE_STARTER_KEYS,
+  STARTER_TASKS,
+  type StarterTask,
+} from '@/constants/starter-tasks';
 import { Colors } from '@/constants/theme';
+import { useTour } from '@/contexts/tour-context';
+import { useUserSettingsContext } from '@/contexts/user-settings-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useHabits } from '@/hooks/use-habits';
 import { useQuests } from '@/hooks/use-quests';
-import { useUserSettingsContext } from '@/contexts/user-settings-context';
 import { useTodayDate } from '@/hooks/use-today-date';
-import { useTour } from '@/contexts/tour-context';
-import {
-  STARTER_TASKS,
-  CORE_STARTER_KEYS,
-  type StarterTask,
-} from '@/constants/starter-tasks';
-import { applyStarterTasks, isStarterAdded } from '@/lib/starter-tasks';
 import { emitError } from '@/lib/error-bus';
+import { applyStarterTasks, isStarterAdded } from '@/lib/starter-tasks';
+import { setPendingHabitCallback } from '@/lib/pending-habit-link';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 /**
  * Intro bubble-picker for adding preset habits + their linked quests. Two
@@ -44,6 +45,9 @@ export default function StarterSetupScreen() {
   // Synchronous guard: `busy` state lags a frame, so two fast taps could both
   // run applyStarterTasks concurrently and create duplicate habits.
   const finishingRef = useRef(false);
+  // Set true when the user creates a habit via "Create your own" so we can
+  // confirm it back to them on return.
+  const [customAdded, setCustomAdded] = useState(false);
   // The tutorial opens on a welcome page (hello + the concept), then the
   // picker. Standalone (non-intro) opens straight to the picker.
   const [page, setPage] = useState<'welcome' | 'pick'>(isIntro ? 'welcome' : 'pick');
@@ -105,10 +109,16 @@ export default function StarterSetupScreen() {
   const more = STARTER_TASKS.filter((t) => t.category === 'more');
 
   const primaryLabel = isIntro
-    ? 'Begin'
+    ? 'Continue'
     : toCreateCount > 0
       ? `Add ${toCreateCount}`
       : 'Done';
+
+  // Intro setup must end with at least one habit — count what already exists
+  // plus what's selected-and-not-yet-added. A custom habit created via the
+  // "create your own" button lands in `habits`, so it counts here too.
+  const willHaveHabit = habits.length + toCreateCount > 0;
+  const canFinish = !isIntro || willHaveHabit;
 
   if (page === 'welcome') {
     return (
@@ -119,7 +129,7 @@ export default function StarterSetupScreen() {
               <ThemedText style={[styles.welcomeEyebrow, { color: colors.tint }]}>
                 ESCAPE FROM HADES
               </ThemedText>
-              <ThemedText style={styles.welcomeTitle}>Welcome, wanderer.</ThemedText>
+              <ThemedText style={styles.welcomeTitle}>Welcome, wanderer</ThemedText>
               <ThemedText style={styles.welcomeText}>
                 Your mind is an electric forest. The paths you walk every day become the
                 roads you take without thinking. This is the game of wearing better paths
@@ -136,7 +146,7 @@ export default function StarterSetupScreen() {
                 style={[styles.primaryButton, { backgroundColor: colors.tint }]}
                 accessibilityRole="button"
               >
-                <ThemedText style={styles.primaryButtonText}>Continue</ThemedText>
+                <ThemedText style={styles.primaryButtonText}>Begin</ThemedText>
               </Pressable>
               <Pressable onPress={() => finish([])} hitSlop={8} disabled={busy}>
                 <ThemedText style={[styles.skipLink, { color: colors.icon }]}>
@@ -213,20 +223,55 @@ export default function StarterSetupScreen() {
               />
             ))}
           </View>
+
+          {/* --- Your Own (any habit type, incl. custom) --- */}
+          <ThemedText style={[styles.sectionHeading, { color: colors.tint, marginTop: 24 }]}>
+            Your Own
+          </ThemedText>
+          <ThemedText style={styles.sectionSub}>
+            Want something else? Build any habit from scratch — any type you like.
+          </ThemedText>
+          <Pressable
+            style={[styles.createOwnBtn, { borderColor: colors.tint }]}
+            onPress={() => {
+              setPendingHabitCallback(() => setCustomAdded(true));
+              router.push({ pathname: '/tile-settings', params: { mode: 'create' } });
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Create your own habit"
+          >
+            <ThemedText style={[styles.createOwnText, { color: colors.tint }]}>
+              ＋ Create your own habit
+            </ThemedText>
+          </Pressable>
+          {customAdded && (
+            <ThemedText style={styles.customAddedNote}>
+              ✓ Your habit is ready. Pick more above, or continue below.
+            </ThemedText>
+          )}
         </ScrollView>
 
         {/* Footer */}
         <View style={[styles.footer, { borderTopColor: colors.tileBorder }]}>
           {isIntro && (
             <ThemedText style={styles.footerNote}>
-              You’ll need at least one habit to finish setup.
+              {!canFinish
+                ? 'Pick at least one habit above, or create your own, to continue.'
+                : toCreateCount > 0
+                  ? 'We’ll add what you picked (plus its quest) and start you off. Change anything later.'
+                  : 'You’re all set. Continue to start the tour.'}
             </ThemedText>
           )}
           <Pressable
             onPress={() => finish([...selected])}
-            disabled={busy}
-            style={[styles.primaryButton, { backgroundColor: colors.tint }, busy && { opacity: 0.6 }]}
+            disabled={busy || !canFinish}
+            style={[
+              styles.primaryButton,
+              { backgroundColor: colors.tint },
+              (busy || !canFinish) && { opacity: 0.45 },
+            ]}
             accessibilityRole="button"
+            accessibilityState={{ disabled: busy || !canFinish }}
           >
             {busy ? (
               <ActivityIndicator color="#fff" />
@@ -348,7 +393,9 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     marginBottom: 12,
   },
-  welcomeTitle: { fontSize: 30, fontWeight: '800', marginBottom: 20 },
+  // lineHeight MUST be set: ThemedText's default type injects lineHeight 24,
+  // and without overriding it a 30px heavy font clips (tops of letters cut off).
+  welcomeTitle: { fontSize: 30, lineHeight: 38, fontWeight: '800', marginBottom: 20 },
   welcomeText: { fontSize: 16, lineHeight: 24, opacity: 0.85, marginBottom: 16 },
   welcomeFooter: { paddingBottom: 20, gap: 14, alignItems: 'stretch' },
   skipLink: { fontSize: 15, fontWeight: '600', textAlign: 'center' },
@@ -382,7 +429,9 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 10,
   },
-  cardEmoji: { fontSize: 26 },
+  // lineHeight override needed: ThemedText's default type injects lineHeight 24,
+  // which would clip a 26px emoji (same trap as welcomeTitle).
+  cardEmoji: { fontSize: 26, lineHeight: 32 },
   cardBody: { flex: 1 },
   cardLabel: { fontSize: 17, fontWeight: '700', marginBottom: 2 },
   cardBlurb: { fontSize: 13, lineHeight: 18, opacity: 0.75 },
@@ -409,6 +458,22 @@ const styles = StyleSheet.create({
   },
   pillText: { fontSize: 15, fontWeight: '600' },
   pillAdded: { fontSize: 12, fontWeight: '600' },
+  createOwnBtn: {
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  createOwnText: { fontSize: 15, fontWeight: '700' },
+  customAddedNote: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#27AE60',
+    textAlign: 'center',
+    marginTop: 8,
+  },
   footer: {
     paddingHorizontal: 16,
     paddingTop: 12,

@@ -225,12 +225,19 @@ export function SpotlightTour() {
             </View>
           )}
 
-          {!!step.quote && (
-            <View style={styles.quoteBlock}>
-              <Text style={styles.quoteText}>“{step.quote.text}”</Text>
-              <Text style={styles.quoteSource}>{step.quote.source}</Text>
-              {!!step.quote.gloss && <Text style={styles.quoteGloss}>{step.quote.gloss}</Text>}
-            </View>
+          {[step.quote, step.quote2].map((q, i) =>
+            q ? (
+              <View
+                key={i}
+                style={[styles.quoteBlock, q.accent ? { borderLeftColor: q.accent } : null]}
+              >
+                <Text style={styles.quoteText}>“{q.text}”</Text>
+                <Text style={[styles.quoteSource, q.accent ? { color: q.accent } : null]}>
+                  {q.source}
+                </Text>
+                {!!q.gloss && <Text style={styles.quoteGloss}>{q.gloss}</Text>}
+              </View>
+            ) : null,
           )}
         </ScrollView>
 
