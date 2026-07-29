@@ -11,12 +11,14 @@ import type { Note, Tag } from '@/types/note';
 type NoteListItemProps = {
   note: Note;
   tags: Tag[];
+  /** Active list sort — the row's primary date matches it. */
+  sortBy?: 'updated' | 'created';
   onPress: (noteId: string) => void;
   onDelete?: (noteId: string) => void;
   onTogglePin?: (noteId: string, pinned: boolean) => void;
 };
 
-export const NoteListItem = memo(function NoteListItem({ note, tags, onPress, onDelete, onTogglePin }: NoteListItemProps) {
+export const NoteListItem = memo(function NoteListItem({ note, tags, sortBy = 'updated', onPress, onDelete, onTogglePin }: NoteListItemProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const swipeableRef = useRef<Swipeable>(null);
@@ -98,10 +100,18 @@ export const NoteListItem = memo(function NoteListItem({ note, tags, onPress, on
     preview = previewLine.slice(0, 100);
   }
 
-  const dateStr = new Date(note.updatedAt).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-  });
+  // Primary date matches the active sort so the list visibly reads in order.
+  // The other date rides beneath in a smaller line when it's a different day,
+  // so editing an old note doesn't erase when it was written (and vice versa).
+  const fmt = (ms: number) =>
+    new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const byCreated = sortBy === 'created';
+  const primaryMs = byCreated ? note.createdAt : note.updatedAt;
+  const secondaryMs = byCreated ? note.updatedAt : note.createdAt;
+  const dateStr = fmt(primaryMs);
+  // Year-safe same-day check (formatted strings drop the year).
+  const sameDay = new Date(primaryMs).toDateString() === new Date(secondaryMs).toDateString();
+  const secondaryStr = sameDay ? null : `${byCreated ? 'edited' : 'created'} ${fmt(secondaryMs)}`;
 
   const isPinned = !!note.pinned;
 
@@ -167,7 +177,10 @@ export const NoteListItem = memo(function NoteListItem({ note, tags, onPress, on
         </View>
 
         <View style={styles.rightColumn}>
-          <ThemedText style={styles.date}>{dateStr}</ThemedText>
+          <View style={styles.dates}>
+            <ThemedText style={styles.date}>{dateStr}</ThemedText>
+            {secondaryStr && <ThemedText style={styles.dateSecondary}>{secondaryStr}</ThemedText>}
+          </View>
           <Pressable
             onPress={() => onTogglePin?.(note.id, !isPinned)}
             hitSlop={8}
@@ -205,9 +218,17 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 16,
   },
+  dates: {
+    alignItems: 'flex-end',
+  },
   date: {
     fontSize: 12,
     opacity: 0.5,
+  },
+  dateSecondary: {
+    fontSize: 10,
+    lineHeight: 13,
+    opacity: 0.35,
   },
   pinButton: {
     paddingTop: 6,

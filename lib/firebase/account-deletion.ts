@@ -8,6 +8,8 @@ import {
   writeBatch,
   doc,
 } from './firestore';
+import { clearEarnedQuoteState } from '@/lib/earned-quotes';
+import { clearVocab } from '@/lib/word-suggestions';
 
 // Every top-level collection that stores this user's data keyed by a
 // `userId` field. KEEP IN SYNC with the app's write paths — a collection
@@ -91,6 +93,13 @@ export async function deleteAccountAndData(user: User): Promise<void> {
   batch.delete(doc(db, 'userSettings', user.uid));
   batchCount++;
   await flush();
+
+  // Device-local per-uid stores that hold user-derived content: the notes
+  // vocabulary (word frequencies harvested from the user's own notes) and
+  // milestone-quote progress. signOut() deliberately keeps the quote
+  // progress for returning users, so deletion must remove it here.
+  // Best-effort: local cleanup must never fail the deletion.
+  await Promise.allSettled([clearVocab(user.uid), clearEarnedQuoteState(user.uid)]);
 
   // Data is now gone. If closing the auth account fails for any reason OTHER
   // than needing recent login, the user would be left authenticated with an

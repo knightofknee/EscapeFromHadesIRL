@@ -3,8 +3,8 @@ import { AppState } from 'react-native';
 import { useAuth } from '@/contexts/auth-context';
 import { db, doc, getDoc, updateDoc } from '@/lib/firebase/firestore';
 import { persistHabitRecord } from '@/lib/persist-record';
-import { getTodayString } from '@/lib/date-utils';
-import { computeStepsLevel, unconfirmedStepDays } from '@/lib/steps';
+import { addDays, getTodayString } from '@/lib/date-utils';
+import { computeStepsLevel, STEPS_PROBE_DAYS, unconfirmedStepDays } from '@/lib/steps';
 import { getStepsForDay } from '@/lib/steps-health';
 import { useHabits } from '@/hooks/use-habits';
 import { useTodayDate } from '@/hooks/use-today-date';
@@ -26,6 +26,11 @@ import type { Habit, HabitRecord } from '@/types/habit';
  * useTodayDate re-arming the effect). Throttled to one sync per 30s — but
  * the throttle never swallows a sync for a NEW day or a newly added steps
  * habit, only repeats of the same work.
+ *
+ * Both jobs are gated on the device proving it can see step data at all
+ * (nonzero read somewhere in the trailing STEPS_PROBE_DAYS): an empty or
+ * unreadable health store reads every day as 0, and those fake zeros must
+ * never be written or confirmed. See the trust gate in sync().
  */
 export function useStepsBackfill() {
   const { user } = useAuth();
@@ -42,7 +47,7 @@ export function useStepsBackfill() {
     const stepsHabits = habits.filter((h) => h.recordingMode === 'steps');
     if (stepsHabits.length === 0) return;
 
-    const writeRecord = async (habit: Habit, date: string, steps: number) => {
+    const writeRecord = async (habit: Habit, date: string, steps: number): Promise<boolean> => {
       const docId = `${habit.id}_${date}`;
       const next: HabitRecord = {
         id: docId,
@@ -56,7 +61,9 @@ export function useStepsBackfill() {
       };
       // Silent: this runs automatically in the background and self-heals on the
       // next sync, so a failed write shouldn't pop a toast the user can't act on.
-      await persistHabitRecord(next, { silent: true });
+      // persistHabitRecord catches internally — failure comes back as `false`,
+      // never a throw, so callers MUST check the return value.
+      return persistHabitRecord(next, { silent: true });
     };
 
     /**
@@ -101,7 +108,17 @@ export function useStepsBackfill() {
         if (date >= scopeStart && (!record || record.source === 'auto')) {
           const steps = await stepsFor(date);
           if (steps == null) break; // health read failed — retry from here next sync
-          await writeRecord(habit, date, steps);
+          // A 0 read against a record that already holds a real count means
+          // THIS device can't see that day's data (new phone whose health
+          // history didn't migrate — the trailing-week trust gate passes on
+          // its own fresh days). Steps only accumulate, so a genuine final
+          // count can never undercut a same-day live reading: keep the old
+          // record and confirm the day as-is instead of zeroing it out.
+          const keepExisting =
+            steps === 0 && typeof record?.steps === 'number' && record.steps > 0;
+          // A failed write must also stop the walk: the pointer advancing past
+          // a day that never reached the server would freeze it unwritten.
+          if (!keepExisting && !(await writeRecord(habit, date, steps))) break;
         }
         confirmedThrough = date;
       }
@@ -143,16 +160,35 @@ export function useStepsBackfill() {
         return dayCache.get(date) ?? null;
       };
 
+      // Trust gate: a health query on a device with an empty or unreadable
+      // store (simulator, iPad, revoked permission) reports a day as 0 — the
+      // same value as a genuine zero-step day. Writing those "zeros" poisons
+      // real records and the confirm pointer freezes them (this shipped: a
+      // signed-in dev simulator zeroed out July 9–13 2026). A single day
+      // can't be disambiguated, but a device whose whole trailing week reads
+      // empty can't see step data — write nothing and leave the pointer
+      // alone; another device will confirm these days. A real phone passes on
+      // the first or second read (probe days stay in dayCache, so this costs
+      // no extra queries when the days get confirmed below).
+      let deviceSeesSteps = false;
+      for (let i = 0; i < STEPS_PROBE_DAYS; i++) {
+        const probed = await stepsFor(addDays(today, -i));
+        if (probed != null && probed > 0) {
+          deviceSeesSteps = true;
+          break;
+        }
+      }
+      if (!deviceSeesSteps) return;
+
       const todaySteps = await stepsFor(today);
       if (todaySteps != null) {
         for (const habit of stepsHabits) {
           const writeKey = `${today}|${todaySteps}|${(habit.stepGoals ?? []).join(',')}`;
           if (lastLiveWriteRef.current.get(habit.id) === writeKey) continue;
-          try {
-            await writeRecord(habit, today, todaySteps);
+          // Only remember the write as done if it actually reached the server;
+          // a failed one should be retried on the next sync.
+          if (await writeRecord(habit, today, todaySteps)) {
             lastLiveWriteRef.current.set(habit.id, writeKey);
-          } catch (err) {
-            console.error('Steps backfill write failed:', err);
           }
         }
       }

@@ -6,6 +6,7 @@ import {
   type StarterTask,
 } from '@/constants/starter-tasks';
 import { Colors } from '@/constants/theme';
+import { useOfflineGuard } from '@/contexts/offline-context';
 import { useTour } from '@/contexts/tour-context';
 import { useUserSettingsContext } from '@/contexts/user-settings-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -13,11 +14,11 @@ import { useHabits } from '@/hooks/use-habits';
 import { useQuests } from '@/hooks/use-quests';
 import { useTodayDate } from '@/hooks/use-today-date';
 import { emitError } from '@/lib/error-bus';
-import { applyStarterTasks, isStarterAdded } from '@/lib/starter-tasks';
 import { setPendingHabitCallback } from '@/lib/pending-habit-link';
+import { applyStarterTasks, isStarterAdded } from '@/lib/starter-tasks';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 /**
@@ -25,8 +26,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
  * groups: "The Path" (walk/meditate/read) pre-selected (opt-out), and "Worthy
  * Pursuits" (write/exercise/yoga/music) opt-in. Reached two ways:
  *   - `?intro=1` — the start of the Genesis tour for brand-new users. On
- *     finish/skip it hands off to the spotlight tour (which gates on having a
- *     habit), so the "you need ≥1 habit" rule is enforced downstream.
+ *     finish it hands off to the spotlight tour; the welcome page's "Skip
+ *     setup for now" leaves entirely (no picker, no tour) — the empty habits
+ *     home shows a Finish setup button as the road back.
  *   - no param — re-launched later from the habits ••• menu; already-added
  *     presets are grayed out, and it just returns when done.
  */
@@ -36,18 +38,78 @@ export default function StarterSetupScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
-  const { habits, createHabit } = useHabits();
+  const { habits, createHabit, archiveHabit, reviveHabit } = useHabits();
   const { quests, createQuest } = useQuests();
   const { setShowAllTileNames } = useUserSettingsContext();
   const { todayStr } = useTodayDate();
-  const { startGenesis } = useTour();
+  const { startGenesis, isActive: tourActive } = useTour();
+  const { requireOnline } = useOfflineGuard();
   const [busy, setBusy] = useState(false);
   // Synchronous guard: `busy` state lags a frame, so two fast taps could both
   // run applyStarterTasks concurrently and create duplicate habits.
   const finishingRef = useRef(false);
-  // Set true when the user creates a habit via "Create your own" so we can
-  // confirm it back to them on return.
-  const [customAdded, setCustomAdded] = useState(false);
+  // Ids of habits the user created via "Create your own" this visit, so we
+  // can list them back by name on return (not just a vague "it's ready").
+  const [customIds, setCustomIds] = useState<string[]>([]);
+  const customHabits = useMemo(
+    () => habits.filter((h) => customIds.includes(h.id)),
+    [habits, customIds],
+  );
+  // Customs removed (archived) this visit. Archived habits leave `habits`, so
+  // we snapshot what the strikethrough row needs; "Add back" revives by id.
+  const [removedCustom, setRemovedCustom] = useState<
+    { id: string; name: string; color: string; mark: string }[]
+  >([]);
+  // Scroll the picker to the bottom once the new custom habit's row is in the
+  // list, so the creation is visibly confirmed instead of hidden off-screen.
+  const scrollRef = useRef<ScrollView>(null);
+  const pendingScrollRef = useRef(false);
+
+  const removeCustom = useCallback(
+    (habit: { id: string; name: string; color: string; icon?: string; abbreviation: string }) => {
+      Alert.alert('Remove this habit?', `"${habit.name}" will be removed. You can add it back below.`, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            // archiveHabit RESOLVES (doesn't reject) when its own offline
+            // guard blocks the write, so the rollback catch below never
+            // fires offline — bail before touching local state or the rows
+            // desync from the server.
+            if (!requireOnline()) return;
+            setRemovedCustom((prev) => [
+              ...prev,
+              {
+                id: habit.id,
+                name: habit.name,
+                color: habit.color,
+                mark: habit.icon ?? habit.abbreviation,
+              },
+            ]);
+            archiveHabit(habit.id).catch(() => {
+              emitError("Couldn't remove the habit. Check your connection and try again.");
+              setRemovedCustom((prev) => prev.filter((r) => r.id !== habit.id));
+            });
+          },
+        },
+      ]);
+    },
+    [archiveHabit, requireOnline],
+  );
+
+  const addBackCustom = useCallback(
+    (id: string) => {
+      // Same as removeCustom: reviveHabit resolves on an offline block, so
+      // guard before the optimistic row removal.
+      if (!requireOnline()) return;
+      setRemovedCustom((prev) => prev.filter((r) => r.id !== id));
+      reviveHabit(id).catch(() => {
+        emitError("Couldn't add the habit back. Check your connection and try again.");
+      });
+    },
+    [reviveHabit, requireOnline],
+  );
   // The tutorial opens on a welcome page (hello + the concept), then the
   // picker. Standalone (non-intro) opens straight to the picker.
   const [page, setPage] = useState<'welcome' | 'pick'>(isIntro ? 'welcome' : 'pick');
@@ -99,10 +161,13 @@ export default function StarterSetupScreen() {
         finishingRef.current = false;
       }
       // Intro: hand off to the spotlight tour (gated on having a habit).
-      if (isIntro) startGenesis();
+      // Not when the tour is ALREADY running — re-entering setup through the
+      // tour's own spotlighted button must resume the tour where it was, not
+      // restart it from step 1.
+      if (isIntro && !tourActive) startGenesis();
       router.back();
     },
-    [habits, quests, todayStr, createHabit, createQuest, setShowAllTileNames, isIntro, startGenesis],
+    [habits, quests, todayStr, createHabit, createQuest, setShowAllTileNames, isIntro, tourActive, startGenesis],
   );
 
   const core = STARTER_TASKS.filter((t) => t.category === 'core');
@@ -114,11 +179,23 @@ export default function StarterSetupScreen() {
       ? `Add ${toCreateCount}`
       : 'Done';
 
-  // Intro setup must end with at least one habit — count what already exists
-  // plus what's selected-and-not-yet-added. A custom habit created via the
-  // "create your own" button lands in `habits`, so it counts here too.
+  // Setup must end with at least one habit — count what already exists plus
+  // what's selected-and-not-yet-added. A custom habit created via the "create
+  // your own" button lands in `habits`, so it counts here too. Applies in both
+  // modes: deselecting everything with zero habits never enables the button.
   const willHaveHabit = habits.length + toCreateCount > 0;
-  const canFinish = !isIntro || willHaveHabit;
+  const canFinish = willHaveHabit;
+
+  // Welcome-page skip: leave setup entirely — no picker, no tour. The habits
+  // home shows a "Finish setup" button (and the ••• menu a Setup entry) while
+  // the account has no habits, so the road back is visible.
+  const skipSetup = useCallback(() => {
+    // replace, not back(): the auto-intro can open over ANY screen (a
+    // notes-as-home cold start included), and the skip hint promises the
+    // habits screen. Walking history would land wherever the app happened
+    // to be.
+    router.replace('/(tabs)/(habits)');
+  }, []);
 
   if (page === 'welcome') {
     return (
@@ -127,7 +204,7 @@ export default function StarterSetupScreen() {
           <View style={styles.welcomeWrap}>
             <View style={styles.welcomeBody}>
               <ThemedText style={[styles.welcomeEyebrow, { color: colors.tint }]}>
-                ESCAPE FROM HADES
+                ESCAPE FROM HADES IRL
               </ThemedText>
               <ThemedText style={styles.welcomeTitle}>Welcome, wanderer</ThemedText>
               <ThemedText style={styles.welcomeText}>
@@ -148,11 +225,14 @@ export default function StarterSetupScreen() {
               >
                 <ThemedText style={styles.primaryButtonText}>Begin</ThemedText>
               </Pressable>
-              <Pressable onPress={() => finish([])} hitSlop={8} disabled={busy}>
+              <Pressable onPress={skipSetup} hitSlop={8} disabled={busy}>
                 <ThemedText style={[styles.skipLink, { color: colors.icon }]}>
-                  Skip for now
+                  Skip setup for now
                 </ThemedText>
               </Pressable>
+              <ThemedText style={[styles.skipHint, { color: colors.icon }]}>
+                You can finish setup anytime from the habits screen.
+              </ThemedText>
             </View>
           </View>
         </SafeAreaView>
@@ -180,9 +260,15 @@ export default function StarterSetupScreen() {
         </View>
 
         <ScrollView
+          ref={scrollRef}
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          onContentSizeChange={() => {
+            if (!pendingScrollRef.current) return;
+            pendingScrollRef.current = false;
+            scrollRef.current?.scrollToEnd({ animated: true });
+          }}
         >
           <ThemedText style={styles.lede}>
             Pick what you want to track. We add the habit and its quest, and you can
@@ -234,7 +320,10 @@ export default function StarterSetupScreen() {
           <Pressable
             style={[styles.createOwnBtn, { borderColor: colors.tint }]}
             onPress={() => {
-              setPendingHabitCallback(() => setCustomAdded(true));
+              setPendingHabitCallback((habitId) => {
+                pendingScrollRef.current = true;
+                setCustomIds((prev) => (prev.includes(habitId) ? prev : [...prev, habitId]));
+              });
               router.push({ pathname: '/tile-settings', params: { mode: 'create' } });
             }}
             accessibilityRole="button"
@@ -244,24 +333,74 @@ export default function StarterSetupScreen() {
               ＋ Create your own habit
             </ThemedText>
           </Pressable>
-          {customAdded && (
-            <ThemedText style={styles.customAddedNote}>
-              ✓ Your habit is ready. Pick more above, or continue below.
-            </ThemedText>
+          {(customHabits.length > 0 || removedCustom.length > 0) && (
+            <View style={styles.customList}>
+              {customHabits.map((h) => (
+                <View
+                  key={h.id}
+                  style={[styles.customRow, { borderColor: colors.tileBorder }]}
+                >
+                  <ThemedText style={[styles.customRowMark, { color: h.color }]}>
+                    {h.icon ?? h.abbreviation}
+                  </ThemedText>
+                  <ThemedText style={styles.customRowName} numberOfLines={1}>
+                    {h.name}
+                  </ThemedText>
+                  {/* The check doubles as the remove control (confirmed) —
+                      undo lives where the action happened. */}
+                  <Pressable
+                    onPress={() => removeCustom(h)}
+                    hitSlop={10}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove ${h.name}`}
+                  >
+                    <ThemedText style={styles.customRowCheck}>✓</ThemedText>
+                  </Pressable>
+                </View>
+              ))}
+              {removedCustom.map((r) => (
+                <View
+                  key={r.id}
+                  style={[styles.customRow, styles.customRowRemoved, { borderColor: colors.tileBorder }]}
+                >
+                  <ThemedText style={[styles.customRowMark, { color: r.color }]}>
+                    {r.mark}
+                  </ThemedText>
+                  <ThemedText
+                    style={[styles.customRowName, styles.customRowNameRemoved]}
+                    numberOfLines={1}
+                  >
+                    {r.name}
+                  </ThemedText>
+                  <Pressable
+                    onPress={() => addBackCustom(r.id)}
+                    hitSlop={10}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Add ${r.name} back`}
+                  >
+                    <ThemedText style={[styles.customRowAddBack, { color: colors.tint }]}>
+                      Add back
+                    </ThemedText>
+                  </Pressable>
+                </View>
+              ))}
+            </View>
           )}
         </ScrollView>
 
         {/* Footer */}
         <View style={[styles.footer, { borderTopColor: colors.tileBorder }]}>
-          {isIntro && (
+          {!canFinish ? (
             <ThemedText style={styles.footerNote}>
-              {!canFinish
-                ? 'Pick at least one habit above, or create your own, to continue.'
-                : toCreateCount > 0
-                  ? 'We’ll add what you picked (plus its quest) and start you off. Change anything later.'
-                  : 'You’re all set. Continue to start the tour.'}
+              Pick at least one habit above, or create your own, to continue.
             </ThemedText>
-          )}
+          ) : isIntro ? (
+            <ThemedText style={styles.footerNote}>
+              {toCreateCount > 0
+                ? 'We’ll add what you picked (plus its quest) and start you off. Change anything later.'
+                : 'You’re all set. Continue to start the tour.'}
+            </ThemedText>
+          ) : null}
           <Pressable
             onPress={() => finish([...selected])}
             disabled={busy || !canFinish}
@@ -399,6 +538,7 @@ const styles = StyleSheet.create({
   welcomeText: { fontSize: 16, lineHeight: 24, opacity: 0.85, marginBottom: 16 },
   welcomeFooter: { paddingBottom: 20, gap: 14, alignItems: 'stretch' },
   skipLink: { fontSize: 15, fontWeight: '600', textAlign: 'center' },
+  skipHint: { fontSize: 12, lineHeight: 16, textAlign: 'center', opacity: 0.7, marginTop: -6 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -467,13 +607,22 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   createOwnText: { fontSize: 15, fontWeight: '700' },
-  customAddedNote: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#27AE60',
-    textAlign: 'center',
-    marginTop: 8,
+  customList: { marginTop: 12, gap: 8 },
+  customRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1.5,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
   },
+  customRowMark: { fontSize: 17, fontWeight: '800', minWidth: 28 },
+  customRowName: { flex: 1, fontSize: 16, fontWeight: '700' },
+  customRowCheck: { fontSize: 15, fontWeight: '800', color: '#27AE60' },
+  customRowRemoved: { opacity: 0.5 },
+  customRowNameRemoved: { textDecorationLine: 'line-through' },
+  customRowAddBack: { fontSize: 13, fontWeight: '700' },
   footer: {
     paddingHorizontal: 16,
     paddingTop: 12,

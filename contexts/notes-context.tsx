@@ -28,6 +28,7 @@ import { subscribeWithOfflineState } from '@/lib/firebase/subscribe';
 import { deleteAllItems } from '@/lib/firebase/checklist-items';
 import { maybeBumpCreativeWriting } from '@/lib/creative-writing';
 import { useTodayDate } from '@/hooks/use-today-date';
+import { useNotesSort } from '@/hooks/use-notes-sort';
 import type { Note } from '@/types/note';
 
 // Initial page size for the notes list. "Load more" grows the live window in
@@ -44,6 +45,7 @@ type NoteUpdates = Partial<
     | 'description'
     | 'checklist'
     | 'checklistSummary'
+    | 'checklistNumbered'
     | 'itemsMigrated'
   >
 >;
@@ -98,7 +100,8 @@ export function toValidNote(id: string, raw: Record<string, unknown> | undefined
 }
 
 // Merge note lists deduped by id (later lists win on collision). Order is
-// irrelevant — the list screen re-sorts (pinned first, then updatedAt desc).
+// irrelevant — the list screen re-sorts (pinned first, then the active sort
+// field desc; see useNotesSort).
 function mergeById(...lists: Note[][]): Note[] {
   const byId = new Map<string, Note>();
   for (const list of lists) {
@@ -152,6 +155,11 @@ export function NotesProvider({ children }: { children: ReactNode }) {
   const { requireOnline } = useOfflineGuard();
   const { habits } = useHabitsContext();
   const { todayStr } = useTodayDate();
+  // User-facing sort (last edited vs created). The window query must order by
+  // the SAME field the list sorts by, or a partial page would show the wrong
+  // subset (e.g. the 30 most-recently-edited notes sorted by creation date is
+  // not the 30 most-recently-created notes).
+  const { notesSort } = useNotesSort();
   // Stale-closure proof: refs that callbacks read instead of values, so the
   // Creative Writing bump always sees the latest habit list + today's date
   // without bloating the callback's dep array (and thus invalidating its
@@ -228,13 +236,16 @@ export function NotesProvider({ children }: { children: ReactNode }) {
     }
 
     const base = collection(db, 'notes');
+    // Both orderings are backed by composite indexes in firestore.indexes.json
+    // (userId + updatedAt desc, userId + createdAt desc).
+    const orderField = notesSort === 'created' ? 'createdAt' : 'updatedAt';
     const q =
       pageLimit === null
-        ? query(base, where('userId', '==', user.uid), orderBy('updatedAt', 'desc'))
+        ? query(base, where('userId', '==', user.uid), orderBy(orderField, 'desc'))
         : query(
             base,
             where('userId', '==', user.uid),
-            orderBy('updatedAt', 'desc'),
+            orderBy(orderField, 'desc'),
             limit(pageLimit),
           );
 
@@ -274,7 +285,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
         },
       },
     );
-  }, [user, pageLimit, applyMerge, retryNonce]);
+  }, [user, pageLimit, notesSort, applyMerge, retryNonce]);
 
   // Pinned sidecar: pinned notes are always present regardless of the window,
   // so a pinned note older than the loaded page still floats to the top. Two

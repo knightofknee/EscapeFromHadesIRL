@@ -34,6 +34,8 @@ Notifications.setNotificationHandler({
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { ErrorToast } from '@/components/ui/error-toast';
 import { OfflineModal } from '@/components/ui/offline-modal';
+import { UpdateModal } from '@/components/ui/update-modal';
+import { ActiveDayTracker } from '@/hooks/use-earned-quote';
 import { AuthProvider, useAuth } from '@/contexts/auth-context';
 import { OfflineProvider } from '@/contexts/offline-context';
 import { AppDataProviders } from '@/contexts/app-data-providers';
@@ -154,7 +156,14 @@ export default function RootLayout() {
                     outside it so toasts still render above the tour. */}
                 <TourProvider>
                   <RootNavigator />
+                  {/* Inside TourProvider only for useTour (it renders null
+                      while the tour runs) — as an RN Modal its stacking is
+                      independent of tree position anyway. */}
+                  <UpdateModal />
                 </TourProvider>
+                {/* Counts active days from the root so notes-first sessions
+                    still count toward milestone quotes. */}
+                <ActiveDayTracker />
                 <ErrorToast />
                 <OfflineModal />
                 <StatusBar style={effectiveScheme === 'dark' ? 'light' : 'dark'} />

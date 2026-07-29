@@ -11,6 +11,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { NoteListItem } from '@/components/notes/note-list-item';
 import { TagChip } from '@/components/notes/tag-chip';
 import { useNotes } from '@/hooks/use-notes';
+import { useNotesSort } from '@/hooks/use-notes-sort';
 import { useTags } from '@/hooks/use-tags';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -28,6 +29,9 @@ export default function NotesListScreen() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
+  // Sort: last edited (default) vs created. The notes provider re-orders its
+  // Firestore window by the same field, so pagination stays correct.
+  const { notesSort, setNotesSort } = useNotesSort();
 
   // Dismiss bar slides with keyboard via Reanimated
   const animatedBarStyle = useAnimatedStyle(() => ({
@@ -96,12 +100,13 @@ export default function NotesListScreen() {
       <NoteListItem
         note={item}
         tags={tags}
+        sortBy={notesSort}
         onPress={handleOpenNote}
         onDelete={deleteNote}
         onTogglePin={togglePinNote}
       />
     ),
-    [tags, handleOpenNote, deleteNote, togglePinNote],
+    [tags, notesSort, handleOpenNote, deleteNote, togglePinNote],
   );
 
   const filteredNotes = useMemo(() => {
@@ -130,14 +135,15 @@ export default function NotesListScreen() {
       });
     }
 
-    // Pinned notes first, then unpinned. Within each group, preserve updatedAt desc.
+    // Pinned notes first, then unpinned. Within each group, the active sort
+    // field desc (last edited by default, creation date when toggled).
     return [...result].sort((a, b) => {
       const ap = a.pinned ? 1 : 0;
       const bp = b.pinned ? 1 : 0;
       if (ap !== bp) return bp - ap;
-      return b.updatedAt - a.updatedAt;
+      return notesSort === 'created' ? b.createdAt - a.createdAt : b.updatedAt - a.updatedAt;
     });
-  }, [notes, searchQuery, selectedTagId]);
+  }, [notes, searchQuery, selectedTagId, notesSort]);
 
   // A search query or tag filter only covers the loaded window; "load all"
   // (the affordance below) extends coverage to every note on demand.
@@ -188,6 +194,20 @@ export default function NotesListScreen() {
           ))}
         </View>
       )}
+
+      {/* Sort toggle: last edited (default) vs created. Tapping flips it. */}
+      <View style={styles.sortRow}>
+        <Pressable
+          onPress={() => setNotesSort(notesSort === 'created' ? 'updated' : 'created')}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={`Sorted by ${notesSort === 'created' ? 'date created' : 'last edited'}. Tap to change.`}
+        >
+          <ThemedText style={[styles.sortText, { color: colors.tint }]}>
+            {notesSort === 'created' ? 'By date created' : 'By last edited'} ⇅
+          </ThemedText>
+        </Pressable>
+      </View>
 
       {/* Search-all affordance: search/tag filter only covers the loaded
           window until the user opts to load everything. */}
@@ -296,6 +316,16 @@ const styles = StyleSheet.create({
   listContent: {
     padding: 16,
     gap: 10,
+  },
+  sortRow: {
+    alignItems: 'flex-end',
+    paddingHorizontal: 16,
+    paddingBottom: 4,
+  },
+  sortText: {
+    fontSize: 12,
+    fontWeight: '600',
+    opacity: 0.85,
   },
   loadAllButton: {
     marginHorizontal: 16,

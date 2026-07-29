@@ -17,7 +17,9 @@ import type { Habit, HabitRecord, TripleValue, QuadValue, GlyphData } from '@/ty
  * Rules that keep the face collision-free:
  * - The letter box is derived FROM the ring (≈ its inscribed rect), never
  *   from the tile, so no abbreviation can cross the ring. Long abbreviations
- *   shrink to the box via adjustsFontSizeToFit.
+ *   shrink via a deterministic per-character font size — NOT
+ *   adjustsFontSizeToFit, whose iOS re-measure can collapse the glyph to a
+ *   few pixels when the text's style (opacity on record) changes in place.
  * - Record-state marks (ring, star, counts) and the name are absolute
  *   overlays in reserved slots; they never reflow or resize the centered
  *   content, so the letter sits in the same spot in every state.
@@ -57,6 +59,43 @@ const D = {
 } as const;
 
 /** Extract unique colors from glyph paths (excluding eraser strokes, stored with the '__eraser__' sentinel) */
+/**
+ * User-visible glyph count. `Array.from` alone counts CODE POINTS, which
+ * shrinks a single emoji built from several of them (skin tones 👍🏽, flags
+ * 🇺🇸, ZWJ families 👨‍👩‍👧) as if it were a multi-letter label. Joins ZWJ
+ * sequences, skin-tone/variation modifiers, keycaps, and regional-indicator
+ * pairs into one visible glyph.
+ */
+function countGlyphs(label: string): number {
+  const cps = Array.from(label);
+  let n = 0;
+  let i = 0;
+  while (i < cps.length) {
+    n++;
+    const cur = cps[i].codePointAt(0) ?? 0;
+    i++;
+    // A flag is a pair of regional indicators.
+    if (cur >= 0x1f1e6 && cur <= 0x1f1ff && i < cps.length) {
+      const next = cps[i].codePointAt(0) ?? 0;
+      if (next >= 0x1f1e6 && next <= 0x1f1ff) i++;
+    }
+    // Absorb trailing modifiers; ZWJ glues the following code point on too.
+    while (i < cps.length) {
+      const cp = cps[i].codePointAt(0) ?? 0;
+      if (cp === 0x200d) {
+        i += 2;
+        continue;
+      }
+      if ((cp >= 0x1f3fb && cp <= 0x1f3ff) || cp === 0xfe0f || cp === 0x20e3) {
+        i++;
+        continue;
+      }
+      break;
+    }
+  }
+  return n;
+}
+
 function getGlyphColors(glyph: GlyphData): string[] {
   const seen = new Set<string>();
   for (const p of glyph.paths) {
@@ -243,6 +282,15 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
     const ringStroke = Math.max(1.5, D.ringStroke * s);
     const letterBoxPx = D.letterBox * s;
 
+    // Deterministic shrink for multi-character labels: heavy caps are ~0.72em
+    // wide, so scale the font until the whole label fits the letter box. A
+    // single letter/emoji keeps the full design-space size.
+    const glyphCount = countGlyphs(label ?? '');
+    const letterFontPx =
+      glyphCount <= 1
+        ? D.letterFont * s
+        : Math.min(D.letterFont * s, letterBoxPx / (0.72 * glyphCount));
+
     // Free band between the tile top and the ring's top edge (the ring is
     // centered in the tile). The star centers in it, shrinking only when
     // the band is too shallow for the full-size star.
@@ -273,7 +321,7 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
           style={[
             styles.bigLetter,
             {
-              fontSize: D.letterFont * s,
+              fontSize: letterFontPx,
               lineHeight: letterBoxPx,
               width: letterBoxPx,
               height: letterBoxPx,
@@ -283,7 +331,6 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
             },
           ]}
           numberOfLines={1}
-          adjustsFontSizeToFit
         >
           {label}
         </ThemedText>
@@ -312,6 +359,10 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
           style={[styles.footer, { bottom: footerBottom, paddingHorizontal: 4 * s }]}
         >
           <ThemedText
+            // Remount on text change: adjustsFontSizeToFit can stick at a tiny
+            // scale when a mounted Text updates in place (same iOS bug as the
+            // big letter above).
+            key={face.footer.text}
             style={[
               styles.footerText,
               { fontSize: face.footer.size * s, lineHeight: face.footer.size * s * 1.25 },

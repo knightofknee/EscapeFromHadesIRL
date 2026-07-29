@@ -29,9 +29,9 @@ type ModeOption = { value: RecordingMode; label: string; description: string; au
 const RECORDING_MODES: ModeOption[] = [
   // quad leads: 3 success tiers feed the tiered quests, so it's the
   // recommended default recording style.
-  { value: 'quad', label: 'No / Yes / Goal / Ideal · Recommended', description: 'Tap to cycle through 4 levels; powers tiered quests' },
+  { value: 'quad', label: 'Participation / Goal / Ideal · Recommended', description: 'Tap to cycle through 4 levels; powers tiered quests' },
   { value: 'boolean', label: 'Yes / No', description: 'Tap to toggle' },
-  { value: 'triple', label: 'No / Yes / Goal', description: 'Tap to cycle through 3 levels' },
+  { value: 'triple', label: 'Participation / Goal', description: 'Tap to cycle through 3 levels' },
   { value: 'counter', label: 'Counter', description: 'Tap to increment' },
   { value: 'value', label: 'Value', description: 'Enter a value' },
   { value: 'steps', label: 'Steps Counter', description: 'Auto-filled from your step count', auto: true },
@@ -41,6 +41,27 @@ const RECORDING_MODES: ModeOption[] = [
 
 const MANUAL_MODES = RECORDING_MODES.filter((m) => !m.auto);
 const AUTO_MODES = RECORDING_MODES.filter((m) => m.auto);
+
+/**
+ * Default abbreviation when the user leaves the field blank: the name's first
+ * letter, widening to two letters only when another habit already uses that
+ * single letter ("Secrets" → S, unless an S exists → SE).
+ */
+function defaultAbbreviation(name: string, others: { abbreviation?: string }[]): string {
+  // Spaces removed so "A Day" widens to "AD", not "A " with a trailing space.
+  const clean = name.trim().toUpperCase().replace(/\s+/g, '');
+  const one = clean.slice(0, 1);
+  if (!one) return '';
+  const isTaken = (abbr: string) =>
+    others.some((h) => (h.abbreviation ?? '').toUpperCase() === abbr);
+  if (!isTaken(one)) return one;
+  // Best-effort widening: two letters, then three. Still colliding after
+  // that → accept the collision (abbreviations aren't required to be unique).
+  const two = clean.slice(0, 2);
+  if (two.length < 2 || !isTaken(two)) return two || one;
+  const three = clean.slice(0, 3);
+  return three.length === 3 && !isTaken(three) ? three : two;
+}
 
 const DEFAULT_MEDITATION_SESSIONS = 1;
 const DEFAULT_MEDITATION_MINUTES = 5;
@@ -67,8 +88,10 @@ export default function TileSettingsModal() {
   const [name, setName] = useState(existingHabit?.name ?? params.prefillName ?? '');
   const [abbreviation, setAbbreviation] = useState(existingHabit?.abbreviation ?? '');
   const [icon, setIcon] = useState(existingHabit?.icon ?? '');
+  // New habits default to quad — participation/goal/ideal is the recommended
+  // recording style everywhere (create path + starter setup's custom habit).
   const [recordingMode, setRecordingMode] = useState<RecordingMode>(
-    existingHabit?.recordingMode ?? 'boolean',
+    existingHabit?.recordingMode ?? 'quad',
   );
   const [stepGoals, setStepGoals] = useState<number[]>(existingHabit?.stepGoals ?? []);
   const [meditationSessions, setMeditationSessions] = useState<number>(
@@ -254,7 +277,7 @@ export default function TileSettingsModal() {
     name !== (existingHabit?.name ?? params.prefillName ?? '') ||
     abbreviation !== (existingHabit?.abbreviation ?? '') ||
     icon !== (existingHabit?.icon ?? '') ||
-    recordingMode !== (existingHabit?.recordingMode ?? 'boolean') ||
+    recordingMode !== (existingHabit?.recordingMode ?? 'quad') ||
     showName !== (existingHabit?.showName ?? false) ||
     showAllNames !== savedShowAllNames ||
     tileSize !== (existingHabit?.tileSize ?? 1) ||
@@ -282,7 +305,9 @@ export default function TileSettingsModal() {
     if (savingRef.current) return;
     savingRef.current = true;
 
-    const abbr = abbreviation.trim() || name.trim().slice(0, 2).toUpperCase();
+    const abbr =
+      abbreviation.trim() ||
+      defaultAbbreviation(name, habits.filter((h) => h.id !== existingHabit?.id));
 
     // Sanitize step goals: positive whole numbers, ascending, max 3 levels.
     const cleanGoals = stepGoals
@@ -292,6 +317,9 @@ export default function TileSettingsModal() {
       .slice(0, 3);
     if (recordingMode === 'steps' && cleanGoals.length === 0) {
       Alert.alert('Step goal required', 'Set at least a Level 1 step goal.');
+      // Release the guard or every later Save tap is silently swallowed
+      // until the screen remounts.
+      savingRef.current = false;
       return;
     }
     const goalsToSave = recordingMode === 'steps' ? cleanGoals : undefined;
@@ -1034,7 +1062,10 @@ export default function TileSettingsModal() {
             <GlyphRenderer glyph={glyph!} width={60} height={60} />
           ) : (
             <ThemedText style={{ color, fontWeight: '700', fontSize: 20 }}>
-              {icon || abbreviation || name.slice(0, 2).toUpperCase() || '??'}
+              {icon ||
+                abbreviation ||
+                defaultAbbreviation(name, habits.filter((h) => h.id !== existingHabit?.id)) ||
+                '??'}
             </ThemedText>
           )}
         </View>

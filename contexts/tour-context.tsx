@@ -118,10 +118,14 @@ export function TourProvider({ children }: { children: ReactNode }) {
   // start of the tour); finishing/skipping it hands off to the spotlight beats
   // via startGenesis(). Marked seen the instant it opens so a background /
   // foreground cycle can't re-pop it mid-tour.
-  const autoStartedRef = useRef(false);
+  // Holds the uid the intro was auto-started for — NOT a boolean, or the
+  // guard would block a different account signing up later in the same
+  // session from ever getting its own intro.
+  const autoStartedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (autoStartedRef.current || isActive) return;
+    if (isActive) return;
     if (!user || segments[0] === '(auth)') return;
+    if (autoStartedRef.current === user.uid) return;
     if (habitsLoading || questsLoading) return;
     // Only brand-new wanderers in production; DEV_FORCE_TOUR bypasses this so
     // the flow can be previewed on an account that already has data.
@@ -131,7 +135,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
     (async () => {
       const seen = await getSeen('genesis', user.uid);
       if (cancelled || seen) return;
-      autoStartedRef.current = true;
+      autoStartedRef.current = user.uid;
       await setSeen('genesis', true, user.uid);
       router.navigate('/starter-setup?intro=1');
     })();

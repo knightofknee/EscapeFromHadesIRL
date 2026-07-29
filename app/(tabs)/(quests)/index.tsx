@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type Ref } from 'react';
+import { useMemo } from 'react';
 import { ActivityIndicator, ScrollView, View, Pressable, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from 'expo-router';
@@ -9,7 +9,6 @@ import { QuestCard } from '@/components/quests/quest-card';
 import { ScoreBar, flameColor } from '@/components/quests/score-bar';
 import { useQuests } from '@/hooks/use-quests';
 import { useHabits } from '@/hooks/use-habits';
-import { useTour, useTourTarget } from '@/contexts/tour-context';
 import { useQuestScores, questPointValue } from '@/hooks/use-quest-scores';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
@@ -31,22 +30,6 @@ export default function QuestsScreen() {
   const isFocused = useIsFocused();
   const { quests, isLoading: questsLoading } = useQuests();
   const { habits } = useHabits();
-  // Genesis-tour spotlight targets. The tour's quest step points at the first
-  // unstarted Begin stub (the one-tap path); '+ NEW' stays registered as the
-  // fallback for a user who already began every challenge.
-  const forgeQuestRef = useTourTarget('forge-quest');
-  const beginChallengeRef = useTourTarget('begin-challenge');
-
-  // While the tour spotlights the Begin stub (which lives INSIDE this
-  // ScrollView), pin the list to the top and freeze scrolling — a flick
-  // through the interactive spotlight hole could otherwise scroll the target
-  // away, collapsing the hole into a full-screen dim with no way through.
-  const { isActive: tourActive, steps: tourSteps, index: tourIndex } = useTour();
-  const spotlightingStub = tourActive && tourSteps?.[tourIndex]?.target === 'begin-challenge';
-  const scrollRef = useRef<ScrollView>(null);
-  useEffect(() => {
-    if (spotlightingStub) scrollRef.current?.scrollTo({ y: 0, animated: false });
-  }, [spotlightingStub]);
   const { todayStr } = useTodayDate();
   const { startDate, endDate } = useMemo(() => get18MonthWindow(todayStr), [todayStr]);
   const { records, isLoading: recordsLoading } = useRecordsSnapshot(startDate, endDate, isFocused);
@@ -122,7 +105,6 @@ export default function QuestsScreen() {
   };
 
   // Tour target lands on the FIRST unstarted challenge stub.
-  const firstStubKey = selectedChallenges.find((c) => !c.quest)?.template.key ?? null;
 
 
   // Hold until quests and the score history arrive — otherwise started
@@ -157,7 +139,6 @@ export default function QuestsScreen() {
           <ThemedText style={styles.runScoreLabel}>RUN SCORE · MAX {scores.totalAvailable}</ThemedText>
         </View>
         <Pressable
-          ref={forgeQuestRef}
           style={styles.addButton}
           onPress={() => router.push('/(tabs)/(quests)/create')}
         >
@@ -167,12 +148,7 @@ export default function QuestsScreen() {
 
       <ScoreBar score={scores.runPct} showLabel={false} height={6} />
 
-      <ScrollView
-        ref={scrollRef}
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        scrollEnabled={!spotlightingStub}
-      >
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
         {/* CHALLENGES — the quests you choose. Started ones show their score;
             the rest show a "Begin" stub that links a habit + starts them. */}
         <View style={styles.section}>
@@ -195,7 +171,6 @@ export default function QuestsScreen() {
               <ChallengeStub
                 key={template.key}
                 template={template}
-                targetRef={template.key === firstStubKey ? beginChallengeRef : undefined}
                 onPress={() => router.push(`/(tabs)/(quests)/create?templateKey=${template.key}`)}
               />
             ),
@@ -282,19 +257,16 @@ export default function QuestsScreen() {
 
 // A not-yet-started base challenge: dashed/dimmed card with a "Begin" tap that
 // routes into the link-habit flow (with the template + matching auto-record
-// habit pre-selected). `targetRef` lets the Genesis tour spotlight the first
-// stub as the one-tap way to swear a quest.
+// habit pre-selected).
 function ChallengeStub({
   template,
   onPress,
-  targetRef,
 }: {
   template: QuestTemplate;
   onPress: () => void;
-  targetRef?: Ref<View>;
 }) {
   return (
-    <Pressable ref={targetRef} style={styles.stubCard} onPress={onPress}>
+    <Pressable style={styles.stubCard} onPress={onPress}>
       <View style={styles.stubHeader}>
         <ThemedText style={styles.stubName} numberOfLines={1}>
           {template.name}

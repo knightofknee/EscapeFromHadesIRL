@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
-import { Modal, Pressable, StyleSheet, View } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useOfflineGuard } from '@/contexts/offline-context';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useEffect, useRef, useState } from 'react';
+import { Modal, Pressable, StyleSheet, View } from 'react-native';
 
 /**
  * Single root-mounted modal that surfaces the offline state honestly.
@@ -49,7 +49,7 @@ export function OfflineModal() {
             You&apos;re offline
           </ThemedText>
           <ThemedText style={styles.body}>
-            Escape from Hades saves your progress to the cloud, so it needs a
+            Escape from Hades IRL saves your progress to the cloud, so it needs a
             connection. You can keep looking around, but anything you change
             won&apos;t be saved until you&apos;re back online.
           </ThemedText>

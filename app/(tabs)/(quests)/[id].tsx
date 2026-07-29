@@ -144,12 +144,16 @@ export default function QuestDetailScreen() {
             // so leave immediately instead of trapping the user behind a
             // spinner waiting on a server ack that can stall for minutes.
             setDeleting(true);
-            deleteQuest(q.id).catch((err) => {
-              console.error('Failed to abandon quest:', err);
-              emitError("Couldn't abandon the quest. Check your connection and try again.", () =>
-                void deleteQuest(q.id),
-              );
-            });
+            // Self-re-arming: a failed RETRY re-emits the same toast (like
+            // the vacation retries) instead of dying as an unhandled
+            // rejection with no feedback.
+            const attempt = () => {
+              deleteQuest(q.id).catch((err) => {
+                console.error('Failed to abandon quest:', err);
+                emitError("Couldn't abandon the quest. Check your connection and try again.", attempt);
+              });
+            };
+            attempt();
             router.back();
           },
         },

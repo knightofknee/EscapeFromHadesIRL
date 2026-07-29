@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   AppState,
@@ -56,12 +56,19 @@ export function StepsModal({
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
-  const goals = habit?.stepGoals ?? [];
+  // Memoized: a fresh [] each render would churn the persist/fetch
+  // callbacks' deps (and trips the React Compiler's memoization check).
+  const goals = useMemo(() => habit?.stepGoals ?? [], [habit]);
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
 
   const persist = useCallback(
     async (steps: number) => {
       if (!habit) return;
+      // A 0 read can mean "this device can't see health data" (empty
+      // simulator store, revoked access) just as easily as a zero-step day —
+      // never let it clobber a record that already holds a real count. The
+      // modal still DISPLAYS the fresh 0; it just doesn't persist it.
+      if (steps === 0 && typeof record?.steps === 'number' && record.steps > 0) return;
       const value = computeStepsLevel(steps, goals);
       const docId = `${habit.id}_${date}`;
       const next: HabitRecord = {
@@ -76,7 +83,7 @@ export function StepsModal({
       };
       await persistHabitRecord(next, { errorMessage: "Couldn't save your step count. Tap Retry." });
     },
-    [habit, goals, date, userId],
+    [habit, goals, date, userId, record],
   );
 
   const fetchAndPersist = useCallback(async () => {
@@ -91,8 +98,13 @@ export function StepsModal({
       return;
     }
     await persist(steps);
-    setStatus({ kind: 'ready', steps });
-  }, [date, habit, persist]);
+    // When the 0-guard in persist() kept the record's real count, display
+    // that count too — showing a fresh "0 steps" beside the record's tier
+    // ring reads as broken on exactly the devices the guard exists for.
+    const kept = record?.steps;
+    const display = steps === 0 && typeof kept === 'number' && kept > 0 ? kept : steps;
+    setStatus({ kind: 'ready', steps: display });
+  }, [date, habit, persist, record?.steps]);
 
   // The recovery button must re-REQUEST permission, not just retry the read —
   // on Android a denied Health Connect grant is re-promptable, and a bare

@@ -92,4 +92,8 @@ export type Note = {
   itemsMigrated?: boolean;
   /** Denormalized checklist rollup for the notes-list preview. */
   checklistSummary?: ChecklistSummary;
+  /** Display preference: show 1. 2. 3. numbers on checklist rows. Purely
+   *  presentational (items/dump format unchanged), so it survives the
+   *  checklist ↔ text round trip untouched. */
+  checklistNumbered?: boolean;
 };

@@ -25,14 +25,20 @@ const DEV_ALWAYS_SHOW = true;
 /** Dev-only: force the Genesis tour to auto-start regardless of account state. */
 export const DEV_FORCE_TOUR = __DEV__ && DEV_ALWAYS_SHOW;
 
-const sessionSeen = new Set<TutorialFeature>();
+// Session cache is keyed by feature AND uid: a bare feature key would mark the
+// tour "seen" for every account signed into during this app session, so a
+// brand-new account created right after another user's tour would silently
+// never get its own intro.
+const sessionSeen = new Set<string>();
 
 const keyFor = (feature: TutorialFeature, uid: string) =>
   `@efh_tutorial_${feature}_${VERSION}:${uid}`;
 
+const sessionKeyFor = (feature: TutorialFeature, uid: string) => `${feature}:${uid}`;
+
 /** True once the user has seen (or skipped) the given tutorial. Never throws. */
 export async function getSeen(feature: TutorialFeature, uid: string): Promise<boolean> {
-  if (sessionSeen.has(feature)) return true;
+  if (sessionSeen.has(sessionKeyFor(feature, uid))) return true;
   if (__DEV__ && DEV_ALWAYS_SHOW) return false;
   try {
     const v = await AsyncStorage.getItem(keyFor(feature, uid));
@@ -48,8 +54,8 @@ export async function setSeen(
   seen: boolean,
   uid: string,
 ): Promise<void> {
-  if (seen) sessionSeen.add(feature);
-  else sessionSeen.delete(feature);
+  if (seen) sessionSeen.add(sessionKeyFor(feature, uid));
+  else sessionSeen.delete(sessionKeyFor(feature, uid));
   try {
     if (seen) await AsyncStorage.setItem(keyFor(feature, uid), '1');
     else await AsyncStorage.removeItem(keyFor(feature, uid));
@@ -60,7 +66,7 @@ export async function setSeen(
 
 /** Clear the flag so the tutorial can auto-show again ("replay intro"). */
 export async function resetSeen(feature: TutorialFeature, uid: string): Promise<void> {
-  sessionSeen.delete(feature);
+  sessionSeen.delete(sessionKeyFor(feature, uid));
   try {
     await AsyncStorage.removeItem(keyFor(feature, uid));
   } catch {

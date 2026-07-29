@@ -20,6 +20,17 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { NoteEditor, type NoteEditorHandle } from '@/components/notes/note-editor';
 import { ChecklistEditor, type ChecklistEditorHandle } from '@/components/notes/checklist-editor';
 import { TagPicker } from '@/components/notes/tag-picker';
+import {
+  SuggestionBar,
+  SUGGESTION_BAR_HEIGHT,
+  type SuggestionBarHandle,
+} from '@/components/notes/suggestion-bar';
+import {
+  loadVocab,
+  seedVocabFromNotes,
+  flushVocab,
+  type Suggestion,
+} from '@/lib/word-suggestions';
 import { useNotes, useNote } from '@/hooks/use-notes';
 import { useTags } from '@/hooks/use-tags';
 import { useOfflineGuard } from '@/contexts/offline-context';
@@ -44,8 +55,9 @@ export default function NoteEditorScreen() {
   // Mutations come from useNotes(); the displayed note is resolved by id via
   // useNote() so it opens correctly even when it's outside the paginated list
   // window. (useNotes' own window still backs updateNote's no-op/creative-
-  // writing context for recently-edited notes.)
-  const { updateNote, deleteNote } = useNotes();
+  // writing context for recently-edited notes, and seeds the typing
+  // vocabulary below.)
+  const { updateNote, deleteNote, notes } = useNotes();
   const { tags, createTag } = useTags();
   const { isOffline } = useOfflineGuard();
   const colorScheme = useColorScheme();
@@ -70,8 +82,36 @@ export default function NoteEditorScreen() {
     );
   }, []);
 
+  const { note, isLoading: noteLoading } = useNote(id);
+  const noteRef = useRef(note);
+  noteRef.current = note;
+
+  const { user } = useAuth();
+
+  // The suggestion strip only exists in text mode, so the accessory stack
+  // sitting above the keyboard is taller there — every caret-clearance
+  // calculation below must use this, not DISMISS_BAR_HEIGHT alone.
+  const isTextNote = note?.type !== 'checklist';
+  const accessoryHeight = DISMISS_BAR_HEIGHT + (isTextNote ? SUGGESTION_BAR_HEIGHT : 0);
+
+  // Personal typing vocabulary: load per user, seed once from the already-
+  // loaded notes (no-op after the first run — the flag persists with the
+  // vocab), and flush any pending learning when leaving the editor.
+  useEffect(() => {
+    if (user) void loadVocab(user.uid);
+  }, [user]);
+  useEffect(() => {
+    if (user && notes.length > 0) void seedVocabFromNotes(user.uid, notes);
+  }, [user, notes]);
+  useEffect(() => () => {
+    void flushVocab();
+  }, []);
+
   // Ref to NoteEditor for imperative formatting commands
   const noteEditorRef = useRef<NoteEditorHandle>(null);
+  // Suggestions flow NoteEditor → strip through this handle so typing only
+  // ever re-renders the strip, never this screen.
+  const suggestionBarRef = useRef<SuggestionBarHandle>(null);
   // Ref to ChecklistEditor (only valid when in checklist mode)
   const checklistEditorRef = useRef<ChecklistEditorHandle>(null);
   // Set when the user just hit the Checklist toggle (text → checklist).
@@ -127,7 +167,7 @@ export default function NoteEditorScreen() {
         keyboardIsOpen.value = 1;
         targetKbHeight.value = e.height;
         scrollAtStart.value = scrollOffset.value;
-        const desiredCursorY = screenHeight - e.height - DISMISS_BAR_HEIGHT - BUFFER_ABOVE_BAR;
+        const desiredCursorY = screenHeight - e.height - accessoryHeight - BUFFER_ABOVE_BAR;
         scrollDelta.value = Math.max(0, tapY.value - desiredCursorY);
       },
       onMove: (e) => {
@@ -137,7 +177,7 @@ export default function NoteEditorScreen() {
         scrollTo(scrollRef, 0, scrollAtStart.value + scrollDelta.value * p, false);
       },
     },
-    [screenHeight],
+    [screenHeight, accessoryHeight],
   );
 
   // Capture tap Y synchronously on touch — fires before keyboard animation
@@ -176,7 +216,7 @@ export default function NoteEditorScreen() {
       if (progress.value < 1) return;
       const keyboardPx = Math.abs(kbHeight.value); // height is signed; magnitude only
       const desiredCaretY =
-        screenHeight - keyboardPx - DISMISS_BAR_HEIGHT - BUFFER_ABOVE_BAR;
+        screenHeight - keyboardPx - accessoryHeight - BUFFER_ABOVE_BAR;
       const overflow = caretBottomWindowY - desiredCaretY;
       if (overflow > 0) {
         scrollRef.current?.scrollTo({
@@ -185,21 +225,18 @@ export default function NoteEditorScreen() {
         });
       }
     },
-    [progress, kbHeight, screenHeight, scrollOffset, scrollRef],
+    [progress, kbHeight, screenHeight, accessoryHeight, scrollOffset, scrollRef],
   );
 
-  // Dismiss bar slides with keyboard via Reanimated
+  // Accessory stack (suggestion strip + dismiss bar) slides with keyboard
+  // via Reanimated. Uses the full stack height so it's fully off-screen
+  // when the keyboard is closed.
   const animatedBarStyle = useAnimatedStyle(() => ({
     transform: [{
-      translateY: DISMISS_BAR_HEIGHT * (1 - progress.value) + tabBarHeight + kbHeight.value,
+      translateY: accessoryHeight * (1 - progress.value) + tabBarHeight + kbHeight.value,
     }],
   }));
 
-  const { note, isLoading: noteLoading } = useNote(id);
-  const noteRef = useRef(note);
-  noteRef.current = note;
-
-  const { user } = useAuth();
   // Checklist items now live in the `notes/{id}/items` subcollection. This
   // hook owns the live listener, per-item writes, optimistic state, and the
   // one-time legacy-array migration. It's a no-op for text notes (enabled
@@ -347,6 +384,18 @@ export default function NoteEditorScreen() {
   // re-converting reads that back — so nothing is lost and no confirm alert
   // is needed.
 
+  // Toggle 1. 2. 3. numbering on checklist rows. Presentation-only pref on
+  // the note doc; touch:false so flipping it doesn't bump the note to the
+  // top of the recency-sorted list.
+  const handleToggleNumbered = useCallback(() => {
+    if (!id || !noteRef.current) return;
+    updateNote(
+      id,
+      { checklistNumbered: !noteRef.current.checklistNumbered },
+      { touch: false },
+    );
+  }, [id, updateNote]);
+
   // Focus first item once ChecklistEditor has actually mounted following
   // a text→checklist toggle. requestAnimationFrame defers one render
   // tick so the new editor's refs are wired up.
@@ -396,6 +445,27 @@ export default function NoteEditorScreen() {
     [id, updateNote],
   );
 
+  const handleSuggestions = useCallback((suggestions: Suggestion[]) => {
+    suggestionBarRef.current?.setSuggestions(suggestions);
+  }, []);
+
+  const handlePickSuggestion = useCallback(
+    (suggestion: Suggestion) => {
+      // A tag chip both completes the text and formally attaches the tag to
+      // the note, so it shows in the tags bar. Attach is idempotent.
+      if (suggestion.kind === 'tag' && id) {
+        const currentTags = noteRef.current?.tags ?? [];
+        if (!currentTags.some((t) => t.tagId === suggestion.tagId)) {
+          updateNote(id, {
+            tags: [...currentTags, { tagId: suggestion.tagId, startIndex: 0, endIndex: 0 }],
+          });
+        }
+      }
+      noteEditorRef.current?.applySuggestion(suggestion);
+    },
+    [id, updateNote],
+  );
+
   const noteTagIds = note ? [...new Set(note.tags.map((t) => t.tagId))] : [];
 
   if (!note) {
@@ -416,36 +486,41 @@ export default function NoteEditorScreen() {
       <SafeAreaView edges={['top']}>
         <View style={styles.header}>
           <Pressable
-            onPress={() => router.replace('/(tabs)/(notes)')}
+            // dismissTo, not back(): pops within THIS stack to the list (real
+            // right-slide pop animation) and degrades to replace when the list
+            // isn't in the stack (deep link / cold start), so it can never
+            // land on a surprising sibling tab the way history-walking does.
+            onPress={() => router.dismissTo('/(tabs)/(notes)')}
             style={styles.headerButton}
             hitSlop={8}
           >
             <IconSymbol name="chevron.left" size={22} color={'#3B82F6'} />
             <ThemedText style={[styles.headerButtonText, { color: '#3B82F6' }]}>Notes</ThemedText>
           </Pressable>
-          {/* Centered toggle: text ↔ checklist. Always visible — round-trip
-              is data-preserving via the markdown dump format. */}
-          <Pressable
-            onPress={handleToggleType}
-            // Snapshot the editor's highlight the instant the press starts —
-            // completing the tap can blur the input and collapse it. Read in
-            // handleToggleType to scope which lines convert to items.
-            onPressIn={() => {
-              pendingSelection.current = noteEditorRef.current?.getSelection() ?? null;
-            }}
-            style={styles.headerCenterButton}
-            hitSlop={8}
-            accessibilityLabel={
-              note.type === 'checklist'
-                ? 'Convert checklist back to text'
-                : 'Convert note to checklist'
-            }
-            accessibilityRole="button"
-          >
-            <ThemedText style={[styles.headerButtonText, { color: colors.tint }]}>
-              {note.type === 'checklist' ? 'Undo Checklist' : 'Create Checklist'}
-            </ThemedText>
-          </Pressable>
+          {/* Centered "Create Checklist" — text mode only. Once clicked it
+              disappears; the reverse action ("Undo Checklist") lives at the
+              bottom of the page, far below Add item, so it can't be hit by
+              accident. Round-trip stays data-preserving via the markdown
+              dump format. */}
+          {note.type !== 'checklist' && (
+            <Pressable
+              onPress={handleToggleType}
+              // Snapshot the editor's highlight the instant the press starts —
+              // completing the tap can blur the input and collapse it. Read in
+              // handleToggleType to scope which lines convert to items.
+              onPressIn={() => {
+                pendingSelection.current = noteEditorRef.current?.getSelection() ?? null;
+              }}
+              style={styles.headerCenterButton}
+              hitSlop={8}
+              accessibilityLabel="Convert note to checklist"
+              accessibilityRole="button"
+            >
+              <ThemedText style={[styles.headerButtonText, { color: colors.tint }]}>
+                Create Checklist
+              </ThemedText>
+            </Pressable>
+          )}
           <View style={styles.headerRight}>
             {/* Help for the highlight-to-pick-items flow. Only shown in text
                 mode, where "Create Checklist" is the relevant action. */}
@@ -536,26 +611,43 @@ export default function NoteEditorScreen() {
         contentInsetAdjustmentBehavior="never"
       >
         {note.type === 'checklist' ? (
-          <ChecklistEditor
-            ref={checklistEditorRef}
-            note={note}
-            tags={tags}
-            items={checklist.items}
-            onUpdateTitle={handleUpdateTitle}
-            onUpdateDescription={handleUpdateDescription}
-            onUpdateTags={handleUpdateTags}
-            onAddItem={checklist.addItem}
-            onToggleItem={checklist.toggleItem}
-            onSetItemText={checklist.setItemText}
-            onDeleteItem={checklist.deleteItem}
-            onRestoreItem={checklist.restoreItem}
-            onReorderUncompleted={checklist.reorderUncompleted}
-            onFocus={() => setIsFocused(true)}
-            onBlur={() => setIsFocused(false)}
-            onOpenTagPicker={() => setTagPickerOpen(true)}
-            onTouchStart={handleTouchStart}
-            onCaretBottom={ensureCaretVisible}
-          />
+          <>
+            <ChecklistEditor
+              ref={checklistEditorRef}
+              note={note}
+              tags={tags}
+              items={checklist.items}
+              numbered={!!note.checklistNumbered}
+              onToggleNumbered={handleToggleNumbered}
+              onUpdateTitle={handleUpdateTitle}
+              onUpdateDescription={handleUpdateDescription}
+              onUpdateTags={handleUpdateTags}
+              onAddItem={checklist.addItem}
+              onToggleItem={checklist.toggleItem}
+              onSetItemText={checklist.setItemText}
+              onDeleteItem={checklist.deleteItem}
+              onRestoreItem={checklist.restoreItem}
+              onReorderUncompleted={checklist.reorderUncompleted}
+              onFocus={() => setIsFocused(true)}
+              onBlur={() => setIsFocused(false)}
+              onOpenTagPicker={() => setTagPickerOpen(true)}
+              onTouchStart={handleTouchStart}
+              onCaretBottom={ensureCaretVisible}
+            />
+            {/* "Undo Checklist" lives way down here, well clear of Add item
+                and the numbers toggle, so reverting the whole checklist
+                can't happen by accident. */}
+            <Pressable
+              onPress={handleToggleType}
+              style={[styles.undoChecklistButton, { borderColor: colors.tileBorder }]}
+              accessibilityLabel="Convert checklist back to text"
+              accessibilityRole="button"
+            >
+              <ThemedText style={[styles.undoChecklistText, { color: colors.icon }]}>
+                Undo Checklist
+              </ThemedText>
+            </Pressable>
+          </>
         ) : (
           <NoteEditor
             ref={noteEditorRef}
@@ -571,6 +663,7 @@ export default function NoteEditorScreen() {
             onTouchStart={handleTouchStart}
             onCaretBottom={ensureCaretVisible}
             onHistoryChange={handleHistoryChange}
+            onSuggestions={handleSuggestions}
           />
         )}
       </Animated.ScrollView>
@@ -578,12 +671,18 @@ export default function NoteEditorScreen() {
       <Animated.View
         pointerEvents={tagPickerOpen ? 'none' : 'auto'}
         style={[
-          styles.dismissBar,
+          styles.barStack,
           { backgroundColor: colors.background, borderTopColor: colors.tileBorder },
           tagPickerOpen && { opacity: 0 },
           animatedBarStyle,
         ]}
       >
+        {/* Word/tag autocomplete strip — text mode only, fixed height so the
+            caret-clearance math above stays constant while typing. */}
+        {note.type !== 'checklist' && (
+          <SuggestionBar ref={suggestionBarRef} onPick={handlePickSuggestion} />
+        )}
+        <View style={styles.dismissBar}>
         {/* Markdown formatting toolbar applies only to text-mode notes.
             In checklist mode the items are short single-line inputs and
             formatting tools would conflict with the checklist semantics. */}
@@ -636,6 +735,7 @@ export default function NoteEditorScreen() {
         <Pressable onPress={Keyboard.dismiss} style={styles.dismissButton} hitSlop={8}>
           <IconSymbol name="keyboard.chevron.compact.down" size={22} color={colors.icon} />
         </Pressable>
+        </View>
       </Animated.View>
 
       <TagPicker
@@ -703,16 +803,34 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  dismissBar: {
+  // Big top margin is the point: distance from Add item / Number items is
+  // what prevents accidental full-checklist reverts.
+  undoChecklistButton: {
+    alignSelf: 'center',
+    marginTop: 120,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  undoChecklistText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  // Outer accessory stack: suggestion strip on top, dismiss/toolbar row
+  // below. Anchored to the bottom and slid with the keyboard as one unit.
+  barStack: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  dismissBar: {
+    height: DISMISS_BAR_HEIGHT,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
   },
   dismissSpacer: {
     flex: 1,

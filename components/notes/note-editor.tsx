@@ -5,6 +5,13 @@ import { TagChip } from './tag-chip';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { UndoHistory, caretAfterRestore } from '@/lib/undo-history';
+import {
+  applySuggestionToText,
+  getSuggestions,
+  learnFromEdit,
+  learnWord,
+  type Suggestion,
+} from '@/lib/word-suggestions';
 import type { Note, Tag, InlineTag } from '@/types/note';
 
 type NoteEditorProps = {
@@ -31,6 +38,13 @@ type NoteEditorProps = {
    * disable its toolbar buttons without re-rendering on every keystroke.
    */
   onHistoryChange?: (canUndo: boolean, canRedo: boolean) => void;
+  /**
+   * Autocomplete chips for the word at the caret (personal vocabulary +
+   * tag matches), recomputed on every caret/content change. The parent
+   * forwards these to the SuggestionBar's imperative handle so only the
+   * strip re-renders while typing.
+   */
+  onSuggestions?: (suggestions: Suggestion[]) => void;
 };
 
 export type NoteEditorHandle = {
@@ -57,6 +71,9 @@ export type NoteEditorHandle = {
    * press completes the input may have blurred and collapsed the selection.
    */
   getSelection: () => { start: number; end: number };
+  /** Accept a suggestion chip: replace the typed span with the full word/
+   *  tag name (+ trailing space) and move the caret past it. */
+  applySuggestion: (suggestion: Suggestion) => void;
 };
 
 // U+0336 is the Unicode combining long stroke overlay — visually strikes through
@@ -144,6 +161,10 @@ function toggleList(
   };
 }
 
+// The content input's maxLength. Programmatic inserts (accepted suggestion
+// chips) bypass TextInput's own enforcement, so they check this too.
+const CONTENT_MAX_LENGTH = 50000;
+
 export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function NoteEditor(
   {
     note,
@@ -158,6 +179,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     onTouchStart,
     onCaretBottom,
     onHistoryChange,
+    onSuggestions,
   },
   ref,
 ) {
@@ -302,6 +324,10 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
   }
 
   function handleContentChange(text: string) {
+    // Feed the personal-vocabulary model whenever this edit committed a word
+    // boundary (separator keystroke, autocorrect replacement, paste).
+    learnFromEdit(content, text);
+
     // Auto-continue list on Enter. Trigger whenever at least one newline has
     // been added (iOS autocorrect may insert other chars alongside the \n, so
     // we don't require a strict length diff of exactly 1).
@@ -401,6 +427,45 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     selectionValueRef.current = selection;
   }, [selection]);
 
+  // While the TITLE input has focus the body's selection/content don't
+  // change, so without this gate the strip would keep showing stale body
+  // chips — and a tap would splice text into the body and yank focus away
+  // from the title mid-word. (Gate on "title focused", not "content
+  // focused": a chip tap must not be blocked by any transient blur it
+  // causes on the content input.)
+  const [titleFocused, setTitleFocused] = useState(false);
+  // Pre-apply content of the last accepted chip. A double-tap lands twice on
+  // the SAME rendered content (the re-render hasn't happened yet) — the
+  // second commit is deduped by history, but learnWord would double-count.
+  const lastApplyContentRef = useRef<string | null>(null);
+
+  // Recompute the suggestion strip on every caret/content change. No chips
+  // while a range is highlighted or the caret sits mid-word.
+  useEffect(() => {
+    lastApplyContentRef.current = null;
+    if (!onSuggestions) return;
+    if (selection.start !== selection.end || titleFocused) {
+      onSuggestions([]);
+      return;
+    }
+    onSuggestions(
+      getSuggestions(content.slice(0, selection.start), tags, content[selection.start]),
+    );
+  }, [content, selection, tags, onSuggestions, titleFocused]);
+
+  function handleApplySuggestion(suggestion: Suggestion) {
+    if (selection.start !== selection.end || titleFocused) return;
+    if (lastApplyContentRef.current === content) return; // same-frame double-tap
+    const result = applySuggestionToText(content, selection.start, suggestion);
+    if (!result) return; // stale tap racing a keystroke — safe no-op
+    if (result.content.length > CONTENT_MAX_LENGTH) return; // never bypass maxLength
+    lastApplyContentRef.current = content;
+    commitContent(result.content, result.caret);
+    // An accepted chip is a deliberate use — reinforce it.
+    if (suggestion.kind === 'word') learnWord(suggestion.display);
+    contentRef.current?.focus();
+  }
+
   useImperativeHandle(ref, () => ({
     applyStrikethrough: () => applyFormatting(formatStrikethrough(content, selection)),
     applyBullets: () => applyFormatting(toggleList(content, selection, 'bullet')),
@@ -410,6 +475,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     getLatestContent: () => contentValueRef.current,
     getLatestTitle: () => titleValueRef.current,
     getSelection: () => selectionValueRef.current,
+    applySuggestion: handleApplySuggestion,
   }));
 
   const noteTagIds = [...new Set(note.tags.map((t) => t.tagId))];
@@ -440,8 +506,14 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
         placeholder="Note title..."
         placeholderTextColor={colors.icon}
         keyboardAppearance={colorScheme === 'dark' ? 'dark' : 'light'}
-        onFocus={onFocus}
-        onBlur={onBlur}
+        onFocus={() => {
+          setTitleFocused(true);
+          onFocus?.();
+        }}
+        onBlur={() => {
+          setTitleFocused(false);
+          onBlur?.();
+        }}
         onTouchStart={onTouchStart}
       />
 
@@ -473,7 +545,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
         style={[styles.contentInput, { color: colors.text }]}
         value={content}
         onChangeText={handleContentChange}
-        maxLength={50000}
+        maxLength={CONTENT_MAX_LENGTH}
         onSelectionChange={handleSelectionChange}
         selection={pendingSelection ?? undefined}
         placeholder="Start writing..."

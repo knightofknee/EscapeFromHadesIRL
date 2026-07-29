@@ -10,7 +10,7 @@ import Animated, {
   withTiming,
   Easing,
 } from 'react-native-reanimated';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useIsFocused } from 'expo-router';
 import Svg, { Rect } from 'react-native-svg';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -33,8 +33,10 @@ import {
   deleteVacationDay,
   deleteVacationDaysBulk,
 } from '@/lib/vacation-days';
+import { EarnedQuoteModal } from '@/components/habits/earned-quote-modal';
+import { useEarnedQuote } from '@/hooks/use-earned-quote';
 import { useHabits } from '@/hooks/use-habits';
-import { useTourTarget } from '@/contexts/tour-context';
+import { useTour, useTourTarget } from '@/contexts/tour-context';
 import { useTodayRecords } from '@/hooks/use-today-records';
 import { useTodayDate } from '@/hooks/use-today-date';
 import { useNotes } from '@/hooks/use-notes';
@@ -60,9 +62,12 @@ export default function HabitsDayScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const { width: screenWidth } = useWindowDimensions();
-  // Genesis-tour spotlight target — both add-habit buttons share the key
-  // (only one is mounted at a time, depending on whether any habit exists).
+  // Genesis-tour spotlight target. Shared key, one mounted at a time: the
+  // grid view's "+ Add Habit", or the empty state's "Finish setup" (with zero
+  // habits, setup is the only road to a habit).
   const addHabitRef = useTourTarget('add-first-habit');
+  // Spotlit by the tour's swipe-between-days beat.
+  const dayHeaderRef = useTourTarget('day-header');
 
   const { createNote } = useNotes();
   const [valueInputHabit, setValueInputHabit] = useState<Habit | null>(null);
@@ -87,6 +92,15 @@ export default function HabitsDayScreen() {
   // Foreground sync: re-fetch today's steps for every Steps Counter habit
   // on mount + when the app foregrounds, so tiles stay fresh without taps.
   useStepsBackfill();
+  // Milestone quotes: count today as an active day (post-setup only) and
+  // surface the next earned quote every 10th day of use. Presentation is
+  // held while another tab is fronted or the tour is running — this screen
+  // stays mounted, so an un-gated RN Modal could pop over the notes editor
+  // at midnight or cover a tour spotlight.
+  const { pendingQuote, dismissQuote } = useEarnedQuote(!isLoading && habits.length > 0);
+  const isFocused = useIsFocused();
+  const { isActive: tourActive } = useTour();
+  const visibleQuote = isFocused && !tourActive ? pendingQuote : null;
   const viewedVacation = vacationDays.get(viewedDate);
   const isVacationDay = viewedVacation != null;
 
@@ -279,7 +293,7 @@ export default function HabitsDayScreen() {
       <ThemedView style={styles.container}>
         {/* Header stays fixed — only the content area translates on swipe */}
         <View style={styles.header}>
-          <View style={styles.headerTitleWrap}>
+          <View ref={dayHeaderRef} style={styles.headerTitleWrap}>
             <ThemedText type="title" style={styles.headerTitle}>
               {viewedDateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
             </ThemedText>
@@ -321,12 +335,19 @@ export default function HabitsDayScreen() {
                 ) : (
                   <>
                     <ThemedText style={styles.emptyText}>No habits yet</ThemedText>
+                    {/* Setup or bust: with zero habits the only way forward is
+                        starter setup (which requires picking ≥1 habit). No
+                        intro param: anyone here was already offered the tour
+                        (auto-start or skip), and a veteran who archived their
+                        last habit must not get a forced tour replay — the •••
+                        menu's tutorial entry stays the explicit path. */}
                     <Pressable
                       ref={addHabitRef}
                       style={[styles.addButton, { backgroundColor: colors.tint }]}
-                      onPress={() => router.push({ pathname: '/tile-settings', params: { mode: 'create' } })}
+                      onPress={() => router.push('/starter-setup')}
+                      accessibilityRole="button"
                     >
-                      <ThemedText style={styles.addButtonText}>+ Add Your First Habit</ThemedText>
+                      <ThemedText style={styles.addButtonText}>Finish setup</ThemedText>
                     </Pressable>
                     {/* Same ••• menu as the grid view — without it, a user
                         with zero habits has no way back to the tutorial. */}
@@ -420,6 +441,8 @@ export default function HabitsDayScreen() {
           onSubmit={handleValueSubmit}
           onCancel={() => setValueInputHabit(null)}
         />
+
+        <EarnedQuoteModal pending={visibleQuote} onClose={dismissQuote} />
 
         <VacationMenu
           visible={vacationMenuVisible}

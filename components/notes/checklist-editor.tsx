@@ -16,7 +16,7 @@ import {
   ScrollView,
   Platform,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { Swipeable } from 'react-native-gesture-handler';
 import DraggableFlatList, {
   ScaleDecorator,
@@ -41,6 +41,10 @@ type ChecklistEditorProps = {
    * by completedAt desc). Each mutation below is one small per-item write.
    */
   items: ChecklistItemDoc[];
+  /** Show 1. 2. 3. numbers on the rows (note.checklistNumbered). */
+  numbered: boolean;
+  /** Flip the numbering preference on the note doc. */
+  onToggleNumbered: () => void;
   onUpdateTitle: (title: string) => void;
   onUpdateDescription: (description: string) => void;
   onUpdateTags: (tags: InlineTag[]) => void;
@@ -86,6 +90,8 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
       note,
       tags,
       items,
+      numbered,
+      onToggleNumbered,
       onUpdateTitle,
       onUpdateDescription,
       onUpdateTags,
@@ -210,6 +216,19 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
       () => items.filter((i) => i.completed),
       [items],
     );
+
+    // Row numbers, keyed by item id so rows inside DraggableFlatList don't
+    // need a positional index. Numbers follow display order top to bottom
+    // (uncompleted 1..N, completed continue N+1...), so checking an item
+    // off simply renumbers the list. null when numbering is off.
+    const numberById = useMemo(() => {
+      if (!numbered) return null;
+      const map = new Map<string, number>();
+      let n = 1;
+      for (const it of uncompletedItems) map.set(it.id, n++);
+      for (const it of completedItems) map.set(it.id, n++);
+      return map;
+    }, [numbered, uncompletedItems, completedItems]);
 
     // ----- Item operations -----
     // All per-item writes happen in useChecklistItems; the editor only
@@ -411,6 +430,7 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
               <ScaleDecorator>
                 <ChecklistRow
                   item={item}
+                  number={numberById?.get(item.id)}
                   colors={colors}
                   registerRef={(t) => inputRefs.current.set(item.id, t)}
                   onToggle={() => onToggleItem(item.id)}
@@ -438,6 +458,7 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
             <ChecklistRow
               key={item.id}
               item={item}
+              number={numberById?.get(item.id)}
               colors={colors}
               registerRef={(t) => inputRefs.current.set(item.id, t)}
               onToggle={() => onToggleItem(item.id)}
@@ -486,6 +507,25 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
               </ThemedText>
             </Pressable>
           )}
+
+          {/* Quiet numbering toggle — sits between Add item and the
+              page-bottom Undo Checklist (rendered by the parent screen,
+              a long way below). Muted, borderless: deliberately subtler
+              than the action rows above. */}
+          <Pressable
+            onPress={onToggleNumbered}
+            style={styles.numberToggleRow}
+            hitSlop={6}
+            accessibilityRole="button"
+            accessibilityLabel={
+              numbered ? 'Remove numbers from checklist' : 'Number checklist items'
+            }
+          >
+            <MaterialIcons name="format-list-numbered" size={16} color={colors.icon} />
+            <ThemedText style={[styles.numberToggleText, { color: colors.icon }]}>
+              {numbered ? 'Remove numbers' : 'Number items'}
+            </ThemedText>
+          </Pressable>
         </View>
       </View>
     );
@@ -496,6 +536,8 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
 
 type ChecklistRowProps = {
   item: ChecklistItemDoc;
+  /** 1-based display number; undefined when numbering is off. */
+  number?: number;
   colors: (typeof Colors)['light'];
   registerRef: (t: TextInput | null) => void;
   onToggle: () => void;
@@ -517,6 +559,7 @@ type ChecklistRowProps = {
 
 function ChecklistRow({
   item,
+  number,
   colors,
   registerRef,
   onToggle,
@@ -563,6 +606,11 @@ function ChecklistRow({
             color={item.completed ? colors.tint : colors.icon}
           />
         </Pressable>
+        {number != null && (
+          <ThemedText style={[styles.itemNumber, { color: colors.icon }]}>
+            {number}.
+          </ThemedText>
+        )}
         <TextInput
           ref={(t) => {
             itemInputRef.current = t;
@@ -687,6 +735,15 @@ const styles = StyleSheet.create({
     paddingRight: 10,
     paddingVertical: 4,
   },
+  // Right-aligned within a fixed min width so "9." and "10." keep the item
+  // text starting at the same x.
+  itemNumber: {
+    fontSize: 16,
+    lineHeight: 22,
+    minWidth: 24,
+    textAlign: 'right',
+    marginRight: 6,
+  },
   itemInput: {
     flex: 1,
     fontSize: 16,
@@ -740,6 +797,20 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   undoText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  numberToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    marginHorizontal: 12,
+    marginTop: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    gap: 6,
+  },
+  numberToggleText: {
     fontSize: 13,
     fontWeight: '600',
   },

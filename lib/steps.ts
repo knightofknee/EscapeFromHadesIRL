@@ -38,6 +38,19 @@ export const STEPS_CONFIRM_INITIAL_DAYS = 30;
 export const STEPS_CONFIRM_CATCHUP_DAYS = 60;
 
 /**
+ * How many trailing days (today included) the backfill probes for a nonzero
+ * step count before trusting this device's reads. A HealthKit/Health Connect
+ * query on a device with an EMPTY or unreadable store (iOS Simulator, an iPad
+ * that never tracked steps, revoked permission) reports "no data" — which is
+ * indistinguishable from a genuine zero-step day at the single-day level. A
+ * device whose whole trailing week reads empty almost certainly can't see
+ * step data at all, and must not write final counts or advance the confirm
+ * pointer (July 2026: a signed-in dev simulator zeroed out five real days
+ * this way). A real phone passes the probe on the first or second read.
+ */
+export const STEPS_PROBE_DAYS = 7;
+
+/**
  * The ended local days whose final step counts still need to be written —
  * every day after `confirmedThrough` up through yesterday. Today is never
  * included: it hasn't ended, so its count can't be final.
