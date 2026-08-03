@@ -46,6 +46,9 @@ export function VacationMenu({
   const colors = Colors[colorScheme ?? 'light'];
   const blue = colors.vacationButton;
   const red = colors.tint;
+  // Off-state track: tileBorder blends into the menu background, leaving the
+  // thumb floating on nothing. Same fix as the Settings screen switch.
+  const offTrack = colorScheme === 'dark' ? '#5A5E66' : '#D8DBE0';
   const { winOnlyWeekends, setWinOnlyWeekends } = useWinOnlyWeekends();
   const hasBlock = blockSize > 1;
 
@@ -140,7 +143,8 @@ export function VacationMenu({
             <Switch
               value={winOnlyWeekends}
               onValueChange={setWinOnlyWeekends}
-              trackColor={{ false: colors.tileBorder, true: blue }}
+              trackColor={{ false: offTrack, true: blue }}
+              ios_backgroundColor={offTrack}
               thumbColor="#fff"
             />
           </View>

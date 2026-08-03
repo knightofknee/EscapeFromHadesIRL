@@ -1,21 +1,37 @@
+// Version check for the update nudge (components/ui/update-modal.tsx).
+//
+// SOURCE OF TRUTH: our own Config/app doc, NOT the iTunes lookup API. The App
+// Store's public version name and the binary's own version (what EAS stamps
+// from app.json) are two different numbering schemes on purpose, so comparing
+// the binary against the store listing nags every up-to-date user forever
+// (shipped: binary 1.0.17 inside the listing named "1.2.1"). Instead,
+// Config/app carries `latestVersion` on the BINARY scheme, flipped by hand
+// (tools/setLatestVersion.js) once a release is confirmed live in the store.
+// That also kills the release-day window where Apple's lookup reports a
+// version the store CDN won't actually hand over yet: the field changes only
+// once the store really serves the update, so the Update button never leads
+// to a dead end.
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
+import { doc, getDoc } from 'firebase/firestore';
 import { Platform } from 'react-native';
+import { db } from '@/lib/firebase/firestore';
 
 export type AppUpdateInfo = {
-  /** Version currently live on the App Store, e.g. "1.0.16". */
-  storeVersion: string;
-  /** Direct link to the app's App Store page. */
+  /** Latest released binary version (Config/app.latestVersion), e.g. "1.0.18". */
+  latestVersion: string;
+  /** Link to this platform's store listing. */
   storeUrl: string;
 };
 
 /**
- * Returns true when `store` is a strictly newer dotted version than
+ * Returns true when `latest` is a strictly newer dotted version than
  * `installed`. Missing segments count as 0 ("1.1" vs "1.1.0" is equal).
  * Non-numeric segments make the comparison bail to false — never prompt
  * on garbage data.
  */
-export function isNewerVersion(store: string, installed: string): boolean {
-  const a = store.split('.');
+export function isNewerVersion(latest: string, installed: string): boolean {
+  const a = latest.split('.');
   const b = installed.split('.');
   const len = Math.max(a.length, b.length);
   for (let i = 0; i < len; i++) {
@@ -28,63 +44,97 @@ export function isNewerVersion(store: string, installed: string): boolean {
   return false;
 }
 
+// Dismissing the nudge is a snooze, not a mute: Close (or an Update tap) buys
+// quiet for a day, then the nagging resumes until the user is actually
+// current. Persisted so a relaunch doesn't reset the clock.
+export const DISMISS_SNOOZE_MS = 24 * 60 * 60 * 1000;
+const DISMISS_KEY = 'appUpdate.dismissed';
+
+export type DismissRecord = {
+  /** The latest-version string that was dismissed. */
+  version: string;
+  /** Epoch ms when it was dismissed. */
+  at: number;
+};
+
 /**
- * Checks the App Store for a newer version of the app.
- *
- * Compares against the running binary's own CFBundleShortVersionString
- * (Application.nativeApplicationVersion), NOT app.json — the store listing
- * displays the approved binary's version string, so that's the only number
- * guaranteed to share the store's versioning scheme. Repo-side version
- * fields have drifted from it before and must not be trusted here.
- *
- * Resolves with the store version + listing URL when the installed build is
- * behind, or null when up to date / not applicable (Android, dev builds,
- * network failure, app not found). Never throws — an update nudge is not
- * worth surfacing an error for.
- *
- * Uses Apple's public iTunes lookup API. Apple-side caching can delay a
- * fresh release appearing here (usually minutes-to-hours, worst case ~24h);
- * callers should re-check on foreground rather than only at cold start.
+ * True while a previously dismissed version should stay quiet: same version,
+ * dismissed less than DISMISS_SNOOZE_MS ago. A newer release prompts
+ * immediately.
  */
-// Storefront region for the lookup: the device locale's region is the best
-// no-extra-dependency proxy (a hardcoded US hands non-US users a US listing
-// whose release timing and store link may not match their storefront).
-function deviceRegion(): string {
+export function isSnoozed(
+  latestVersion: string,
+  record: DismissRecord | null,
+  now: number,
+): boolean {
+  if (!record) return false;
+  return record.version === latestVersion && now - record.at < DISMISS_SNOOZE_MS;
+}
+
+/** Best-effort read of the persisted dismissal; malformed or missing resolves to null. */
+export async function loadDismissRecord(): Promise<DismissRecord | null> {
   try {
-    const locale = Intl.DateTimeFormat().resolvedOptions().locale ?? '';
-    const region = locale
-      .split('-')
-      .find((part) => /^[A-Z]{2}$/.test(part));
-    return region ?? 'US';
+    const raw = await AsyncStorage.getItem(DISMISS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.version !== 'string' || typeof parsed?.at !== 'number') {
+      return null;
+    }
+    return { version: parsed.version, at: parsed.at };
   } catch {
-    return 'US';
+    return null;
   }
 }
 
-export async function checkForAppUpdate(): Promise<AppUpdateInfo | null> {
-  // iTunes lookup only covers the App Store; dev builds always report the
-  // in-progress version and would nag constantly.
-  if (Platform.OS !== 'ios' || __DEV__) return null;
+/** Best-effort persist of a dismissal; storage failure just means an earlier re-prompt. */
+export async function saveDismissRecord(version: string): Promise<void> {
+  try {
+    const record: DismissRecord = { version, at: Date.now() };
+    await AsyncStorage.setItem(DISMISS_KEY, JSON.stringify(record));
+  } catch {
+    // Ignore: the snooze is a courtesy, not a contract.
+  }
+}
 
-  const bundleId = Application.applicationId;
+/**
+ * Checks Config/app for a newer released version of the app.
+ *
+ * Compares the running binary's own version (Application.nativeApplicationVersion,
+ * the same number EAS stamps from app.json) against Config/app.latestVersion,
+ * which is on the same scheme. The App Store's public version name never
+ * enters the comparison.
+ *
+ * Resolves with the latest version + this platform's store URL when the
+ * installed build is behind, or null when up to date / not applicable (dev
+ * builds, missing config, no store URL for this platform, network failure).
+ * Never throws — an update nudge is not worth surfacing an error for.
+ *
+ * Config/app is world-readable by rule, so this works signed-out too. Fields:
+ *   latestVersion  string  latest released binary version; blank/absent disables the nudge
+ *   iosUrl         string  App Store listing link
+ *   androidUrl     string  Play Store listing link (absent while Android has no public release)
+ */
+export async function checkForAppUpdate(): Promise<AppUpdateInfo | null> {
+  // Dev builds always report the in-progress version and would nag constantly.
+  if (__DEV__) return null;
+
   const installed = Application.nativeApplicationVersion;
-  if (!bundleId || !installed) return null;
+  if (!installed) return null;
 
   try {
-    const res = await fetch(
-      `https://itunes.apple.com/lookup?bundleId=${bundleId}&country=${deviceRegion()}`,
-      { headers: { 'Cache-Control': 'no-cache' } },
-    );
-    if (!res.ok) return null;
-    const json = await res.json();
-    const app = json?.results?.[0];
-    const storeVersion: unknown = app?.version;
-    const storeUrl: unknown = app?.trackViewUrl;
-    if (typeof storeVersion !== 'string' || typeof storeUrl !== 'string') {
-      return null;
-    }
-    if (!isNewerVersion(storeVersion, installed)) return null;
-    return { storeVersion, storeUrl };
+    const snap = await getDoc(doc(db, 'Config', 'app'));
+    if (!snap.exists()) return null;
+    const data = snap.data();
+
+    const latestVersion =
+      typeof data?.latestVersion === 'string' ? data.latestVersion.trim() : '';
+    if (!latestVersion) return null;
+
+    const storeUrl = Platform.OS === 'ios' ? data?.iosUrl : data?.androidUrl;
+    if (typeof storeUrl !== 'string' || !storeUrl) return null;
+
+    if (!isNewerVersion(latestVersion, installed)) return null;
+    return { latestVersion, storeUrl };
   } catch {
     return null;
   }

@@ -93,6 +93,17 @@ service cloud.firestore {
       allow read, write: if signedIn() && request.auth.uid == uid;
     }
 
+    // App-level config, not user data. Config/app.latestVersion drives the
+    // update nudge (lib/app-update.ts) and is compared against the running
+    // binary's own version, so it must be readable BEFORE sign-in (the check
+    // runs at cold start). World-readable is fine: it holds only the released
+    // version string and public store links. Writes happen exclusively via
+    // admin tooling (tools/setLatestVersion.js), never from clients.
+    match /Config/app {
+      allow read: if true;
+      allow write: if false;
+    }
+
     // -------- Catch-all --------
     // SECURITY: DENY by default across the board. Firestore uses OR-semantics over matching rules,
     // so a permissive catch-all silently OVERRIDES the strict per-collection rules above. The old

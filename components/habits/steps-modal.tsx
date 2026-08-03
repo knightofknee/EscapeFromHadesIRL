@@ -143,28 +143,39 @@ export function StepsModal({
     statusRef.current = status.kind;
   }, [status.kind]);
 
+  // The open/foreground effects must NOT depend on runCheck's identity:
+  // persisting a read updates the record snapshot, which recreates the
+  // callbacks, and an identity-keyed effect would re-run the check after
+  // every write (write → snapshot → new callback → check → write, forever).
+  const runCheckRef = useRef(runCheck);
+  useEffect(() => {
+    runCheckRef.current = runCheck;
+  });
+
+  const habitId = habit?.id;
+
   // On open: run the check.
   useEffect(() => {
-    if (!visible || !habit) return;
-    void runCheck();
-  }, [visible, habit, runCheck]);
+    if (!visible || !habitId) return;
+    void runCheckRef.current();
+  }, [visible, habitId]);
 
   // Returning from system Settings after granting permission would otherwise
   // leave the modal stuck on 'needs-permission' until a manual re-tap. Re-run
   // the check on foreground so a now-granted permission auto-advances.
   useEffect(() => {
-    if (!visible || !habit) return;
+    if (!visible || !habitId) return;
     const sub = AppState.addEventListener('change', (state) => {
       if (state !== 'active') return;
       const k = statusRef.current;
       if (k === 'needs-permission' || k === 'unavailable' || k === 'error') {
-        void runCheck();
+        void runCheckRef.current();
       }
     });
     return () => {
       sub.remove();
     };
-  }, [visible, habit, runCheck]);
+  }, [visible, habitId]);
 
   if (!habit) return null;
 

@@ -1,4 +1,4 @@
-import { StyleSheet, ScrollView, View, Pressable, Alert } from 'react-native';
+import { StyleSheet, ScrollView, View, Pressable, Alert, Switch } from 'react-native';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -10,11 +10,16 @@ import { useAppearance } from '@/hooks/use-appearance';
 import { useHomeScreen } from '@/hooks/use-home-screen';
 
 export default function SettingsScreen() {
+  // React Compiler memoization breaks the native Switch slide animation.
+  'use no memo';
   const { user } = useAuth();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const { appearance, setAppearance } = useAppearance();
   const { homeScreen, setHomeScreen } = useHomeScreen();
+  // Off-state track: tileBorder blends into the card background (especially in
+  // dark mode, #3A3D42 on #2C2F33), leaving the thumb floating on nothing.
+  const offTrack = colorScheme === 'dark' ? '#5A5E66' : '#D8DBE0';
 
   async function handleSignOut() {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -59,18 +64,21 @@ export default function SettingsScreen() {
           Home Screen
         </ThemedText>
         <View style={[styles.card, { backgroundColor: colors.tileBackground, borderColor: colors.tileBorder }]}>
-          <Pressable
-            style={styles.row}
-            onPress={() => setHomeScreen(homeScreen === 'notes' ? 'default' : 'notes')}
-          >
+          <View style={styles.row}>
             <View style={{ flex: 1 }}>
               <ThemedText style={styles.label}>Open to Notes</ThemedText>
               <ThemedText style={[styles.value, { opacity: 0.5, fontSize: 12, marginTop: 2 }]}>
                 Opens the app to a fresh note, ready to write
               </ThemedText>
             </View>
-            {homeScreen === 'notes' && <ThemedText style={{ color: colors.tint }}>✓</ThemedText>}
-          </Pressable>
+            <Switch
+              value={homeScreen === 'notes'}
+              onValueChange={(v) => setHomeScreen(v ? 'notes' : 'default')}
+              trackColor={{ false: offTrack, true: colors.tint }}
+              ios_backgroundColor={offTrack}
+              thumbColor="#fff"
+            />
+          </View>
         </View>
 
         {/* Appearance */}

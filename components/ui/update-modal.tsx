@@ -3,27 +3,35 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/contexts/auth-context';
 import { useTour } from '@/contexts/tour-context';
-import { checkForAppUpdate, type AppUpdateInfo } from '@/lib/app-update';
+import {
+  checkForAppUpdate,
+  isSnoozed,
+  loadDismissRecord,
+  saveDismissRecord,
+  type AppUpdateInfo,
+} from '@/lib/app-update';
 import { useEffect, useRef, useState } from 'react';
 import { AppState, Linking, Modal, Pressable, StyleSheet, View } from 'react-native';
 
-// Minimum gap between store checks. Foreground events fire constantly during
+// Minimum gap between config checks. Foreground events fire constantly during
 // normal use; one check per half hour keeps the prompt near-immediate once a
-// release propagates without hammering the lookup API.
+// release is flipped live without hammering Firestore.
 const CHECK_INTERVAL_MS = 30 * 60 * 1000;
 
 /**
- * Root-mounted nudge shown when the installed binary is behind the App Store
- * version. App Store updates aren't actually automatic for everyone
- * (auto-update can be off or delayed), and the goal is getting fixes to
- * active users fast — so this checks at launch AND on every app foreground
- * (throttled), not just at cold start. iOS apps stay resident for days;
- * waiting for a cold start would add days on top of Apple review.
+ * Root-mounted nudge shown when the installed binary is behind
+ * Config/app.latestVersion (see lib/app-update.ts for why the source of truth
+ * is our own config doc, not the store). App Store updates aren't actually
+ * automatic for everyone (auto-update can be off or delayed), and the goal is
+ * getting fixes to active users fast — so this checks at launch AND on every
+ * app foreground (throttled), not just at cold start. iOS apps stay resident
+ * for days; waiting for a cold start would add days on top of Apple review.
  *
- * Purely a suggestion: Update deep-links to the store listing, Close
- * dismisses that store version for the rest of the session (a later, newer
- * release re-prompts). The Update button is deliberately the loudest
- * element on the card.
+ * Purely a suggestion: Update deep-links to the store listing, and either
+ * button snoozes the nudge for a day (persisted across relaunches; a later,
+ * newer release re-prompts immediately). One nag per day, but nagging resumes
+ * until the user is actually current. The Update button is deliberately the
+ * loudest element on the card.
  */
 export function UpdateModal() {
   const colorScheme = useColorScheme();
@@ -31,7 +39,6 @@ export function UpdateModal() {
   const { user } = useAuth();
   const { isActive: tourActive } = useTour();
   const [info, setInfo] = useState<AppUpdateInfo | null>(null);
-  const dismissedVersionRef = useRef<string | null>(null);
   const lastCheckRef = useRef(0);
 
   useEffect(() => {
@@ -42,7 +49,8 @@ export function UpdateModal() {
       lastCheckRef.current = Date.now();
       const result = await checkForAppUpdate();
       if (unmounted || !result) return;
-      if (result.storeVersion === dismissedVersionRef.current) return;
+      const dismissed = await loadDismissRecord();
+      if (unmounted || isSnoozed(result.latestVersion, dismissed, Date.now())) return;
       setInfo(result);
     }
 
@@ -62,11 +70,15 @@ export function UpdateModal() {
   if (!info || !user || tourActive) return null;
 
   function openStore() {
-    if (info) Linking.openURL(info.storeUrl).catch(() => {});
+    if (!info) return;
+    // A store visit earns the same day of quiet as Close: whether they update
+    // or bail, re-nagging sooner is noise.
+    saveDismissRecord(info.latestVersion);
+    Linking.openURL(info.storeUrl).catch(() => {});
   }
 
   function dismiss() {
-    if (info) dismissedVersionRef.current = info.storeVersion;
+    if (info) saveDismissRecord(info.latestVersion);
     setInfo(null);
   }
 
@@ -79,8 +91,8 @@ export function UpdateModal() {
             Update available
           </ThemedText>
           <ThemedText style={styles.body}>
-            A newer version of Escape from Hades IRL (v{info.storeVersion}) is
-            on the App Store. Update now to get the latest fixes and features.
+            A newer version of Escape from Hades IRL is on the App Store.
+            Update now to get the latest fixes and features.
           </ThemedText>
           <Pressable
             style={[styles.updateButton, { backgroundColor: colors.tint }]}

@@ -15,6 +15,7 @@ interface OfflineCallbacks {
 
 interface OfflineOptions {
   offlineTimeoutMs?: number;
+  offlineGraceMs?: number;
 }
 
 /**
@@ -24,9 +25,12 @@ interface OfflineOptions {
  *
  * `setOffline(true)` fires when (a) we've waited longer than
  * `offlineTimeoutMs` without a server snapshot, (b) we'd previously
- * reached the server and went back to cache-only, or (c) the error
- * handler ran. The very first cache-only snapshot does NOT flip
- * offline true — that flicker is suppressed during normal startup.
+ * reached the server and stayed cache-only for `offlineGraceMs` (the
+ * SDK emits transient cache snapshots on foreground resyncs and brief
+ * blips — flipping instantly flashed the offline UI while online), or
+ * (c) the error handler ran. The very first cache-only snapshot does
+ * NOT flip offline true — that flicker is suppressed during normal
+ * startup.
  *
  * `{ includeMetadataChanges: true }` is set implicitly so the listener
  * re-fires on cache↔server transitions and we recover from offline
@@ -39,6 +43,7 @@ export function subscribeWithOfflineState(
   options: OfflineOptions = {},
 ): Unsubscribe {
   const timeoutMs = options.offlineTimeoutMs ?? 5000;
+  const graceMs = options.offlineGraceMs ?? 4000;
   let seenServer = false;
   let delivered = false;
   let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
@@ -50,6 +55,23 @@ export function subscribeWithOfflineState(
     if (timer !== null) {
       clearTimeout(timer);
       timer = null;
+    }
+  };
+
+  // Debounce for case (b): only declare offline if we stay cache-only for
+  // the full grace window. A server snapshot cancels it.
+  let graceTimer: ReturnType<typeof setTimeout> | null = null;
+  const scheduleOffline = () => {
+    if (graceTimer !== null) return;
+    graceTimer = setTimeout(() => {
+      graceTimer = null;
+      callbacks.setOffline(true);
+    }, graceMs);
+  };
+  const cancelScheduledOffline = () => {
+    if (graceTimer !== null) {
+      clearTimeout(graceTimer);
+      graceTimer = null;
     }
   };
 
@@ -81,15 +103,17 @@ export function subscribeWithOfflineState(
         onNext(snapshot);
       }
       if (snapshot.metadata.fromCache) {
-        if (seenServer) callbacks.setOffline(true);
+        if (seenServer) scheduleOffline();
       } else {
         seenServer = true;
         clearTimer();
+        cancelScheduledOffline();
         callbacks.setOffline(false);
       }
     },
     (error: FirestoreError) => {
       clearTimer();
+      cancelScheduledOffline();
       callbacks.setOffline(true);
       callbacks.onError?.(error);
     },
@@ -97,6 +121,7 @@ export function subscribeWithOfflineState(
 
   return () => {
     clearTimer();
+    cancelScheduledOffline();
     unsubscribe();
   };
 }
