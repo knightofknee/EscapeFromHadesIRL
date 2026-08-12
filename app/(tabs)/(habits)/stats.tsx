@@ -291,9 +291,15 @@ export default function StatsScreen() {
   }, [habits, recordIndex, vacationSet, winOnlyWeekends]);
 
   // Hold until habits and the streak history arrive — otherwise every habit
-  // section renders zeroed streaks and then pops to the real numbers.
-  if (habitsLoading || ((recordsLoading || vacationLoading) && !isOffline)) {
-    return <LoadingScreen />;
+  // section renders zeroed streaks and then pops to the real numbers. Offline
+  // before anything loaded keeps the loading treatment; listeners retry on
+  // their own.
+  if (
+    habitsLoading ||
+    ((recordsLoading || vacationLoading) && !isOffline) ||
+    (isOffline && habits.length === 0)
+  ) {
+    return <LoadingScreen message={isOffline ? 'Waiting for connection...' : undefined} />;
   }
 
   return (
@@ -317,9 +323,7 @@ export default function StatsScreen() {
         </View>
 
         {habits.length === 0 ? (
-          <ThemedText style={styles.empty}>
-            {isOffline ? 'No internet connection' : 'No habits to show stats for'}
-          </ThemedText>
+          <ThemedText style={styles.empty}>No habits to show stats for</ThemedText>
         ) : (
           habits.map((habit) => (
             <HabitStatsSection key={habit.id} habit={habit} recordIndex={recordIndex} vacationSet={vacationSet} winOnlyWeekends={winOnlyWeekends} />

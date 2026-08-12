@@ -135,9 +135,14 @@ export default function WeekViewScreen() {
   }, [dates]);
 
   // Hold until habits and this week's records arrive — otherwise the grid
-  // renders all-empty cells and then pops to the real data.
-  if (habitsLoading || ((recordsLoading || vacationLoading) && !isOffline)) {
-    return <LoadingScreen />;
+  // renders all-empty cells and then pops to the real data. Offline before
+  // anything loaded keeps the loading treatment; listeners retry on their own.
+  if (
+    habitsLoading ||
+    ((recordsLoading || vacationLoading) && !isOffline) ||
+    (isOffline && habits.length === 0)
+  ) {
+    return <LoadingScreen message={isOffline ? 'Waiting for connection...' : undefined} />;
   }
 
   return (
@@ -165,9 +170,7 @@ export default function WeekViewScreen() {
 
         {habits.length === 0 ? (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <ThemedText style={{ opacity: 0.5, fontSize: 16 }}>
-              {isOffline ? 'No internet connection' : 'No habits yet'}
-            </ThemedText>
+            <ThemedText style={{ opacity: 0.5, fontSize: 16 }}>No habits yet</ThemedText>
           </View>
         ) : (
           <GestureDetector gesture={swipeGesture}>

@@ -36,12 +36,17 @@ export default function ReviveHabitScreen() {
       </View>
 
       <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: footerReserve }]}>
-        {isLoading ? (
-          <ActivityIndicator size="large" color={colors.tint} style={styles.loading} />
+        {isLoading || (isOffline && archived.length === 0) ? (
+          <>
+            <ActivityIndicator size="large" color={colors.tint} style={styles.loading} />
+            {isOffline ? (
+              <ThemedText style={[styles.emptyText, { paddingVertical: 0 }]}>
+                Waiting for connection...
+              </ThemedText>
+            ) : null}
+          </>
         ) : archived.length === 0 ? (
-          <ThemedText style={styles.emptyText}>
-            {isOffline ? 'No internet connection' : 'No archived habits'}
-          </ThemedText>
+          <ThemedText style={styles.emptyText}>No archived habits</ThemedText>
         ) : (
           archived.map((h) => {
             const isSelected = selectedId === h.id;

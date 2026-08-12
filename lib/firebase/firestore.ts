@@ -14,6 +14,8 @@ import {
   limit,
   onSnapshot,
   writeBatch,
+  enableNetwork,
+  disableNetwork,
 } from 'firebase/firestore';
 import { app } from './app';
 
@@ -34,4 +36,6 @@ export {
   limit,
   onSnapshot,
   writeBatch,
+  enableNetwork,
+  disableNetwork,
 };

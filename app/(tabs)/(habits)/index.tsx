@@ -283,9 +283,15 @@ export default function HabitsDayScreen() {
   // days arrive — so tiles never render "unrecorded" then pop to their real
   // states, and a vacation day shows its V tile directly instead of flashing
   // the grid. The listener conditions are skipped when offline (no snapshots
-  // are coming).
-  if (isLoading || ((recordsLoading || vacationLoading) && !isOffline)) {
-    return <LoadingScreen />;
+  // are coming). Offline before anything loaded keeps the loading treatment
+  // (with a note) instead of a bald "No internet" claim — the listeners are
+  // still retrying and the screen fills in on its own when service returns.
+  if (
+    isLoading ||
+    ((recordsLoading || vacationLoading) && !isOffline) ||
+    (isOffline && habits.length === 0)
+  ) {
+    return <LoadingScreen message={isOffline ? 'Waiting for connection...' : undefined} />;
   }
 
   return (
@@ -330,42 +336,39 @@ export default function HabitsDayScreen() {
           <Animated.View style={[styles.swipeArea, contentAnimatedStyle]}>
             {habits.length === 0 ? (
               <View style={styles.emptyState}>
-                {isOffline ? (
-                  <ThemedText style={styles.emptyText}>No internet connection</ThemedText>
-                ) : (
-                  <>
-                    <ThemedText style={styles.emptyText}>No habits yet</ThemedText>
-                    {/* Setup or bust: with zero habits the only way forward is
-                        starter setup (which requires picking ≥1 habit). No
-                        intro param: anyone here was already offered the tour
-                        (auto-start or skip), and a veteran who archived their
-                        last habit must not get a forced tour replay — the •••
-                        menu's tutorial entry stays the explicit path. */}
-                    <Pressable
-                      ref={addHabitRef}
-                      style={[styles.addButton, { backgroundColor: colors.tint }]}
-                      onPress={() => router.push('/starter-setup')}
-                      accessibilityRole="button"
-                    >
-                      <ThemedText style={styles.addButtonText}>Finish setup</ThemedText>
-                    </Pressable>
-                    {/* Same ••• menu as the grid view — without it, a user
-                        with zero habits has no way back to the tutorial. */}
-                    <Pressable
-                      style={[
-                        styles.emptyMenuButton,
-                        { borderColor: colors.vacationButton, backgroundColor: `${colors.vacationButton}15` },
-                      ]}
-                      onPress={() => setVacationMenuVisible(true)}
-                      accessibilityLabel="More options"
-                      hitSlop={6}
-                    >
-                      <ThemedText style={[styles.menuTileText, { color: colors.vacationButton }]}>
-                        •••
-                      </ThemedText>
-                    </Pressable>
-                  </>
-                )}
+                {/* isOffline can't reach here with zero habits — the loading
+                    gate above owns that state — so this is always a real
+                    "no habits" empty state. */}
+                <ThemedText style={styles.emptyText}>No habits yet</ThemedText>
+                {/* Setup or bust: with zero habits the only way forward is
+                    starter setup (which requires picking ≥1 habit). No
+                    intro param: anyone here was already offered the tour
+                    (auto-start or skip), and a veteran who archived their
+                    last habit must not get a forced tour replay — the •••
+                    menu's tutorial entry stays the explicit path. */}
+                <Pressable
+                  ref={addHabitRef}
+                  style={[styles.addButton, { backgroundColor: colors.tint }]}
+                  onPress={() => router.push('/starter-setup')}
+                  accessibilityRole="button"
+                >
+                  <ThemedText style={styles.addButtonText}>Finish setup</ThemedText>
+                </Pressable>
+                {/* Same ••• menu as the grid view — without it, a user
+                    with zero habits has no way back to the tutorial. */}
+                <Pressable
+                  style={[
+                    styles.emptyMenuButton,
+                    { borderColor: colors.vacationButton, backgroundColor: `${colors.vacationButton}15` },
+                  ]}
+                  onPress={() => setVacationMenuVisible(true)}
+                  accessibilityLabel="More options"
+                  hitSlop={6}
+                >
+                  <ThemedText style={[styles.menuTileText, { color: colors.vacationButton }]}>
+                    •••
+                  </ThemedText>
+                </Pressable>
               </View>
             ) : (
               <>

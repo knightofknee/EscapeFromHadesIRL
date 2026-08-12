@@ -7,9 +7,9 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { Alert } from 'react-native';
+import { Alert, AppState } from 'react-native';
 import { useAuth } from '@/contexts/auth-context';
-import { db, doc } from '@/lib/firebase/firestore';
+import { db, doc, disableNetwork, enableNetwork } from '@/lib/firebase/firestore';
 import { subscribeWithOfflineState } from '@/lib/firebase/subscribe';
 
 interface OfflineContextValue {
@@ -56,6 +56,43 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
       { setOffline: setIsOffline },
     );
   }, [user]);
+
+  // Recovery nudge. The Firestore Web SDK never hears about OS network
+  // changes on React Native (no browser online/offline events), so after
+  // service returns it can sit in a long retry backoff — or a wedged
+  // connection — and never notice. While we're offline, periodically cycle
+  // the SDK's network off/on (resets the backoff and forces an immediate
+  // reconnect attempt), and do the same when the app foregrounds since iOS
+  // kills sockets in the background. Stops as soon as we're back online.
+  useEffect(() => {
+    if (!isOffline) return;
+    let cycling = false;
+    const nudge = async () => {
+      if (cycling) return;
+      cycling = true;
+      try {
+        // Always re-enable after disabling, even on cleanup mid-cycle —
+        // leaving the network disabled would BE the outage.
+        await disableNetwork(db);
+        await enableNetwork(db);
+      } catch {
+        // Best-effort; the next interval tries again.
+      } finally {
+        cycling = false;
+      }
+    };
+    // First nudge waits a full interval: offline was just declared after a
+    // long quiet window, and instantly tearing down a slow-but-live
+    // handshake would defeat the forgiveness.
+    const interval = setInterval(nudge, 20_000);
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') nudge();
+    });
+    return () => {
+      clearInterval(interval);
+      appStateSub.remove();
+    };
+  }, [isOffline]);
 
   const requireOnline = useCallback(() => {
     if (!isOfflineRef.current) return true;

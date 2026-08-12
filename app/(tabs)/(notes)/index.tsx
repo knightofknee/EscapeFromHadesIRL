@@ -241,15 +241,22 @@ export default function NotesListScreen() {
         }
         ListEmptyComponent={
           <View style={styles.empty}>
-            {isLoading ? (
-              <ActivityIndicator size="large" color={colors.tint} />
+            {/* Offline with nothing loaded keeps the loading treatment (plus
+                a note) — the listener retries on its own and the list fills
+                in when service returns. Filtered searches skip it: those run
+                over already-loaded notes. */}
+            {isLoading || (isOffline && !searchQuery && !selectedTagId) ? (
+              <>
+                <ActivityIndicator size="large" color={colors.tint} />
+                {isOffline ? (
+                  <ThemedText style={[styles.emptyText, styles.emptyWaiting]}>
+                    Waiting for connection...
+                  </ThemedText>
+                ) : null}
+              </>
             ) : (
               <ThemedText style={styles.emptyText}>
-                {searchQuery || selectedTagId
-                  ? 'No matching notes'
-                  : isOffline
-                    ? 'No internet connection'
-                    : 'No notes yet'}
+                {searchQuery || selectedTagId ? 'No matching notes' : 'No notes yet'}
               </ThemedText>
             )}
           </View>
@@ -348,6 +355,10 @@ const styles = StyleSheet.create({
   emptyText: {
     opacity: 0.5,
     fontSize: 16,
+  },
+  emptyWaiting: {
+    marginTop: 16,
+    fontSize: 14,
   },
   fab: {
     position: 'absolute',
