@@ -1,4 +1,4 @@
-import { isRecordCompleted, isRecordGoal, isRecordIdeal, shouldSkipWeekend } from '../lib/habit-scoring';
+import { isRecordCompleted, isRecordGoal, isRecordIdeal, isValueRecorded, shouldSkipWeekend } from '../lib/habit-scoring';
 import type { Habit, HabitRecord } from '../types/habit';
 
 function makeHabit(mode: Habit['recordingMode']): Habit {
@@ -110,6 +110,29 @@ describe('isRecordCompleted', () => {
     test('empty string is not completed', () => {
       expect(isRecordCompleted(habit, makeRecord(''))).toBe(false);
     });
+    test('zero (in any spelling) is not completed — an incremented tally set back to 0', () => {
+      expect(isRecordCompleted(habit, makeRecord('0'))).toBe(false);
+      expect(isRecordCompleted(habit, makeRecord('0.0'))).toBe(false);
+      expect(isRecordCompleted(habit, makeRecord(' 0 '))).toBe(false);
+    });
+    test('numeric non-zero strings are completed', () => {
+      expect(isRecordCompleted(habit, makeRecord('1'))).toBe(true);
+      expect(isRecordCompleted(habit, makeRecord('0.5'))).toBe(true);
+    });
+  });
+});
+
+describe('isValueRecorded', () => {
+  test('null/empty/zero are unrecorded', () => {
+    expect(isValueRecorded(null)).toBe(false);
+    expect(isValueRecorded(undefined)).toBe(false);
+    expect(isValueRecorded('')).toBe(false);
+    expect(isValueRecorded('0')).toBe(false);
+    expect(isValueRecorded(0)).toBe(false);
+  });
+  test('non-zero numbers and free text are recorded', () => {
+    expect(isValueRecorded('2.5')).toBe(true);
+    expect(isValueRecorded('skipped early')).toBe(true);
   });
 });
 

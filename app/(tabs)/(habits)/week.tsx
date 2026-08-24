@@ -19,10 +19,11 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useSuccessColors } from '@/hooks/use-success-colors';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import type { TripleValue, QuadValue } from '@/types/habit';
+import { isValueRecorded } from '@/lib/habit-scoring';
 
 export default function WeekViewScreen() {
   const { user } = useAuth();
-  const { habits, isLoading: habitsLoading, isOffline } = useHabits();
+  const { habits, isLoading: habitsLoading, isOffline, hasLoaded } = useHabits();
   const colorScheme = useColorScheme();
   const scheme = colorScheme ?? 'light';
   const colors = Colors[scheme];
@@ -75,8 +76,10 @@ export default function WeekViewScreen() {
           newValue = ((existing?.value as number) ?? 0) + 1;
           break;
         case 'value':
-          // For week view, just toggle presence
-          newValue = existing?.value ? '' : '1';
+          // For week view, just toggle presence. isValueRecorded, not
+          // truthiness: a "0" cell renders unrecorded, so tapping it must
+          // record ("1"), not clear an already-empty-looking cell.
+          newValue = isValueRecorded(existing?.value) ? '' : '1';
           break;
       }
 
@@ -140,7 +143,10 @@ export default function WeekViewScreen() {
   if (
     habitsLoading ||
     ((recordsLoading || vacationLoading) && !isOffline) ||
-    (isOffline && habits.length === 0)
+    // hasLoaded, not habits.length: an account CONFIRMED empty keeps its
+    // normal empty state (with its setup affordances) when the device goes
+    // offline — only "offline before anything ever loaded" waits here.
+    (isOffline && !hasLoaded)
   ) {
     return <LoadingScreen message={isOffline ? 'Waiting for connection...' : undefined} />;
   }

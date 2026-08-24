@@ -47,7 +47,7 @@ import { emitError } from '@/lib/error-bus';
 import type { Habit } from '@/types/habit';
 
 export default function HabitsDayScreen() {
-  const { habits, isLoading, isOffline } = useHabits();
+  const { habits, isLoading, isOffline, hasLoaded } = useHabits();
   const { todayStr } = useTodayDate();
   const [viewedDate, setViewedDate] = useState(todayStr);
   const {
@@ -289,7 +289,10 @@ export default function HabitsDayScreen() {
   if (
     isLoading ||
     ((recordsLoading || vacationLoading) && !isOffline) ||
-    (isOffline && habits.length === 0)
+    // hasLoaded, not habits.length: an account CONFIRMED empty keeps its
+    // normal empty state (with its setup affordances) when the device goes
+    // offline — only "offline before anything ever loaded" waits here.
+    (isOffline && !hasLoaded)
   ) {
     return <LoadingScreen message={isOffline ? 'Waiting for connection...' : undefined} />;
   }

@@ -29,6 +29,7 @@ export function useArchivedHabits() {
   const [habits, setHabits] = useState<Habit[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -36,6 +37,7 @@ export function useArchivedHabits() {
       // Stay "loading" while signed out / auth restoring — see HabitsProvider.
       setIsLoading(true);
       setIsOffline(false);
+      setHasLoaded(false);
       return;
     }
 
@@ -53,6 +55,7 @@ export function useArchivedHabits() {
         const data = snapshot.docs.map((d: any) => ({ id: d.id, ...d.data() }) as Habit);
         setHabits(data);
         setIsLoading(false);
+        setHasLoaded(true);
       },
       {
         onError: (error) => {
@@ -67,5 +70,5 @@ export function useArchivedHabits() {
     );
   }, [user]);
 
-  return { habits, isLoading, isOffline };
+  return { habits, isLoading, isOffline, hasLoaded };
 }

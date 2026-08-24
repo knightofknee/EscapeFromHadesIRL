@@ -1,4 +1,4 @@
-import { computeMeditationTier } from '../lib/meditation';
+import { computeMeditationTier, shouldRingInApp } from '../lib/meditation';
 import type { MeditationSession } from '../types/habit';
 
 const session = (minutes: number): MeditationSession => ({
@@ -52,5 +52,25 @@ describe('computeMeditationTier', () => {
     it('one long session is not enough under the legacy rule', () => {
       expect(computeMeditationTier([session(20)], 1, 5)).not.toBe('ideal');
     });
+  });
+});
+
+describe('shouldRingInApp', () => {
+  const END = 1_700_000_000_000;
+
+  it('rings for a completion the user is present for', () => {
+    expect(shouldRingInApp(END, END, true)).toBe(true);
+    expect(shouldRingInApp(END, END + 250, true)).toBe(true);
+  });
+
+  it('stays silent when the app only just came back', () => {
+    // The interval was frozen while the app was suspended and catches up on
+    // resume — the user opened the app, they did not sit through the timer.
+    expect(shouldRingInApp(END, END + 30_000, true)).toBe(false);
+    expect(shouldRingInApp(END, END + 4 * 60 * 60 * 1000, true)).toBe(false);
+  });
+
+  it('stays silent when the app is not in the foreground', () => {
+    expect(shouldRingInApp(END, END, false)).toBe(false);
   });
 });

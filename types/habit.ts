@@ -16,6 +16,13 @@ export type MeditationSession = {
   source: 'timer' | 'manual';
   /** Unix ms when the session was recorded. */
   loggedAt: number;
+  /**
+   * For timer sessions: unix ms when the run started — the run's identity.
+   * Settlement dedups on it, so retrying a failed write (or two observers
+   * racing) can never append the same run twice. Absent on manual logs and
+   * on records written before this field existed.
+   */
+  startedAt?: number;
 };
 
 export type TripleValue = 'no' | 'yes' | 'double';

@@ -134,7 +134,20 @@ export function subscribeWithOfflineState(
         callbacks.setOffline(true);
         callbacks.onError?.(error);
         unsubscribe = null;
-        if (stopped || error.code === 'permission-denied') return;
+        // Codes that no amount of retrying can fix: rules rejection, a
+        // missing composite index, or a malformed query. Retrying these
+        // re-fired onError forever — for notes that meant an error toast
+        // every backoff interval, indefinitely. Transient codes (unavailable,
+        // deadline-exceeded, internal, unauthenticated during a token
+        // refresh) keep the retry path.
+        const PERMANENT_CODES = [
+          'permission-denied',
+          'failed-precondition',
+          'invalid-argument',
+          'unimplemented',
+          'out-of-range',
+        ];
+        if (stopped || PERMANENT_CODES.includes(error.code)) return;
         retryTimer = setTimeout(() => {
           retryTimer = null;
           if (!stopped) start();

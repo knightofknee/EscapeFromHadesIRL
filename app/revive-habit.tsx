@@ -14,7 +14,7 @@ export default function ReviveHabitScreen() {
   const insets = useSafeAreaInsets();
   const footerReserve = insets.bottom + 96;
   const { reviveHabit } = useHabits();
-  const { habits: archived, isLoading, isOffline } = useArchivedHabits();
+  const { habits: archived, isLoading, isOffline, hasLoaded } = useArchivedHabits();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reviving, setReviving] = useState(false);
 
@@ -36,7 +36,7 @@ export default function ReviveHabitScreen() {
       </View>
 
       <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: footerReserve }]}>
-        {isLoading || (isOffline && archived.length === 0) ? (
+        {isLoading || (isOffline && !hasLoaded) ? (
           <>
             <ActivityIndicator size="large" color={colors.tint} style={styles.loading} />
             {isOffline ? (

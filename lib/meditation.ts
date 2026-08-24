@@ -68,3 +68,27 @@ export function formatTimerDuration(totalSec: number): string {
   const secs = Math.floor(totalSec % 60);
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
+
+/**
+ * How far past its end time a completion can be noticed and still count as
+ * one the user watched happen.
+ */
+export const LIVE_COMPLETION_GRACE_MS = 3000;
+
+/**
+ * Should a finished timer ring the in-app alarm, or just report itself?
+ *
+ * A suspended app freezes its JS timers, so the countdown only catches up
+ * when the app comes back — at which point it discovers a run that ended
+ * minutes or hours ago. Ringing then means the app starts an alarm *because*
+ * you opened it, and the notification already did the alerting anyway. So the
+ * bell is reserved for a completion that lands while the user is actually
+ * looking at it.
+ *
+ * @param endedAtMs when the run was due to finish
+ * @param nowMs when the completion was noticed
+ * @param appActive whether the app is in the foreground right now
+ */
+export function shouldRingInApp(endedAtMs: number, nowMs: number, appActive: boolean): boolean {
+  return appActive && nowMs - endedAtMs < LIVE_COMPLETION_GRACE_MS;
+}

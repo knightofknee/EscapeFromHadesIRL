@@ -1,5 +1,6 @@
 import * as Notifications from 'expo-notifications';
 import { clearAllTimerState } from '@/lib/meditation-timer-storage';
+import { releaseCompletionClaims } from '@/lib/meditation-completion';
 import { clearAllCreativeWritingFlags } from '@/lib/creative-writing';
 import { clearAllVocab } from '@/lib/word-suggestions';
 
@@ -25,4 +26,8 @@ export async function clearLocalUserState(): Promise<void> {
     clearAllVocab(),
     clearAllCreativeWritingFlags(),
   ]);
+  // In-memory, so it isn't part of the storage sweep above: forget which
+  // timer completions were already logged, since the slots holding them are
+  // gone now anyway.
+  releaseCompletionClaims();
 }

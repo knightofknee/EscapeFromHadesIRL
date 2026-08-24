@@ -5,6 +5,7 @@ import { ThemedText } from '@/components/themed-text';
 import { useUserSettingsContext } from '@/contexts/user-settings-context';
 import { GlyphRenderer } from './glyph-renderer';
 import type { Habit, HabitRecord, TripleValue, QuadValue, GlyphData } from '@/types/habit';
+import { isValueRecorded } from '@/lib/habit-scoring';
 
 /**
  * Design space
@@ -194,8 +195,12 @@ function getFaceState(habit: Habit, record?: HabitRecord): FaceState {
 
     case 'value': {
       const val = getStringValue(record);
-      face.opacity = val ? 1 : 0.35;
-      if (val) face.footer = { text: val, size: D.footerValue };
+      // "0" is an entry the user zeroed back out, not a completion — dim it
+      // and drop the footer, same as a counter at 0 (isValueRecorded owns
+      // that rule).
+      const recorded = isValueRecorded(val);
+      face.opacity = recorded ? 1 : 0.35;
+      if (recorded) face.footer = { text: val, size: D.footerValue };
       break;
     }
   }

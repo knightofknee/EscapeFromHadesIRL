@@ -36,6 +36,7 @@ import { ErrorToast } from '@/components/ui/error-toast';
 import { OfflineModal } from '@/components/ui/offline-modal';
 import { UpdateModal } from '@/components/ui/update-modal';
 import { ActiveDayTracker } from '@/hooks/use-earned-quote';
+import { MeditationAlarmWatcher } from '@/components/habits/meditation-alarm-watcher';
 import { AuthProvider, useAuth } from '@/contexts/auth-context';
 import { OfflineProvider } from '@/contexts/offline-context';
 import { AppDataProviders } from '@/contexts/app-data-providers';
@@ -164,6 +165,10 @@ export default function RootLayout() {
                 {/* Counts active days from the root so notes-first sessions
                     still count toward milestone quotes. */}
                 <ActiveDayTracker />
+                {/* Roots the meditation-timer cleanup outside the habits
+                    screen — a timer that finishes while its sheet is closed
+                    still gets logged and torn down. */}
+                <MeditationAlarmWatcher />
                 <ErrorToast />
                 <OfflineModal />
                 <StatusBar style={effectiveScheme === 'dark' ? 'light' : 'dark'} />

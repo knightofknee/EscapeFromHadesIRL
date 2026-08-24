@@ -10,32 +10,12 @@ import { useHabitRecords, formatDate } from '@/hooks/use-habit-records';
 import { useTodayDate } from '@/hooks/use-today-date';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
-import { shouldSkipWeekend } from '@/lib/habit-scoring';
+import { isRecordCompleted, shouldSkipWeekend } from '@/lib/habit-scoring';
 import { readableTextOn } from '@/lib/contrast';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import type { Habit, HabitRecord } from '@/types/habit';
+import type { HabitRecord } from '@/types/habit';
 
-function isCompleted(habit: Habit, record?: HabitRecord): boolean {
-  if (!record) return false;
-  switch (habit.recordingMode) {
-    case 'boolean':
-      return record.value !== false && record.value !== 'no';
-    case 'triple':
-      return record.value === 'yes' || record.value === 'double';
-    case 'steps':
-    case 'meditation':
-    case 'creativeWriting':
-    case 'quad':
-      return record.value === 'yes' || record.value === 'goal' || record.value === 'ideal';
-    case 'counter':
-      return (record.value as number) > 0;
-    case 'value':
-      return !!(record.value as string);
-    default:
-      return false;
-  }
-}
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -43,7 +23,7 @@ const MONTH_NAMES = [
 ];
 
 export default function MonthViewScreen() {
-  const { habits, isLoading: habitsLoading, isOffline } = useHabits();
+  const { habits, isLoading: habitsLoading, isOffline, hasLoaded } = useHabits();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const [monthOffset, setMonthOffset] = useState(0);
@@ -127,7 +107,7 @@ export default function MonthViewScreen() {
         const record = recordIndex.get(`${habit.id}_${dateStr}`);
         if (shouldSkipWeekend(habit, record, dateStr, winOnlyWeekends)) continue;
         activeDays++;
-        if (isCompleted(habit, record)) completed++;
+        if (isRecordCompleted(habit, record)) completed++;
       }
       const rate = activeDays > 0 ? Math.round((completed / activeDays) * 100) : null;
       return { habit, completed, activeDays, rate };
@@ -159,7 +139,7 @@ export default function MonthViewScreen() {
         const v = record.value;
         if (v === 'ideal') score += 1.5;
         else if (v === 'goal' || v === 'double') score += 1.25;
-        else if (isCompleted(habit, record)) score += 1.0;
+        else if (isRecordCompleted(habit, record)) score += 1.0;
       }
       const denominator = activeHabits * maxPerHabit;
       map[d] = denominator > 0 ? score / denominator : 0;
@@ -180,7 +160,10 @@ export default function MonthViewScreen() {
   if (
     habitsLoading ||
     ((recordsLoading || vacationLoading) && !isOffline) ||
-    (isOffline && habits.length === 0)
+    // hasLoaded, not habits.length: an account CONFIRMED empty keeps its
+    // normal empty state (with its setup affordances) when the device goes
+    // offline — only "offline before anything ever loaded" waits here.
+    (isOffline && !hasLoaded)
   ) {
     return <LoadingScreen message={isOffline ? 'Waiting for connection...' : undefined} />;
   }

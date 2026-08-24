@@ -1,17 +1,18 @@
 /**
- * Earned quotes — the quote-of-the-milestone collection. Every
- * QUOTE_EVERY_N_DAYS distinct days of app use (counted after setup, i.e. once
- * the account has habits) the wanderer earns the NEXT quote in this list.
- * Sequential, not random: everyone walks the same road of quotes in the same
- * order, one per milestone. If the list runs out it loops back to the start,
- * so keep adding quotes faster than one per ten days of real use.
+ * Bonus quotes, surfaced one at a time. Every QUOTE_EVERY_N_DAYS distinct
+ * days of app use (counted after setup, i.e. once the account has habits) the
+ * NEXT quote in this list is shown, once. Sequential, not random, so everyone
+ * sees the same quotes in the same order. If the list runs out it loops back
+ * to the start, so keep adding quotes faster than one per ten days of real
+ * use. These are a small gift of useful words, NOT an achievement system —
+ * present them bare (see earned-quote-modal), never with congratulation copy.
  */
 export type EarnedQuote = {
   text: string;
   source: string;
 };
 
-/** Distinct active days between quote unlocks. */
+/** Distinct active days between quotes. */
 export const QUOTE_EVERY_N_DAYS = 10;
 
 export const EARNED_QUOTES: EarnedQuote[] = [

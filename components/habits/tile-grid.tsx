@@ -5,6 +5,7 @@ import { Colors } from '@/constants/theme';
 import { GRID } from '@/constants/grid';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { TileContent } from './tile-content';
+import { isRecordCompleted } from '@/lib/habit-scoring';
 import type { Habit, HabitRecord } from '@/types/habit';
 
 type TileGridProps = {
@@ -41,12 +42,9 @@ const MeasuredTile = memo(function MeasuredTile({
     setTileH(e.nativeEvent.layout.height);
   }, []);
 
-  const isRecorded =
-    record != null &&
-    record.value !== false &&
-    record.value !== 'no' &&
-    record.value !== 0 &&
-    record.value !== '';
+  // Through the shared completion table — an inline truthy check here is how
+  // the value-mode "0" bug shipped (string "0" passed !== 0 and !== '').
+  const isRecorded = isRecordCompleted(habit, record);
 
   return (
     <Pressable

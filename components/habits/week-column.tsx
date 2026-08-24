@@ -5,8 +5,9 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { formatDate } from '@/lib/date-utils';
 import { readableTextOn } from '@/lib/contrast';
-import type { Habit, HabitRecord, TripleValue, QuadValue, VacationDay } from '@/types/habit';
+import type { Habit, HabitRecord, VacationDay } from '@/types/habit';
 import type { SuccessColors } from '@/hooks/use-success-colors';
+import { recordLevel } from '@/lib/habit-scoring';
 
 type WeekColumnProps = {
   date: Date;
@@ -25,26 +26,16 @@ function getStateColor(
   record: HabitRecord | undefined,
   successColors: SuccessColors,
 ): string {
-  if (!record) return successColors.unrecorded;
-  switch (habit.recordingMode) {
-    case 'boolean':
-      return (record.value !== false && record.value !== 'no') ? successColors.recorded : successColors.unrecorded;
-    case 'triple': {
-      const v = record.value as TripleValue;
-      return v === 'double' ? successColors.double : v === 'yes' ? successColors.recorded : successColors.unrecorded;
-    }
-    case 'steps':
-    case 'meditation':
-    case 'creativeWriting':
-    case 'quad': {
-      const q = record.value as QuadValue;
-      return q === 'ideal' ? successColors.triple : q === 'goal' ? successColors.double : q === 'yes' ? successColors.recorded : successColors.unrecorded;
-    }
-    case 'counter':
-      return (record.value as number) > 0 ? successColors.recorded : successColors.unrecorded;
-    case 'value':
-      return (record.value as string) ? successColors.recorded : successColors.unrecorded;
-  }
+  // The four success colors are exactly recordLevel's 0-3 scale — derive
+  // instead of re-encoding the mode→tier table (which is how the value-mode
+  // "0" rule had to be patched here separately).
+  const byLevel = [
+    successColors.unrecorded,
+    successColors.recorded,
+    successColors.double,
+    successColors.triple,
+  ] as const;
+  return byLevel[recordLevel(habit, record)] ?? successColors.unrecorded;
 }
 
 export function WeekColumn({ date, isToday, habits, records, onTapHabit, successColors, vacation }: WeekColumnProps) {

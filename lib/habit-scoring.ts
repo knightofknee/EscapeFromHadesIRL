@@ -12,6 +12,23 @@ export function isTieredMode(mode: RecordingMode): boolean {
 export type CompletionChecker = (habit: Habit, record?: HabitRecord) => boolean;
 
 /**
+ * Is a free-form value entry actually recorded? Value habits store the raw
+ * string, and users treat them as tallies they increment through the day —
+ * so "0" (or "0.0", or a cleared field) means "back to nothing", not "done".
+ * A string is unrecorded when it's empty or parses to exactly zero;
+ * non-numeric text (e.g. "skipped early") still counts as an entry. Every
+ * value-mode completion check must route through here — a bare truthiness
+ * test reads the string "0" as done.
+ */
+export function isValueRecorded(v: unknown): boolean {
+  if (v == null) return false;
+  const str = String(v).trim();
+  if (str === '') return false;
+  const n = Number(str);
+  return Number.isNaN(n) || n !== 0;
+}
+
+/**
  * Success level of a record on ONE unified 0-3 scale across every recording
  * mode: 0 none, 1 basic, 2 goal (triple's "double"), 3 ideal. A boolean
  * habit tops out at 1, a triple at 2, quad-family habits reach 3. This is
@@ -35,7 +52,7 @@ export function recordLevel(habit: Habit, record?: HabitRecord): number {
     case 'counter':
       return (v as number) > 0 ? 1 : 0;
     case 'value':
-      return v ? 1 : 0;
+      return isValueRecorded(v) ? 1 : 0;
     default:
       return 0;
   }

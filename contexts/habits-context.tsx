@@ -28,6 +28,14 @@ type HabitsContextValue = {
   habits: Habit[];
   isLoading: boolean;
   isOffline: boolean;
+  /**
+   * True once THIS account's listener has delivered a real snapshot this
+   * session. Distinguishes "no habits loaded yet" (offline before first
+   * delivery — show the connection-wait treatment) from "account confirmed
+   * empty" (show the normal empty state with its setup affordances even
+   * if the device then goes offline).
+   */
+  hasLoaded: boolean;
   createHabit: (
     habit: Omit<Habit, 'id' | 'userId' | 'createdAt' | 'updatedAt'>,
   ) => Promise<Habit | undefined>;
@@ -41,6 +49,7 @@ const HabitsContext = createContext<HabitsContextValue>({
   habits: [],
   isLoading: true,
   isOffline: false,
+  hasLoaded: false,
   createHabit: async () => undefined,
   updateHabit: async () => {},
   archiveHabit: async () => {},
@@ -62,10 +71,12 @@ export function HabitsProvider({ children }: { children: ReactNode }) {
   const [habits, setHabits] = useState<Habit[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   useEffect(() => {
     if (!user) {
       setHabits([]);
+      setHasLoaded(false);
       // Signed out — or auth still restoring on cold start. Stay "loading"
       // so screens don't flash their empty states in the gap before the
       // user arrives; the auth gate owns all signed-out UI.
@@ -76,6 +87,7 @@ export function HabitsProvider({ children }: { children: ReactNode }) {
 
     // User changed: anything held is stale until the first snapshot.
     setIsLoading(true);
+    setHasLoaded(false);
 
     const q = query(
       collection(db, 'habits'),
@@ -101,6 +113,9 @@ export function HabitsProvider({ children }: { children: ReactNode }) {
         });
         setHabits(data);
         setIsLoading(false);
+        // Real delivery (subscribeWithOfflineState suppresses the empty
+        // cache-only snapshot, so this is server truth or cached truth).
+        setHasLoaded(true);
       },
       {
         onError: (error) => {
@@ -183,13 +198,14 @@ export function HabitsProvider({ children }: { children: ReactNode }) {
       habits,
       isLoading,
       isOffline,
+      hasLoaded,
       createHabit,
       updateHabit,
       archiveHabit,
       reviveHabit,
       deleteHabit,
     }),
-    [habits, isLoading, isOffline, createHabit, updateHabit, archiveHabit, reviveHabit, deleteHabit],
+    [habits, isLoading, isOffline, hasLoaded, createHabit, updateHabit, archiveHabit, reviveHabit, deleteHabit],
   );
 
   return <HabitsContext.Provider value={value}>{children}</HabitsContext.Provider>;

@@ -69,6 +69,34 @@ export async function clearTimerState(habitId: string): Promise<void> {
   }
 }
 
+/**
+ * Every persisted timer slot, across all habits. The alarm watcher needs this
+ * because it runs app-wide: a timer that finished while the meditation modal
+ * was closed (or the app was killed) has no component to notice it, so the
+ * watcher sweeps every slot on foreground instead.
+ */
+export async function listAllTimerStates(): Promise<PersistedTimerState[]> {
+  try {
+    const keys = await AsyncStorage.getAllKeys();
+    const mine = keys.filter((k) => k.startsWith(KEY_PREFIX));
+    if (mine.length === 0) return [];
+    const pairs = await AsyncStorage.multiGet(mine);
+    const out: PersistedTimerState[] = [];
+    for (const [, raw] of pairs) {
+      if (!raw) continue;
+      try {
+        out.push(JSON.parse(raw) as PersistedTimerState);
+      } catch {
+        // One corrupt slot shouldn't hide the others.
+      }
+    }
+    return out;
+  } catch (e) {
+    console.error('listAllTimerStates failed:', e);
+    return [];
+  }
+}
+
 /** Remove every persisted timer slot (all habits). Used on sign-out/account
  *  deletion so no in-flight timer leaks to the next session. */
 export async function clearAllTimerState(): Promise<void> {

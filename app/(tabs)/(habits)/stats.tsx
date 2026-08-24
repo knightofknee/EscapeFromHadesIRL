@@ -224,7 +224,7 @@ function HabitStatsSection({ habit, recordIndex, vacationSet, winOnlyWeekends }:
 // --- Main screen ---
 
 export default function StatsScreen() {
-  const { habits, isLoading: habitsLoading, isOffline } = useHabits();
+  const { habits, isLoading: habitsLoading, isOffline, hasLoaded } = useHabits();
   const { dateSet: vacationSet, isLoading: vacationLoading } = useVacationDays();
   const { winOnlyWeekends } = useWinOnlyWeekends();
   const colorScheme = useColorScheme();
@@ -297,7 +297,10 @@ export default function StatsScreen() {
   if (
     habitsLoading ||
     ((recordsLoading || vacationLoading) && !isOffline) ||
-    (isOffline && habits.length === 0)
+    // hasLoaded, not habits.length: an account CONFIRMED empty keeps its
+    // normal empty state (with its setup affordances) when the device goes
+    // offline — only "offline before anything ever loaded" waits here.
+    (isOffline && !hasLoaded)
   ) {
     return <LoadingScreen message={isOffline ? 'Waiting for connection...' : undefined} />;
   }

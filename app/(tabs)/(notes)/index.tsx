@@ -241,11 +241,13 @@ export default function NotesListScreen() {
         }
         ListEmptyComponent={
           <View style={styles.empty}>
-            {/* Offline with nothing loaded keeps the loading treatment (plus
-                a note) — the listener retries on its own and the list fills
-                in when service returns. Filtered searches skip it: those run
-                over already-loaded notes. */}
-            {isLoading || (isOffline && !searchQuery && !selectedTagId) ? (
+            {/* Offline BEFORE anything ever loaded keeps the loading
+                treatment (plus a note) — the listener retries on its own and
+                the list fills in when service returns. A confirmed-empty list
+                that then goes offline shows the normal empty text instead.
+                Filtered searches skip it: those run over already-loaded
+                notes. */}
+            {isLoading || (isOffline && !hasLoadedOnce && !searchQuery && !selectedTagId) ? (
               <>
                 <ActivityIndicator size="large" color={colors.tint} />
                 {isOffline ? (

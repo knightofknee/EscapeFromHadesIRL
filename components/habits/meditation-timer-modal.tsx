@@ -19,14 +19,15 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { persistHabitRecord } from '@/lib/persist-record';
 import {
-  computeMeditationTier,
   formatTimerDuration,
   getMeditationQualifyingCount,
+  shouldRingInApp,
 } from '@/lib/meditation';
 import {
   cancelMeditationAlarm,
   scheduleMeditationAlarm,
 } from '@/lib/meditation-notifications';
+import { buildMeditationRecord, requestMeditationSweep } from '@/lib/meditation-completion';
 import { startActivity, endActivity } from '@/modules/meditation-activity';
 import {
   clearTimerState,
@@ -38,10 +39,29 @@ import {
 import { useTodayDate } from '@/hooks/use-today-date';
 import type { Habit, HabitRecord, MeditationSession } from '@/types/habit';
 
-// Bundled chime (also registered as the notification sound in app.json). The
-// asset carries ~1.4s of trailing silence so looping it re-rings every ~2.7s.
+// Bundled chime (also registered as the notification sound in app.json). A
+// single soft bowl strike with ~1.4s of trailing silence, so looping it
+// re-rings about every 5.6s — a reminder, not a nag.
 const BELL_SOUND = require('../../assets/bell.wav');
 const KEEP_AWAKE_TAG = 'meditation-timer';
+
+/** Length of bell.wav, strike through trailing silence — the loop period. */
+const BELL_LOOP_MS = 5600;
+
+/**
+ * How many times the bell rings before it gives up and goes quiet on its own.
+ * A meditation bell marks the end and stops; it doesn't nag you out of the
+ * state you just spent twenty minutes getting into. The takeover stays up
+ * afterwards, so nothing is missed by not hearing ring four.
+ */
+const MAX_RINGS = 3;
+
+/**
+ * 'ringing' — finished just now, with the user here: bell + buzz + takeover.
+ * 'silent'  — finished while we were away: the takeover says so, quietly.
+ * 'off'     — no takeover.
+ */
+type AlarmMode = 'off' | 'ringing' | 'silent';
 
 type MeditationTimerModalProps = {
   visible: boolean;
@@ -66,11 +86,21 @@ type MeditationTimerModalProps = {
  * - Day-cross attribution: the persisted state records the START day, and
  *   the resulting session logs to that day even if completion happens
  *   after midnight.
- * - Day rollover: a stale persisted state from a previous local day is
- *   discarded on load (and any pending completion is logged to its start
- *   day before clearing), so users start each day with a fresh timer.
+ * - Day rollover: a stale persisted state from a previous local day shows as
+ *   a fresh timer on load, so users start each day clean; the watcher does
+ *   the actual clearing (and logs it first if it had finished).
  * - AppState 'active' re-syncs the visible modal from AsyncStorage so
  *   backgrounded completions land immediately when the user reopens.
+ * - The in-app alarm only rings for a completion the user was present for.
+ *   Coming back to a timer that ended while you were away shows the takeover
+ *   silently instead of greeting you with a bell you have to hunt down.
+ * - Writing the finished session is NOT this component's job. A run can
+ *   belong to a different day than the one this sheet is showing (it crossed
+ *   midnight, or the sheet was opened on a past date), and the record write
+ *   replaces a whole day's sessions — so the day's existing sessions have to
+ *   come from the run's own date, which only the app-wide watcher looks up.
+ *   The modal notices a run ending, shows it, and asks the watcher to settle:
+ *   see components/habits/meditation-alarm-watcher.
  */
 export function MeditationTimerModal({
   visible,
@@ -88,7 +118,6 @@ export function MeditationTimerModal({
 
   const targetSessions = habit?.meditationSessions ?? 1;
   const targetMinutes = habit?.meditationMinutes ?? 5;
-  const idealTotalMinutes = habit?.meditationIdealTotalMinutes;
   const defaultDurationSec = targetMinutes * 60;
 
   // Timer state. `totalSec` = the configured run length (editable when idle).
@@ -97,14 +126,10 @@ export function MeditationTimerModal({
   const [remainingSec, setRemainingSec] = useState<number>(defaultDurationSec);
   const [running, setRunning] = useState<boolean>(false);
   const startRef = useRef<{ at: number; remainingAtStart: number } | null>(null);
-  // startedAt of the run whose completion has already been logged. The tick
-  // path and the resync paths (modal open / app foreground) can all observe
-  // the same completion before clearTimerState lands — without this guard
-  // the same session gets appended twice.
-  const loggedCompletionRef = useRef<number | null>(null);
-  // Day-cross attribution: the START day for the active timer. Sessions get
-  // logged to this date even if completion happens after midnight.
-  const activeDateRef = useRef<string>(date);
+  // startedAt of the run whose "time's up" takeover has already been shown, so
+  // a resync landing after the user dismissed it doesn't put it back. Not a
+  // write guard — the watcher owns writing, and claimCompletion guards that.
+  const surfacedCompletionRef = useRef<number | null>(null);
   // Currently-scheduled completion notification id (so we can cancel on
   // pause/reset).
   const notificationIdRef = useRef<string | null>(null);
@@ -125,13 +150,9 @@ export function MeditationTimerModal({
   // this screen open we ring the bell on a loop and buzz until the user taps
   // to dismiss — see the tick effect and the takeover overlay below.
   const player = useAudioPlayer(BELL_SOUND);
-  const [alarming, setAlarming] = useState<boolean>(false);
+  const [alarmMode, setAlarmMode] = useState<AlarmMode>('off');
+  const alarming = alarmMode === 'ringing';
   const [helpVisible, setHelpVisible] = useState<boolean>(false);
-
-  // Ring on silent too — an alarm the ringer switch can mute defeats the point.
-  useEffect(() => {
-    setAudioModeAsync({ playsInSilentMode: true }).catch(() => {});
-  }, []);
 
   // Keep the screen awake ONLY while a countdown is actively running (or the
   // alarm is ringing) with this screen open — never while idle or paused.
@@ -144,81 +165,94 @@ export function MeditationTimerModal({
   }, [visible, running, alarming]);
 
   // Drive the ringing alarm: loop the bell (its trailing silence makes it
-  // re-ring every ~2.7s) and repeat the vibration until `alarming` clears.
+  // re-ring every ~5.6s) and repeat the vibration until the alarm clears.
+  // The audio mode is set here rather than on mount: it's a global session
+  // change, and claiming playback for the whole app just because a habits
+  // screen rendered would pause whatever the user is listening to.
   useEffect(() => {
     if (!alarming) return;
+    // Ring on silent too (an alarm the ringer switch mutes defeats the point),
+    // but duck other audio rather than stopping it — the user may well be
+    // meditating to something.
+    setAudioModeAsync({ playsInSilentMode: true, interruptionMode: 'duckOthers' }).catch(
+      () => {},
+    );
     player.loop = true;
     player.seekTo(0).catch(() => {});
     player.play();
-    Vibration.vibrate([0, 600, 400, 600], true);
+    Vibration.vibrate([0, 220, 380, 220], true);
+    // Said its piece. Go quiet, but keep the takeover up so they still find
+    // out what happened whenever they do look.
+    const giveUp = setTimeout(() => setAlarmMode('silent'), MAX_RINGS * BELL_LOOP_MS);
     return () => {
+      clearTimeout(giveUp);
       player.pause();
       Vibration.cancel();
+      setAudioModeAsync({ playsInSilentMode: false, interruptionMode: 'mixWithOthers' }).catch(
+        () => {},
+      );
     };
   }, [alarming, player]);
 
-  // Closing the modal silences any active alarm.
+  // Leaving stops the alarm: closing the sheet, and backgrounding the app.
+  // The bell is a foreground affordance — once the app is gone the scheduled
+  // notification is what alerts the user, and a bell that kept looping (or
+  // resumed on return) would be exactly the alarm-you-can't-stop problem.
   useEffect(() => {
-    if (!visible) setAlarming(false);
+    if (!visible) setAlarmMode('off');
   }, [visible]);
 
-  const stopAlarm = useCallback(() => setAlarming(false), []);
+  // Locking the phone (or swiping home) backgrounds us, and that silences the
+  // bell — the closest thing we get to the power button stopping an alarm.
+  // Strictly 'background', NOT '!== active': iOS reports 'inactive' for a
+  // banner or a half-pulled Control Center, and our own completion
+  // notification arrives at the same instant the bell starts, so the looser
+  // check risked killing the alarm the moment it began.
+  useEffect(() => {
+    if (alarmMode === 'off') return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'background') setAlarmMode('off');
+    });
+    return () => sub.remove();
+  }, [alarmMode]);
+
+  const stopAlarm = useCallback(() => setAlarmMode('off'), []);
 
   const sessions = record?.sessions ?? [];
   const qualifying = getMeditationQualifyingCount(sessions, targetMinutes);
 
-  // persistSession can fire from the tick interval, whose closure is frozen
-  // at run start — a session logged or removed DURING the run would be
-  // clobbered by a completion write built on the pre-run list. Read the
-  // latest record through a ref instead of the closure.
+  // persistSession runs from the Log Session prompt, whose closure can be a
+  // render behind — a session logged or removed in between would be clobbered
+  // by a write built on the stale list. Read the latest record through a ref.
   const recordRef = useRef(record);
   useEffect(() => {
     recordRef.current = record;
   });
 
+  // Manual logs are always attributed to the modal's viewed date — a user
+  // action *for that day*, no cross-midnight logic. (Timer completions go
+  // through the watcher, not here.)
   const persistSession = useCallback(
-    async (newSession: MeditationSession, sessionDate: string) => {
+    async (newSession: MeditationSession) => {
       if (!habit) return;
       const existing = recordRef.current?.sessions ?? [];
-      const nextSessions = [...existing, newSession];
-      const value = computeMeditationTier(nextSessions, targetSessions, targetMinutes, idealTotalMinutes);
-      const docId = `${habit.id}_${sessionDate}`;
-      const next: HabitRecord = {
-        id: docId,
-        habitId: habit.id,
-        userId,
-        date: sessionDate,
-        value,
-        recordedAt: Date.now(),
-        sessions: nextSessions,
-      };
-      await persistHabitRecord(next, {
-        errorMessage: "Couldn't save your meditation session. Tap Retry.",
-      });
+      await persistHabitRecord(
+        buildMeditationRecord(habit, userId, date, [...existing, newSession]),
+        { errorMessage: "Couldn't save your meditation session. Tap Retry." },
+      );
     },
-    [habit, targetSessions, targetMinutes, idealTotalMinutes, userId],
+    [habit, userId, date],
   );
 
   const removeSession = useCallback(
     async (index: number) => {
       if (!habit) return;
-      const nextSessions = sessions.filter((_, i) => i !== index);
-      const value = computeMeditationTier(nextSessions, targetSessions, targetMinutes, idealTotalMinutes);
-      const docId = `${habit.id}_${date}`;
-      const next: HabitRecord = {
-        id: docId,
-        habitId: habit.id,
-        userId,
-        date,
-        value,
-        recordedAt: Date.now(),
-        sessions: nextSessions,
-      };
-      await persistHabitRecord(next, {
-        errorMessage: "Couldn't update your meditation sessions. Tap Retry.",
-      });
+      await persistHabitRecord(
+        buildMeditationRecord(habit, userId, date, sessions.filter((_, i) => i !== index)),
+        { errorMessage: "Couldn't update your meditation sessions. Tap Retry." },
+      );
     },
-    [habit, sessions, targetSessions, targetMinutes, idealTotalMinutes, userId, date],
+    [habit, sessions, userId, date],
   );
 
   // Re-sync UI state from whatever's in AsyncStorage. Handles: fresh state,
@@ -229,15 +263,17 @@ export function MeditationTimerModal({
     if (!habit) return;
     const persisted = await loadTimerState(habit.id);
 
+    // Deliberately does NOT touch the alarm. The watcher clears the slot of a
+    // run that just finished, so a resync landing behind it finds nothing —
+    // and used to reset straight over the takeover the user was still reading,
+    // which is why "Time's up" only ever flashed up for a moment.
     const resetFresh = () => {
       setTotalSec(defaultDurationSec);
       setRemainingSec(defaultDurationSec);
       setRunning(false);
-      setAlarming(false);
       startRef.current = null;
       notificationIdRef.current = null;
       activityIdRef.current = null;
-      activeDateRef.current = date;
     };
 
     if (!persisted) {
@@ -245,78 +281,63 @@ export function MeditationTimerModal({
       return;
     }
 
-    if (isStaleForDay(persisted, todayStr)) {
-      // Yesterday's timer (or older). If it completed offline, log the
-      // session to its start day, then clear and show today fresh.
-      if (persisted.startedAt != null) {
-        const remaining = computeRemainingSec(persisted, Date.now());
-        if (remaining === 0 && loggedCompletionRef.current !== persisted.startedAt) {
-          loggedCompletionRef.current = persisted.startedAt;
-          await persistSession(
-            {
-              durationSec: persisted.totalSec,
-              source: 'timer',
-              loggedAt: Date.now(),
-            },
-            persisted.date,
-          );
-        }
-      }
-      await cancelMeditationAlarm(persisted.notificationId);
-      await endActivity(persisted.activityId);
-      await clearTimerState(habit.id);
-      resetFresh();
+    // STILL RUNNING wins over everything, including staleness: a run started
+    // at 11:50pm is legitimately mid-flight after midnight and must keep its
+    // alarm, its Live Activity, and its slot — it finishes normally and the
+    // watcher logs it to its start day. Only non-running leftovers roll over.
+    const remaining =
+      persisted.startedAt != null ? computeRemainingSec(persisted, Date.now()) : null;
+    if (remaining != null && remaining > 0) {
+      notificationIdRef.current = persisted.notificationId;
+      // The activity is alive and self-ticking — nothing to recreate.
+      activityIdRef.current = persisted.activityId ?? null;
+      setTotalSec(persisted.totalSec);
+      setRemainingSec(remaining);
+      startRef.current = {
+        at: persisted.startedAt!,
+        remainingAtStart: persisted.remainingAtStart,
+      };
+      setRunning(true);
       return;
     }
 
-    // Same-day persisted state.
+    if (isStaleForDay(persisted, todayStr)) {
+      // A finished or paused leftover from a previous day. Show today fresh
+      // and let the watcher deal with it — a finished one logs to its own
+      // day, a paused one is dropped (start each day fresh). No takeover:
+      // "time's up" about yesterday helps nobody.
+      resetFresh();
+      requestMeditationSweep();
+      return;
+    }
+
+    // Same-day, not running.
     notificationIdRef.current = persisted.notificationId;
-    // Restore the running Live Activity's id so we can end it later. If still
-    // running, the activity is alive and self-ticking — nothing to recreate.
     activityIdRef.current = persisted.activityId ?? null;
-    activeDateRef.current = persisted.date;
     setTotalSec(persisted.totalSec);
 
     if (persisted.startedAt != null) {
-      // Was running when last saved. May have completed while we were away.
-      const remaining = computeRemainingSec(persisted, Date.now());
-      if (remaining === 0) {
-        if (loggedCompletionRef.current !== persisted.startedAt) {
-          loggedCompletionRef.current = persisted.startedAt;
-          await persistSession(
-            {
-              durationSec: persisted.totalSec,
-              source: 'timer',
-              loggedAt: Date.now(),
-            },
-            persisted.date,
-          );
-        }
-        await cancelMeditationAlarm(persisted.notificationId);
-        await endActivity(persisted.activityId);
-        await clearTimerState(habit.id);
-        setRemainingSec(persisted.totalSec);
-        setRunning(false);
-        startRef.current = null;
-        notificationIdRef.current = null;
-        activityIdRef.current = null;
-        activeDateRef.current = date;
-      } else {
-        // Still running — restore the tick anchor.
-        setRemainingSec(remaining);
-        startRef.current = {
-          at: persisted.startedAt,
-          remainingAtStart: persisted.remainingAtStart,
-        };
-        setRunning(true);
+      // Finished while the app was away. Show the takeover so the user
+      // learns their session was recorded, but silently — this is a report,
+      // not an alarm going off in their hand. Surfaced once per run, so
+      // dismissing it doesn't bring it back on the next resync.
+      if (surfacedCompletionRef.current !== persisted.startedAt) {
+        surfacedCompletionRef.current = persisted.startedAt;
+        setAlarmMode((prev) => (prev === 'off' ? 'silent' : prev));
       }
+      requestMeditationSweep();
+      setRemainingSec(persisted.totalSec);
+      setRunning(false);
+      startRef.current = null;
+      notificationIdRef.current = null;
+      activityIdRef.current = null;
     } else {
       // Paused.
       setRemainingSec(persisted.remainingAtStart);
       setRunning(false);
       startRef.current = null;
     }
-  }, [habit, todayStr, defaultDurationSec, date, persistSession]);
+  }, [habit, todayStr, defaultDurationSec]);
 
   // Sync on open.
   useEffect(() => {
@@ -345,40 +366,34 @@ export function MeditationTimerModal({
       const next = Math.max(0, s.remainingAtStart - Math.floor(elapsedMs / 1000));
       setRemainingSec(next);
       if (next === 0) {
-        // Natural completion. The session is logged to activeDateRef
-        // (the start day), so cross-midnight runs attribute correctly.
         clearInterval(id);
         setRunning(false);
-        // Claim this run's completion before the async log so a foreground
-        // resync racing the write can't log it again.
-        loggedCompletionRef.current = s.at;
+        surfacedCompletionRef.current = s.at;
         startRef.current = null;
-        if (Platform.OS === 'ios' && !Platform.isPad) {
+
+        // Did we watch this land, or is the interval just catching up after
+        // the app was suspended?
+        const live = shouldRingInApp(
+          s.at + s.remainingAtStart * 1000,
+          Date.now(),
+          AppState.currentState === 'active',
+        );
+
+        if (live && Platform.OS === 'ios' && !Platform.isPad) {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         }
-        // Ring the in-app alarm (bell + repeating buzz + full-screen takeover)
-        // until the user taps to dismiss.
-        setAlarming(true);
-        const sessionDate = activeDateRef.current;
-        const sessionTotal = totalSec;
-        const fireId = notificationIdRef.current;
-        const activeId = activityIdRef.current;
-        void (async () => {
-          await persistSession(
-            { durationSec: sessionTotal, source: 'timer', loggedAt: Date.now() },
-            sessionDate,
-          );
-          // The notification may fire ~simultaneously — cancelling is a
-          // no-op if it already did. Clearing persisted state prevents
-          // double-logging on next open.
-          await cancelMeditationAlarm(fireId);
-          // End the lock-screen Live Activity (it would otherwise freeze at
-          // 00:00). The in-app alarm + notification handle the "done" signal.
-          await endActivity(activeId);
-          if (habit) await clearTimerState(habit.id);
-          notificationIdRef.current = null;
-          activityIdRef.current = null;
-        })();
+        // Ring (bell + buzz + takeover) only when the user is here for it;
+        // otherwise the takeover appears silently.
+        setAlarmMode(live ? 'ringing' : 'silent');
+
+        // Hand off to the watcher, which logs the session against the run's
+        // own date, cancels the notification (a no-op if it already fired
+        // alongside this), ends the Live Activity that would otherwise sit
+        // frozen at 00:00, and clears the persisted slot. Our copies of those
+        // ids are done either way.
+        notificationIdRef.current = null;
+        activityIdRef.current = null;
+        requestMeditationSweep();
         // Reset display ready for another run.
         setRemainingSec(totalSec);
       }
@@ -402,12 +417,11 @@ export function MeditationTimerModal({
       const now = Date.now();
       const remainAtStart = remainingSec;
       startRef.current = { at: now, remainingAtStart: remainAtStart };
-      activeDateRef.current = date;
       setRunning(true);
 
       // Schedule completion alarm (best-effort; null if perms denied).
       const endTime = new Date(now + remainAtStart * 1000);
-      const newId = await scheduleMeditationAlarm(endTime, habit.name);
+      const newId = await scheduleMeditationAlarm(endTime, habit.name, habit.id);
       notificationIdRef.current = newId;
 
       // Start the lock-screen / Dynamic Island Live Activity (best-effort: null
@@ -482,12 +496,7 @@ export function MeditationTimerModal({
       setLogModalVisible(false);
       return;
     }
-    // Manual logs are always attributed to the modal's viewed date — they're
-    // a user action *for that day*, not tied to any cross-midnight clock.
-    void persistSession(
-      { durationSec: mins * 60, source: 'manual', loggedAt: Date.now() },
-      date,
-    );
+    void persistSession({ durationSec: mins * 60, source: 'manual', loggedAt: Date.now() });
     if (Platform.OS === 'ios' && !Platform.isPad) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     }
@@ -698,17 +707,22 @@ export function MeditationTimerModal({
       </Pressable>
 
       {/* Full-screen "time's up" takeover — covers the sheet while the alarm
-          rings. Any tap silences it. */}
-      {alarming && (
+          rings, and stands in quietly for a session that finished while the
+          app was away. Any tap dismisses it. */}
+      {alarmMode !== 'off' && (
         <Pressable
           style={[styles.alarmOverlay, { backgroundColor: tint }]}
           onPress={stopAlarm}
           accessibilityRole="button"
-          accessibilityLabel="Time's up. Tap to stop the alarm."
+          accessibilityLabel={
+            alarming ? "Time's up. Tap to stop the alarm." : "Time's up. Tap to dismiss."
+          }
         >
           <ThemedText style={styles.alarmTitle}>Time’s up</ThemedText>
           <ThemedText style={styles.alarmHabit}>{habit.name}</ThemedText>
-          <ThemedText style={styles.alarmHint}>Tap anywhere to stop</ThemedText>
+          <ThemedText style={styles.alarmHint}>
+            {alarming ? 'Tap anywhere to stop' : 'Session saved. Tap anywhere to dismiss'}
+          </ThemedText>
         </Pressable>
       )}
 
@@ -732,7 +746,8 @@ export function MeditationTimerModal({
               can ring a bell when the time’s up. Tap the screen to silence it.
               {'\n\n'}
               If you leave this screen or lock your phone, the timer keeps running, but we
-              can only alert you with a local notification (a short repeating chime) when it ends.
+              can only alert you with a notification when it ends. Coming back afterwards
+              shows you the finished session instead of ringing at you.
             </ThemedText>
             <Pressable
               style={[styles.primary, { backgroundColor: tint, alignSelf: 'stretch' }]}
@@ -864,21 +879,28 @@ const styles = StyleSheet.create({
   },
   alarmTitle: {
     fontSize: 40,
+    // ThemedText's base style sets lineHeight: 24 — without an override that
+    // wins, a 40pt line gets clipped to 24pt and the word loses its top and
+    // bottom. Same reason timerText carries one.
+    lineHeight: 48,
     fontWeight: '800',
     color: '#fff',
     textAlign: 'center',
   },
   alarmHabit: {
     fontSize: 20,
+    lineHeight: 28,
     fontWeight: '600',
     color: '#fff',
     textAlign: 'center',
   },
   alarmHint: {
     fontSize: 15,
+    lineHeight: 21,
     color: '#fff',
     opacity: 0.85,
     marginTop: 8,
+    textAlign: 'center',
   },
   subdued: {
     fontSize: 12,
