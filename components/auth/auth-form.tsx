@@ -326,7 +326,9 @@ export function AuthForm({
               {/* SSO divider */}
               <View style={styles.dividerRow}>
                 <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-                <Text style={[styles.dividerText, { color: colors.subtle }]}>or sign in with</Text>
+                <Text style={[styles.dividerText, { color: colors.subtle }]}>
+                  {mode === 'sign-in' ? 'or sign in with' : 'or sign up with'}
+                </Text>
                 <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
               </View>
 
