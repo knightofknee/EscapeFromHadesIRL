@@ -2,7 +2,7 @@
   "expo": {
     "name": "Escape from Hades IRL",
     "slug": "EscapeFromHadesIRL",
-    "version": "1.0.19",
+    "version": "1.0.21",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "escapefromhadesirl",
@@ -20,7 +20,7 @@
       "entitlements": {
         "com.apple.developer.usernotifications.time-sensitive": true
       },
-      "buildNumber": "3"
+      "buildNumber": "5"
     },
     "android": {
       "adaptiveIcon": {
@@ -89,7 +89,8 @@
       [
         "expo-audio",
         {
-          "microphonePermission": false
+          "microphonePermission": false,
+          "enableBackgroundPlayback": false
         }
       ],
       "@bacons/apple-targets",

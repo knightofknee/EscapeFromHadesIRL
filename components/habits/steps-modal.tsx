@@ -16,9 +16,31 @@ import { computeStepsLevel, levelForStepsQuad } from '@/lib/steps';
 import {
   getStepsForDay,
   isStepsHealthAvailable,
+  openStepsHealthSettings,
   requestStepsPermission,
 } from '@/lib/steps-health';
 import type { Habit, HabitRecord } from '@/types/habit';
+
+// Walkthrough for turning steps access back on after it was denied. iOS
+// never re-shows its one-shot sheet, so the Health app is the only path;
+// Health Connect keeps permissions in its own settings screen. The lines
+// describe what to do AFTER the open button below them.
+const HEALTH_SETTINGS_BUTTON = Platform.OS === 'android' ? 'Open Health Connect' : 'Open Health';
+const HEALTH_SETTINGS_STEPS =
+  Platform.OS === 'android'
+    ? [
+        'Tap App permissions.',
+        'Tap Escape from Hades IRL.',
+        'Turn on Steps.',
+        'Come back here and tap Refresh.',
+      ]
+    : [
+        'Tap your profile picture at the top right.',
+        'Tap Apps, under Privacy.',
+        'Tap Escape from Hades IRL.',
+        'Turn on Steps.',
+        'Come back here and tap Refresh.',
+      ];
 
 type StepsModalProps = {
   visible: boolean;
@@ -60,6 +82,9 @@ export function StepsModal({
   // callbacks' deps (and trips the React Compiler's memoization check).
   const goals = useMemo(() => habit?.stepGoals ?? [], [habit]);
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
+  // "Not seeing your steps?" disclosure in the ready-with-0 state. A zero
+  // count is innocent every morning, so the walkthrough hides behind a tap.
+  const [showSettingsHelp, setShowSettingsHelp] = useState(false);
 
   const persist = useCallback(
     async (steps: number) => {
@@ -154,9 +179,10 @@ export function StepsModal({
 
   const habitId = habit?.id;
 
-  // On open: run the check.
+  // On open: run the check (and re-collapse the settings walkthrough).
   useEffect(() => {
     if (!visible || !habitId) return;
+    setShowSettingsHelp(false);
     void runCheckRef.current();
   }, [visible, habitId]);
 
@@ -190,6 +216,32 @@ export function StepsModal({
         ? record.steps
         : null;
   const currentLevel = levelForStepsQuad(record?.value);
+
+  // Shared across the needs-permission, error, and ready-with-0 states: the
+  // full "turn access back on" walkthrough plus the button it describes.
+  const settingsHelp = (
+    <View style={styles.helpBlock}>
+      <ThemedText style={styles.hint}>
+        Steps access for this app may be turned off in {healthAppName}. To turn it on, tap{' '}
+        {HEALTH_SETTINGS_BUTTON} below, then:
+      </ThemedText>
+      <View style={styles.helpSteps}>
+        {HEALTH_SETTINGS_STEPS.map((line, i) => (
+          <ThemedText key={i} style={styles.helpStep}>
+            {i + 1}. {line}
+          </ThemedText>
+        ))}
+      </View>
+      <Pressable
+        style={[styles.secondary, { borderColor: tint }]}
+        onPress={() => void openStepsHealthSettings()}
+      >
+        <ThemedText style={[styles.secondaryText, { color: tint }]}>
+          {HEALTH_SETTINGS_BUTTON}
+        </ThemedText>
+      </Pressable>
+    </View>
+  );
 
   return (
     <Modal
@@ -235,6 +287,7 @@ export function StepsModal({
                 >
                   <ThemedText style={styles.primaryText}>Connect {healthAppName}</ThemedText>
                 </Pressable>
+                {settingsHelp}
               </View>
             ) : status.kind === 'error' ? (
               <View style={styles.center}>
@@ -245,6 +298,7 @@ export function StepsModal({
                 >
                   <ThemedText style={[styles.secondaryText, { color: tint }]}>Try again</ThemedText>
                 </Pressable>
+                {settingsHelp}
               </View>
             ) : (
               // status.kind === 'ready' or 'idle' with cached record
@@ -296,6 +350,19 @@ export function StepsModal({
                     Refresh from {healthAppName}
                   </ThemedText>
                 </Pressable>
+                {/* A count stuck at 0 is how denied access looks on iOS
+                    (reads "succeed" empty) — but it's also every ordinary
+                    morning, so the recovery walkthrough sits behind a tap. */}
+                {(displaySteps ?? 0) === 0 &&
+                  (showSettingsHelp ? (
+                    settingsHelp
+                  ) : (
+                    <Pressable onPress={() => setShowSettingsHelp(true)} hitSlop={8}>
+                      <ThemedText style={[styles.helpLink, { color: tint }]}>
+                        Not seeing your steps?
+                      </ThemedText>
+                    </Pressable>
+                  ))}
               </>
             )}
           </View>
@@ -393,6 +460,28 @@ const styles = StyleSheet.create({
     opacity: 0.7,
     textAlign: 'center',
     lineHeight: 18,
+  },
+  helpBlock: {
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  helpSteps: {
+    alignSelf: 'stretch',
+    gap: 4,
+    paddingHorizontal: 8,
+  },
+  helpStep: {
+    fontSize: 13,
+    lineHeight: 18,
+    opacity: 0.8,
+  },
+  helpLink: {
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 2,
   },
   primary: {
     height: 44,

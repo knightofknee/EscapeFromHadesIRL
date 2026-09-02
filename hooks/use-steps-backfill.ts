@@ -32,6 +32,19 @@ import type { Habit, HabitRecord } from '@/types/habit';
  * unreadable health store reads every day as 0, and those fake zeros must
  * never be written or confirmed. See the trust gate in sync().
  */
+/**
+ * External sync triggers — same Set-of-listeners pattern as the error bus.
+ * The one caller today is the steps pre-prompt: the sync that ran when the
+ * habit was created got nothing (permission wasn't granted yet), and nothing
+ * else re-fires until the next foreground, so granting would leave the tile
+ * empty until the user left and came back.
+ */
+const syncListeners = new Set<() => void>();
+
+export function requestStepsSync(): void {
+  for (const listener of [...syncListeners]) listener();
+}
+
 export function useStepsBackfill() {
   const { user } = useAuth();
   const { habits } = useHabits();
@@ -207,6 +220,16 @@ export function useStepsBackfill() {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') void sync();
     });
-    return () => sub.remove();
+    // A permission grant must bypass the 30s throttle — the pre-grant sync
+    // just ran and recorded nothing.
+    const requested = () => {
+      lastSyncAtRef.current = 0;
+      void sync();
+    };
+    syncListeners.add(requested);
+    return () => {
+      sub.remove();
+      syncListeners.delete(requested);
+    };
   }, [user, habits, todayStr]);
 }

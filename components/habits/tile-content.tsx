@@ -16,17 +16,23 @@ import { isValueRecorded } from '@/lib/habit-scoring';
  * size it works at all of them.
  *
  * Rules that keep the face collision-free:
+ * - The name and the footer (count/value) are REAL BANDS at the tile bottom,
+ *   not overlays: their heights come off the top before the face is scaled,
+ *   and the design-space scale derives from the REMAINING area
+ *   (min(width, contentHeight) / 100). Overlaying them on a full-tile face
+ *   was aspect-ratio roulette — it happened to clear the glyph on the tile
+ *   shapes it was tuned on and clipped the glyph on other screens.
+ * - Record-state marks (ring, star) live inside the face's own square, so
+ *   the letter sits in the same spot in every record state.
  * - The letter box is derived FROM the ring (≈ its inscribed rect), never
  *   from the tile, so no abbreviation can cross the ring. Long abbreviations
  *   shrink via a deterministic per-character font size — NOT
  *   adjustsFontSizeToFit, whose iOS re-measure can collapse the glyph to a
  *   few pixels when the text's style (opacity on record) changes in place.
- * - Record-state marks (ring, star, counts) and the name are absolute
- *   overlays in reserved slots; they never reflow or resize the centered
- *   content, so the letter sits in the same spot in every state.
- * - No per-element minimum sizes: a Math.max floor breaks uniform scaling
- *   and is what made small tiles collide. The only exceptions are overlays
- *   that cannot push anything (hairline ring stroke, the name label).
+ * - No per-element minimum sizes inside the face: a Math.max floor breaks
+ *   uniform scaling and is what made small tiles collide. The bands keep
+ *   small legibility floors (they hold text, and they push instead of
+ *   overlap).
  */
 const D = {
   /** 2nd-level success ring */
@@ -209,25 +215,27 @@ function getFaceState(habit: Habit, record?: HabitRecord): FaceState {
 }
 
 export function TileContent({ habit, record, tileWidth, tileHeight }: TileContentProps) {
-  const square = Math.min(tileWidth, tileHeight);
-  const s = square / 100; // px per design unit
-
   const face = getFaceState(habit, record);
   const hasGlyph = habit.glyph && habit.glyph.paths.length > 0;
   const hasIconImage = !!habit.iconImage;
 
-  // Name overlay, pinned to the tile bottom so the centered content never
-  // moves or resizes when the name is toggled. The font floor is a
-  // legibility exception — as an overlay it can't push anything.
+  // Bottom bands. Sized from the raw tile (they hold fixed text, so they
+  // must not shrink with the face they themselves shrink), then SUBTRACTED
+  // from the face's available height — bands push, they never overlap.
   // The global "show name on all tiles" switch overrides per-habit showName.
   const { showAllTileNames } = useUserSettingsContext();
   const showName = (!!habit.showName || showAllTileNames) && !!habit.name;
-  const nameSlotHeight = Math.max(30, square * 0.25);
-  const nameSlotPadBottom = Math.max(6, square * 0.05);
+  const base = Math.min(tileWidth, tileHeight);
+  const nameSlotHeight = showName ? Math.max(26, base * 0.2) : 0;
   const nameFontSize = nameSlotHeight * 0.5;
+  const footerSlotHeight = face.footer ? Math.max(16, base * 0.15) : 0;
 
-  // Footer overlay (counts/values) stacks above the name when both are on.
-  const footerBottom = showName ? nameSlotHeight : D.footerGap * s;
+  // The face gets what's left. The 35% floor only matters on a pathological
+  // sliver of a tile — bands may then overlap the face slightly rather than
+  // vanish it entirely.
+  const contentHeight = Math.max(tileHeight - nameSlotHeight - footerSlotHeight, tileHeight * 0.35);
+  const square = Math.min(tileWidth, contentHeight);
+  const s = square / 100; // px per design unit
 
   let content: ReactNode;
   let barInfo: { colors: string[]; width: number; height: number } | null = null;
@@ -264,7 +272,7 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
     // the drawing's aspect and centers it.
     const pad = D.glyphPad * s;
     const glyphW = tileWidth - pad * 2;
-    const glyphH = tileHeight - pad * 2;
+    const glyphH = contentHeight - pad * 2;
 
     // 2nd level on glyph tiles is the underline bar (a ring would fight the
     // drawing); 3rd level is the same star badge as letter tiles.
@@ -299,7 +307,7 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
     // Free band between the tile top and the ring's top edge (the ring is
     // centered in the tile). The star centers in it, shrinking only when
     // the band is too shallow for the full-size star.
-    const gapAbove = (tileHeight - circlePx) / 2;
+    const gapAbove = (contentHeight - circlePx) / 2;
     starFontPx = Math.max(
       D.starMinFont * s,
       Math.min(D.starFont * s, gapAbove - D.starGapPad * s),
@@ -345,7 +353,7 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
 
   return (
     <View style={styles.outer}>
-      <View style={styles.container}>
+      <View style={[styles.container, { height: contentHeight }]}>
         {content}
         {face.showStar && (
           <ThemedText
@@ -361,7 +369,7 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
       {face.footer && (
         <View
           pointerEvents="none"
-          style={[styles.footer, { bottom: footerBottom, paddingHorizontal: 4 * s }]}
+          style={[styles.footer, { height: footerSlotHeight, paddingHorizontal: 4 * s }]}
         >
           <ThemedText
             // Remount on text change: adjustsFontSizeToFit can stick at a tiny
@@ -380,7 +388,7 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
         </View>
       )}
       {showName && (
-        <View style={[styles.nameSlot, { height: nameSlotHeight, paddingBottom: nameSlotPadBottom }]}>
+        <View style={[styles.nameSlot, { height: nameSlotHeight }]}>
           <ThemedText
             style={[styles.tileName, { fontSize: nameFontSize, lineHeight: nameFontSize * 1.2 }]}
             numberOfLines={1}
@@ -431,7 +439,6 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   container: {
-    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -452,11 +459,9 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   footer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
+    alignSelf: 'stretch',
     alignItems: 'center',
-    zIndex: 2,
+    justifyContent: 'flex-start',
   },
   footerText: {
     fontWeight: '600',
@@ -464,10 +469,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   nameSlot: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
+    alignSelf: 'stretch',
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 4,

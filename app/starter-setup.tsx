@@ -16,6 +16,8 @@ import { useTodayDate } from '@/hooks/use-today-date';
 import { emitError } from '@/lib/error-bus';
 import { setPendingHabitCallback } from '@/lib/pending-habit-link';
 import { applyStarterTasks, isStarterAdded } from '@/lib/starter-tasks';
+import { getStepsPermissionRequestStatus } from '@/lib/steps-health';
+import { StepsPrePromptModal } from '@/components/habits/steps-preprompt-modal';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
@@ -45,6 +47,11 @@ export default function StarterSetupScreen() {
   const { startGenesis, isActive: tourActive } = useTour();
   const { requireOnline } = useOfflineGuard();
   const [busy, setBusy] = useState(false);
+  // Steps pre-prompt shown when finishing created a steps habit (e.g. Walk).
+  // The exit handoff (tour start + back) waits behind it, so the permission
+  // ask happens at creation, in context, not on some later tile tap.
+  const [stepsPromptVisible, setStepsPromptVisible] = useState(false);
+  const exitAfterStepsPromptRef = useRef<(() => void) | null>(null);
   // Synchronous guard: `busy` state lags a frame, so two fast taps could both
   // run applyStarterTasks concurrently and create duplicate habits.
   const finishingRef = useRef(false);
@@ -145,12 +152,14 @@ export default function StarterSetupScreen() {
       if (finishingRef.current) return;
       finishingRef.current = true;
       setBusy(true);
+      let createdSteps = false;
       try {
         const created = await applyStarterTasks(keys, habits, todayStr, {
           createHabit,
           createQuest,
         }, quests);
         if (created.length > 0) setShowAllTileNames(true);
+        createdSteps = created.some((h) => h.recordingMode === 'steps');
       } catch (e) {
         // A rejected write must not escape the async onPress: surface it and
         // still hand off, or the intro user is stranded on the picker.
@@ -164,8 +173,20 @@ export default function StarterSetupScreen() {
       // Not when the tour is ALREADY running — re-entering setup through the
       // tour's own spotlighted button must resume the tour where it was, not
       // restart it from step 1.
-      if (isIntro && !tourActive) startGenesis();
-      router.back();
+      const exit = () => {
+        if (isIntro && !tourActive) startGenesis();
+        router.back();
+      };
+      // A new steps habit (Walk) is the moment to ask for health access —
+      // explain first, then the system sheet; the exit waits behind it. Only
+      // when a system sheet would actually appear (5.1.1(iv): the pre-prompt
+      // must always flow into one).
+      if (createdSteps && (await getStepsPermissionRequestStatus()) === 'not-asked') {
+        exitAfterStepsPromptRef.current = exit;
+        setStepsPromptVisible(true);
+        return;
+      }
+      exit();
     },
     [habits, quests, todayStr, createHabit, createQuest, setShowAllTileNames, isIntro, tourActive, startGenesis],
   );
@@ -420,6 +441,18 @@ export default function StarterSetupScreen() {
           </Pressable>
         </View>
       </SafeAreaView>
+      {/* Health pre-prompt for a just-created Walk habit. RN Modal renders
+          above the screen regardless of position; the deferred exit (tour
+          handoff + back) runs when it closes, whichever button closed it. */}
+      <StepsPrePromptModal
+        visible={stepsPromptVisible}
+        onClose={() => {
+          setStepsPromptVisible(false);
+          const exit = exitAfterStepsPromptRef.current;
+          exitAfterStepsPromptRef.current = null;
+          exit?.();
+        }}
+      />
     </ThemedView>
   );
 }

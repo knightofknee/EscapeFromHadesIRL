@@ -1,4 +1,7 @@
+import { Linking } from 'react-native';
 import {
+  AuthorizationRequestStatus,
+  getRequestStatusForAuthorization,
   isHealthDataAvailableAsync,
   queryStatisticsCollectionForQuantity,
   requestAuthorization,
@@ -27,6 +30,33 @@ export async function requestStepsPermission(): Promise<boolean> {
   } catch (e) {
     console.error('requestStepsPermission iOS failed:', e);
     return false;
+  }
+}
+
+export async function getStepsPermissionRequestStatus(): Promise<'not-asked' | 'asked'> {
+  try {
+    const status = await getRequestStatusForAuthorization({ toShare: [], toRead: [HK_STEPS_ID] });
+    // `unknown` (an error state) maps to 'asked': skipping the explanation
+    // just means the caller goes straight to the (then harmless) request.
+    return status === AuthorizationRequestStatus.shouldRequest ? 'not-asked' : 'asked';
+  } catch (e) {
+    console.error('getStepsPermissionRequestStatus iOS failed:', e);
+    return 'asked';
+  }
+}
+
+export async function openStepsHealthSettings(): Promise<void> {
+  // Read access lives in the Health app (profile > Apps), not on the app's
+  // own Settings page — open Health directly, falling back to our Settings
+  // page if the scheme ever stops resolving.
+  try {
+    await Linking.openURL('x-apple-health://');
+  } catch {
+    try {
+      await Linking.openSettings();
+    } catch (e) {
+      console.error('openStepsHealthSettings iOS failed:', e);
+    }
   }
 }
 

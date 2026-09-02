@@ -1,7 +1,9 @@
 import {
   aggregateRecord,
+  getGrantedPermissions,
   getSdkStatus,
   initialize,
+  openHealthConnectSettings,
   requestPermission,
   SdkAvailabilityStatus,
 } from 'react-native-health-connect';
@@ -31,6 +33,31 @@ export async function requestStepsPermission(): Promise<boolean> {
   } catch (e) {
     console.error('requestStepsPermission Android failed:', e);
     return false;
+  }
+}
+
+export async function getStepsPermissionRequestStatus(): Promise<'not-asked' | 'asked'> {
+  try {
+    const ok = await initialize();
+    if (!ok) return 'asked';
+    // Health Connect can't say "asked but denied" — but unlike iOS its sheet
+    // is re-promptable, so "not granted" and "would show a sheet" coincide.
+    const granted = await getGrantedPermissions();
+    const has = granted.some(
+      (p) => 'recordType' in p && p.recordType === 'Steps' && p.accessType === 'read',
+    );
+    return has ? 'asked' : 'not-asked';
+  } catch (e) {
+    console.error('getStepsPermissionRequestStatus Android failed:', e);
+    return 'asked';
+  }
+}
+
+export async function openStepsHealthSettings(): Promise<void> {
+  try {
+    openHealthConnectSettings();
+  } catch (e) {
+    console.error('openStepsHealthSettings Android failed:', e);
   }
 }
 

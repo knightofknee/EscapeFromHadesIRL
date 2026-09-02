@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { StyleSheet, ScrollView, TextInput, Pressable, Switch, View, Alert, Modal, Image } from 'react-native';
+import { StyleSheet, ScrollView, TextInput, Pressable, Switch, View, Alert, Modal, Image, Linking } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
@@ -18,7 +18,9 @@ import type { RecordingMode, GlyphData } from '@/types/habit';
 import { pickTileIconImage } from '@/lib/tile-icon';
 import { emitError } from '@/lib/error-bus';
 import { useOfflineGuard } from '@/contexts/offline-context';
-import { requestStepsPermission } from '@/lib/steps-health';
+import { getStepsPermissionRequestStatus, requestStepsPermission } from '@/lib/steps-health';
+import { StepsPrePromptModal } from '@/components/habits/steps-preprompt-modal';
+import { PermissionPrePromptModal } from '@/components/permission-preprompt-modal';
 import {
   getNotificationPermissionBucket,
   requestNotificationPermission,
@@ -176,6 +178,13 @@ export default function TileSettingsModal() {
   // mode's required permission request here — declaring intent (picking
   // the type) is the right moment to ask, not later when they tap the
   // tile.
+  const [stepsPrePromptVisible, setStepsPrePromptVisible] = useState<boolean>(false);
+  // Visibility of the in-app pre-prompt that explains our limited use of
+  // notifications BEFORE the iOS system sheet is shown.
+  const [notifPrePromptVisible, setNotifPrePromptVisible] = useState<boolean>(false);
+  // Visibility of the "notifications are off" Settings walkthrough, shown
+  // when Meditation is picked but the permission was already denied.
+  const [notifDeniedVisible, setNotifDeniedVisible] = useState<boolean>(false);
   useEffect(() => {
     if (!userTappedAutoRef.current) return;
     userTappedAutoRef.current = false;
@@ -191,25 +200,27 @@ export default function TileSettingsModal() {
         scrollRef.current?.scrollTo({ y: Math.max(0, targetY), animated: true });
       }
     }, 60);
-    // Permission prompts:
-    //  - Steps: straight to the iOS Health system sheet (it explains itself).
-    //  - Meditation: gate on a status check first. Only show our in-app
-    //    pre-prompt when the system permission is `undetermined`. If the
-    //    user already granted or denied, skip — iOS won't re-prompt anyway.
+    // Permission prompts — both gate on the platform's real permission state
+    // and both use the standard pre-prompt (explanation that ALWAYS flows
+    // into the system sheet, per App Review 5.1.1(iv)):
+    //  - Steps: pre-prompt only while a system sheet would actually appear;
+    //    afterwards go straight to the (by then no-op) system request.
+    //  - Meditation: pre-prompt only while `undetermined`. Once denied the
+    //    system won't re-prompt, so show the Settings walkthrough instead.
     if (recordingMode === 'steps') {
-      void requestStepsPermission();
+      void (async () => {
+        if ((await getStepsPermissionRequestStatus()) === 'asked') void requestStepsPermission();
+        else setStepsPrePromptVisible(true);
+      })();
     } else if (recordingMode === 'meditation') {
       void (async () => {
         const bucket = await getNotificationPermissionBucket();
         if (bucket === 'undetermined') setNotifPrePromptVisible(true);
+        else if (bucket === 'denied') setNotifDeniedVisible(true);
       })();
     }
     return () => clearTimeout(tid);
   }, [recordingMode, sortedAutoModes]);
-
-  // Visibility of the in-app pre-prompt that explains our limited use of
-  // notifications BEFORE the iOS system sheet is shown.
-  const [notifPrePromptVisible, setNotifPrePromptVisible] = useState<boolean>(false);
 
   // Clear pending habit callback if user leaves without saving
   useEffect(() => {
@@ -1096,45 +1107,67 @@ export default function TileSettingsModal() {
         />
       </Modal>
 
+      {/* Health pre-prompt for a just-picked Steps recording mode. */}
+      <StepsPrePromptModal
+        visible={stepsPrePromptVisible}
+        onClose={() => setStepsPrePromptVisible(false)}
+      />
+
       {/* Notification pre-prompt — shown only when the user picks Meditation
-          for the first time (system permission undetermined). Wording is
-          locked with the user; "Continue" triggers the iOS system sheet,
-          "Not now" closes without ever calling iOS so the system prompt is
-          preserved for next time. */}
-      <Modal
+          while the system permission is undetermined. Standard pre-prompt:
+          always flows into the iOS system sheet (App Review 5.1.1(iv)). */}
+      <PermissionPrePromptModal
         visible={notifPrePromptVisible}
+        title="Allow meditation alarm?"
+        body="Notifications let your timer ring on time, even when the app is closed or your phone is locked. That's the only thing we use them for. We won't send anything else."
+        onProceed={async () => {
+          await requestNotificationPermission();
+        }}
+        onClose={() => setNotifPrePromptVisible(false)}
+      />
+
+      {/* Denied-state walkthrough — Meditation picked but notifications are
+          off and the system won't re-prompt. No permission sheet follows
+          this one, so it's freely dismissible. */}
+      <Modal
+        visible={notifDeniedVisible}
         transparent
         animationType="fade"
-        onRequestClose={() => setNotifPrePromptVisible(false)}
+        onRequestClose={() => setNotifDeniedVisible(false)}
       >
-        <Pressable style={styles.notifOverlay} onPress={() => setNotifPrePromptVisible(false)}>
+        <Pressable style={styles.notifOverlay} onPress={() => setNotifDeniedVisible(false)}>
           <Pressable
             style={[styles.notifSheet, { backgroundColor: colors.tileBackground }]}
             onPress={(e) => e.stopPropagation()}
           >
             <ThemedText type="defaultSemiBold" style={styles.notifTitle}>
-              Allow meditation alarm?
+              Notifications are off
             </ThemedText>
             <ThemedText style={styles.notifBody}>
-              Notifications let your timer ring on time, even when the app
-              is closed or your phone is locked. That&apos;s the only thing we
-              use them for. We won&apos;t send anything else.
+              Notifications for this app are turned off, so your meditation alarm
+              can&apos;t ring when the app is closed. To turn them on, tap Open
+              Settings, then:
             </ThemedText>
+            <View style={styles.notifStepsList}>
+              <ThemedText style={styles.notifStep}>1. Tap Notifications.</ThemedText>
+              <ThemedText style={styles.notifStep}>2. Turn on Allow Notifications.</ThemedText>
+              <ThemedText style={styles.notifStep}>3. Come back to the app.</ThemedText>
+            </View>
             <View style={styles.notifButtons}>
               <Pressable
                 style={[styles.notifSecondary, { borderColor: colors.tileBorder }]}
-                onPress={() => setNotifPrePromptVisible(false)}
+                onPress={() => setNotifDeniedVisible(false)}
               >
-                <ThemedText style={styles.notifSecondaryText}>Not now</ThemedText>
+                <ThemedText style={styles.notifSecondaryText}>Close</ThemedText>
               </Pressable>
               <Pressable
                 style={[styles.notifPrimary, { backgroundColor: colors.tint }]}
-                onPress={async () => {
-                  setNotifPrePromptVisible(false);
-                  await requestNotificationPermission();
+                onPress={() => {
+                  setNotifDeniedVisible(false);
+                  void Linking.openSettings();
                 }}
               >
-                <ThemedText style={styles.notifPrimaryText}>Continue</ThemedText>
+                <ThemedText style={styles.notifPrimaryText}>Open Settings</ThemedText>
               </Pressable>
             </View>
           </Pressable>
@@ -1282,6 +1315,15 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     textAlign: 'center',
     opacity: 0.85,
+  },
+  notifStepsList: {
+    gap: 4,
+    marginBottom: 4,
+  },
+  notifStep: {
+    fontSize: 14,
+    lineHeight: 20,
+    opacity: 0.9,
   },
   notifButtons: {
     flexDirection: 'row',
