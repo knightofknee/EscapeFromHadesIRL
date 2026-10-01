@@ -233,29 +233,33 @@ export function AuthForm({
               {/* Email */}
               <View style={styles.inputGroup}>
                 <Text style={[styles.label, { color: colors.text }]}>Email</Text>
-                <TextInput
+                <View
                   style={[
                     styles.input,
+                    styles.inputRow,
                     {
                       borderColor: emailFocused ? colors.primary : colors.border,
                       backgroundColor: colors.inputBg,
-                      color: colors.text,
                     },
                   ]}
-                  placeholder="you@example.com"
-                  placeholderTextColor={colors.subtle}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardType="email-address"
-                  textContentType="emailAddress"
-                  autoComplete="email"
-                  value={email}
-                  editable={!anyLoading}
-                  onChangeText={setEmail}
-                  onFocus={() => setEmailFocused(true)}
-                  onBlur={() => setEmailFocused(false)}
-                  returnKeyType="next"
-                />
+                >
+                  <TextInput
+                    style={{ flex: 1, color: colors.text }}
+                    placeholder="you@example.com"
+                    placeholderTextColor={colors.subtle}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="email-address"
+                    textContentType="emailAddress"
+                    autoComplete="email"
+                    value={email}
+                    editable={!anyLoading}
+                    onChangeText={setEmail}
+                    onFocus={() => setEmailFocused(true)}
+                    onBlur={() => setEmailFocused(false)}
+                    returnKeyType="next"
+                  />
+                </View>
               </View>
 
               {/* Password */}

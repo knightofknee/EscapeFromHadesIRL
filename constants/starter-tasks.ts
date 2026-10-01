@@ -57,7 +57,7 @@ export const STARTER_TASKS: StarterTask[] = [
     recordingMode: 'meditation',
     acronyms: ['M', 'Me'],
     color: '#9B59B6', // purple
-    meditationSessions: 1,
+    meditationSessions: 2,
     meditationMinutes: 5,
     meditationIdealTotalMinutes: 30,
     questTemplateKey: 'meditate',

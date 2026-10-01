@@ -5,7 +5,7 @@ import { db, doc, getDoc, updateDoc } from '@/lib/firebase/firestore';
 import { persistHabitRecord } from '@/lib/persist-record';
 import { addDays, getTodayString } from '@/lib/date-utils';
 import { computeStepsLevel, STEPS_PROBE_DAYS, unconfirmedStepDays } from '@/lib/steps';
-import { getStepsForDay } from '@/lib/steps-health';
+import { getStepsForDay, getStepsPermissionRequestStatus } from '@/lib/steps-health';
 import { useHabits } from '@/hooks/use-habits';
 import { useTodayDate } from '@/hooks/use-today-date';
 import type { Habit, HabitRecord } from '@/types/habit';
@@ -162,6 +162,12 @@ export function useStepsBackfill() {
       ) {
         return;
       }
+      // Never query before the permission sheet has been shown: HealthKit
+      // rejects every read with "Authorization not determined" (one logged
+      // error per probe day). Checked before the throttle refs are touched so
+      // a skipped sync doesn't eat the window; the pre-prompt grant re-fires
+      // via requestStepsSync.
+      if ((await getStepsPermissionRequestStatus()) === 'not-asked') return;
       lastSyncAtRef.current = now;
       lastSyncDayRef.current = today;
       lastSyncHabitsRef.current = habitsKey;

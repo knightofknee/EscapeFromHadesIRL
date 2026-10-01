@@ -76,6 +76,13 @@ service cloud.firestore {
       allow update: if ownsExisting() && ownsIncoming();
     }
 
+    // Recurring chores (time since last done). Completion dates live on the doc.
+    match /chores/{docId} {
+      allow read, delete: if ownsExisting();
+      allow create: if ownsIncoming();
+      allow update: if ownsExisting() && ownsIncoming();
+    }
+
     // Habit-tracking breaks. Doc id: `${userId}_${date}`; each doc also stores userId for queries.
     match /vacationDays/{docId} {
       function isOwner()   { return signedIn() && resource.data.userId == request.auth.uid; }

@@ -5,10 +5,15 @@ import { computeStreak } from '@/lib/habit-streaks';
 import {
   computeRates,
   computeMonthlyRates,
+  computeValueAverages,
+  computeMonthlyValueAverages,
+  formatStatValue,
   getStatsPageCount,
+  isValueTrendHabit,
   chartHasActivity,
   MONTH_LETTERS,
   STATS_DISPLAY_MONTHS,
+  type MonthlyPoint,
 } from '@/lib/habit-stats';
 import type { Habit, HabitRecord } from '@/types/habit';
 
@@ -43,11 +48,23 @@ function shadeForPrint(hex: string): string {
   return `#${[r, g, b].map((c) => c.toString(16).padStart(2, '0')).join('')}`;
 }
 
-/** Inline SVG mirroring StatsChart: monthly bars + rolling-average line. */
+/** Round up to a clean axis ceiling (1/2/2.5/5/10 × power of ten). */
+function niceCeil(n: number): number {
+  if (n <= 0) return 1;
+  const pow = Math.pow(10, Math.floor(Math.log10(n)));
+  const scaled = n / pow;
+  const nice = scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 2.5 ? 2.5 : scaled <= 5 ? 5 : 10;
+  return nice * pow;
+}
+
+/** Inline SVG mirroring StatsChart: monthly bars + rolling-average line.
+ * Percent charts use the fixed 0-100 scale; value-trend charts scale to the
+ * data and label the axis in raw units. */
 function chartSvg(
-  data: { date: string; value: number; avg: number }[],
+  data: MonthlyPoint[],
   color: string,
   avgColor: string,
+  percent: boolean,
 ): string {
   const W = 320;
   const H = 132;
@@ -58,14 +75,17 @@ function chartSvg(
   const slot = plotW / n;
   const barW = slot * 0.55;
 
-  const yFor = (pct: number) => PLOT.top + plotH * (1 - Math.min(100, Math.max(0, pct)) / 100);
+  const maxY = percent ? 100 : niceCeil(Math.max(...data.map((d) => Math.max(d.value, d.avg, d.avgFull)), 0));
+  const axisLabel = (v: number) => (percent ? `${Math.round(v)}%` : formatStatValue(v));
 
-  const grid = [0, 50, 100]
-    .map((pct) => {
-      const y = yFor(pct);
+  const yFor = (v: number) => PLOT.top + plotH * (1 - Math.min(maxY, Math.max(0, v)) / maxY);
+
+  const grid = [0, maxY / 2, maxY]
+    .map((val) => {
+      const y = yFor(val);
       return (
         `<line x1="${PLOT.left}" y1="${y}" x2="${W - PLOT.right}" y2="${y}" stroke="#E5E7EB" stroke-width="1"/>` +
-        `<text x="${PLOT.left - 4}" y="${y + 3}" font-size="7" fill="#9CA3AF" text-anchor="end">${pct}%</text>`
+        `<text x="${PLOT.left - 4}" y="${y + 3}" font-size="7" fill="#9CA3AF" text-anchor="end">${axisLabel(val)}</text>`
       );
     })
     .join('');
@@ -93,16 +113,27 @@ function chartSvg(
   const hasAvg = chartHasActivity(data);
   let avgLine = '';
   if (hasAvg) {
-    avgLine = `<polyline fill="none" stroke="${avgColor}" stroke-width="1.8" points="${data
-      .map((d, i) => `${(PLOT.left + i * slot + slot / 2).toFixed(1)},${yFor(d.avg).toFixed(1)}`)
+    // Full-window average first (thin, unlabeled), then the featured line,
+    // which starts at the habit's first active month — like the in-app chart.
+    // Print can't taper a stroke; the full-window line's weight is the
+    // habit's months of history at the window's end (screen: per point).
+    const fullW = 0.6 + 3.4 * Math.min(1, (data[data.length - 1].months ?? 0) / DISPLAY_MONTHS);
+    avgLine = `<polyline fill="none" stroke="${avgColor}" stroke-opacity="0.5" stroke-width="${fullW.toFixed(1)}" points="${data
+      .map((d, i) => `${(PLOT.left + i * slot + slot / 2).toFixed(1)},${yFor(d.avgFull).toFixed(1)}`)
+      .join(' ')}"/>`;
+    const firstActive = Math.max(0, data.findIndex((d) => d.value > 0 || d.avg > 0));
+    avgLine += `<polyline fill="none" stroke="${avgColor}" stroke-width="1.8" points="${data
+      .slice(firstActive)
+      .map((d, i) => `${(PLOT.left + (i + firstActive) * slot + slot / 2).toFixed(1)},${yFor(d.avg).toFixed(1)}`)
       .join(' ')}"/>`;
     const lastAvg = data[data.length - 1].avg;
     const lx = PLOT.left + (data.length - 1) * slot + slot / 2;
     const ly = yFor(lastAvg);
     const tagY = Math.min(Math.max(ly + 3, PLOT.top + 9), PLOT.top + plotH - 2);
+    const tagText = percent ? `${Math.round(lastAvg)}%` : formatStatValue(lastAvg);
     avgLine +=
       `<circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="2.4" fill="${avgColor}"/>` +
-      `<text x="${(lx - 5).toFixed(1)}" y="${tagY.toFixed(1)}" font-size="9" font-weight="700" fill="${avgColor}" text-anchor="end">${Math.round(lastAvg)}%</text>`;
+      `<text x="${(lx - 5).toFixed(1)}" y="${tagY.toFixed(1)}" font-size="9" font-weight="700" fill="${avgColor}" text-anchor="end">${tagText}</text>`;
   }
 
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${grid}${bars}${avgLine}${labels}</svg>`;
@@ -120,21 +151,50 @@ export function buildStatsHtml(params: {
     .map((habit) => {
       const pageCount = getStatsPageCount(habit);
       const cells = [];
-      for (let level = 0; level < pageCount; level++) {
-        const checker = LEVEL_CHECKERS[level];
-        const { current, longest } = computeStreak(habit, recordIndex, checker, vacationSet, {
+      if (isValueTrendHabit(habit)) {
+        // Value habits chart the numeric trend (avg per day), not completion
+        // rate — one cell, streaks keep the "any entry counts" reading.
+        const { current, longest } = computeStreak(habit, recordIndex, LEVEL_CHECKERS[0], vacationSet, {
           winOnlyWeekends,
         });
-        const rates = computeRates(habit, recordIndex, checker, vacationSet, winOnlyWeekends);
-        const monthly = computeMonthlyRates(
+        const avgs = computeValueAverages(habit, recordIndex, vacationSet, winOnlyWeekends);
+        const monthly = computeMonthlyValueAverages(
           habit,
           recordIndex,
           DISPLAY_MONTHS,
-          checker,
           vacationSet,
           winOnlyWeekends,
         );
         cells.push(`
+          <div class="cell">
+            <div class="level">Average Per Day</div>
+            <div class="nums">
+              <span><b>${current}</b> streak</span>
+              <span><b>${longest}</b> longest</span>
+            </div>
+            <div class="nums rates">
+              <span>7d <b>${formatStatValue(avgs.week)}</b></span>
+              <span>30d <b>${formatStatValue(avgs.month)}</b></span>
+              <span>90d <b>${formatStatValue(avgs.quarter)}</b></span>
+            </div>
+            ${chartSvg(monthly, habit.color, shadeForPrint(rollingAvgLineColor(habit.color)), false)}
+          </div>`);
+      } else {
+        for (let level = 0; level < pageCount; level++) {
+          const checker = LEVEL_CHECKERS[level];
+          const { current, longest } = computeStreak(habit, recordIndex, checker, vacationSet, {
+            winOnlyWeekends,
+          });
+          const rates = computeRates(habit, recordIndex, checker, vacationSet, winOnlyWeekends);
+          const monthly = computeMonthlyRates(
+            habit,
+            recordIndex,
+            DISPLAY_MONTHS,
+            checker,
+            vacationSet,
+            winOnlyWeekends,
+          );
+          cells.push(`
           <div class="cell">
             <div class="level">${LEVEL_NAMES[level]}</div>
             <div class="nums">
@@ -146,8 +206,9 @@ export function buildStatsHtml(params: {
               <span>30d <b>${rates.month}%</b></span>
               <span>90d <b>${rates.quarter}%</b></span>
             </div>
-            ${chartSvg(monthly, habit.color, shadeForPrint(rollingAvgLineColor(habit.color)))}
+            ${chartSvg(monthly, habit.color, shadeForPrint(rollingAvgLineColor(habit.color)), true)}
           </div>`);
+        }
       }
       // Pad to 3 columns so cells align into a grid across habit rows.
       while (cells.length < 3) cells.push('<div class="cell empty"></div>');
@@ -192,7 +253,7 @@ export function buildStatsHtml(params: {
 </head>
 <body>
   <h1>Habit Statistics</h1>
-  <div class="meta">Generated ${generated} · ${DISPLAY_MONTHS}-month rolling view · bars = monthly completion, line = rolling average</div>
+  <div class="meta">Generated ${generated} · ${DISPLAY_MONTHS}-month rolling view · bars = monthly completion (avg/day for value habits), line = rolling average</div>
   ${habitRows}
 </body>
 </html>`;

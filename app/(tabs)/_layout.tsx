@@ -35,7 +35,7 @@ export default function TabLayout() {
         headerShown: false,
         tabBarButton: HapticTab,
         // Tabs stay mounted when blurred; without freeze, every record write
-        // re-renders all four tab trees (e.g. a habit tap recomputing quest
+        // re-renders every tab tree (e.g. a habit tap recomputing quest
         // scores and stats charts in the background).
         freezeOnBlur: true,
       }}>
@@ -44,6 +44,13 @@ export default function TabLayout() {
         options={{
           title: 'Habits',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="checkmark.square.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="(chores)"
+        options={{
+          title: 'Chores',
+          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
         }}
       />
       <Tabs.Screen

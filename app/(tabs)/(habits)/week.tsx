@@ -19,7 +19,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useSuccessColors } from '@/hooks/use-success-colors';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import type { TripleValue, QuadValue } from '@/types/habit';
-import { isValueRecorded } from '@/lib/habit-scoring';
+import { isValueRecorded, recordLevel, valueGoalsOn } from '@/lib/habit-scoring';
 
 export default function WeekViewScreen() {
   const { user } = useAuth();
@@ -75,12 +75,21 @@ export default function WeekViewScreen() {
         case 'counter':
           newValue = ((existing?.value as number) ?? 0) + 1;
           break;
-        case 'value':
-          // For week view, just toggle presence. isValueRecorded, not
+        case 'value': {
+          // With goals, a tap climbs to the next goal's amount (like cycling
+          // quad tiers) and clears after the top one.
+          const goals = valueGoalsOn(habit, date);
+          if (goals.length > 0) {
+            const level = recordLevel(habit, existing);
+            newValue = level < goals.length ? String(goals[level]) : '';
+            break;
+          }
+          // Without goals, just toggle presence. isValueRecorded, not
           // truthiness: a "0" cell renders unrecorded, so tapping it must
           // record ("1"), not clear an already-empty-looking cell.
           newValue = isValueRecorded(existing?.value) ? '' : '1';
           break;
+        }
       }
 
       // Through the shared context path: optimistic local update, plus the

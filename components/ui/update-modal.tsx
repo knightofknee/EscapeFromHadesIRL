@@ -10,6 +10,7 @@ import {
   saveDismissRecord,
   type AppUpdateInfo,
 } from '@/lib/app-update';
+import { fetchUpdateGate } from '@/lib/update-gate';
 import { useEffect, useRef, useState } from 'react';
 import { AppState, Linking, Modal, Pressable, StyleSheet, View } from 'react-native';
 
@@ -49,6 +50,9 @@ export function UpdateModal() {
       lastCheckRef.current = Date.now();
       const result = await checkForAppUpdate();
       if (unmounted || !result) return;
+      // Below the hard floor UpdateRequiredGate owns the screen; this card is
+      // a native Modal and would sit on top of it, so it stands aside.
+      if (await fetchUpdateGate()) return;
       const dismissed = await loadDismissRecord();
       if (unmounted || isSnoozed(result.latestVersion, dismissed, Date.now())) return;
       setInfo(result);
@@ -86,13 +90,13 @@ export function UpdateModal() {
     <Modal visible transparent animationType="fade" onRequestClose={dismiss}>
       <View style={styles.overlay}>
         <View style={[styles.card, { backgroundColor: colors.tileBackground }]}>
-          <ThemedText style={styles.emoji}>⬆️</ThemedText>
+          <ThemedText style={styles.emoji}>🔥</ThemedText>
           <ThemedText type="defaultSemiBold" style={styles.title}>
-            Update available
+            A new update awaits
           </ThemedText>
           <ThemedText style={styles.body}>
-            A newer version of Escape from Hades IRL is on the App Store.
-            Update now to get the latest fixes and features.
+            {info.message ??
+              "We've been forging a better Escape from Hades IRL. Would you grab the update? Thank you!"}
           </ThemedText>
           <Pressable
             style={[styles.updateButton, { backgroundColor: colors.tint }]}
@@ -106,11 +110,11 @@ export function UpdateModal() {
             style={styles.closeButton}
             onPress={dismiss}
             accessibilityRole="button"
-            accessibilityLabel="Close"
+            accessibilityLabel="Later"
             hitSlop={8}
           >
             <ThemedText style={[styles.closeButtonText, { color: colors.text }]}>
-              Close
+              Later
             </ThemedText>
           </Pressable>
         </View>

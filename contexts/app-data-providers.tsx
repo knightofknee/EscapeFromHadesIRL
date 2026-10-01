@@ -5,6 +5,7 @@ import { VacationDaysProvider } from '@/contexts/vacation-days-context';
 import { QuestsProvider } from '@/contexts/quests-context';
 import { RecordsProvider } from '@/contexts/records-context';
 import { NotesProvider } from '@/contexts/notes-context';
+import { ChoresProvider } from '@/contexts/chores-context';
 
 /**
  * Mounts every shared per-user data listener exactly once, under the auth gate
@@ -24,7 +25,9 @@ export function AppDataProviders({ children }: { children: ReactNode }) {
         <VacationDaysProvider>
           <QuestsProvider>
             <RecordsProvider>
-              <NotesProvider>{children}</NotesProvider>
+              <NotesProvider>
+                <ChoresProvider>{children}</ChoresProvider>
+              </NotesProvider>
             </RecordsProvider>
           </QuestsProvider>
         </VacationDaysProvider>

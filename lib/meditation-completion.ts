@@ -1,5 +1,9 @@
 import { db, doc, getDoc } from '@/lib/firebase/firestore';
-import { computeMeditationTier } from '@/lib/meditation';
+import {
+  computeMeditationTier,
+  DEFAULT_MEDITATION_MINUTES,
+  DEFAULT_MEDITATION_SESSIONS,
+} from '@/lib/meditation';
 import { cancelMeditationAlarm } from '@/lib/meditation-notifications';
 import {
   clearTimerState,
@@ -54,8 +58,8 @@ export function buildMeditationRecord(
     date,
     value: computeMeditationTier(
       sessions,
-      habit.meditationSessions ?? 1,
-      habit.meditationMinutes ?? 5,
+      habit.meditationSessions ?? DEFAULT_MEDITATION_SESSIONS,
+      habit.meditationMinutes ?? DEFAULT_MEDITATION_MINUTES,
       habit.meditationIdealTotalMinutes,
     ),
     recordedAt: Date.now(),

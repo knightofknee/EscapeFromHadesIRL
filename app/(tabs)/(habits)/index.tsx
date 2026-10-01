@@ -68,6 +68,8 @@ export default function HabitsDayScreen() {
   const addHabitRef = useTourTarget('add-first-habit');
   // Spotlit by the tour's swipe-between-days beat.
   const dayHeaderRef = useTourTarget('day-header');
+  // Ringed by the calendar-tips card's "Show me where".
+  const monthLinkRef = useTourTarget('month-link');
 
   const { createNote } = useNotes();
   const [valueInputHabit, setValueInputHabit] = useState<Habit | null>(null);
@@ -320,6 +322,7 @@ export default function HabitsDayScreen() {
               <ThemedText style={[styles.viewLinkText, { color: colors.tint }]}>Week</ThemedText>
             </Pressable>
             <Pressable
+              ref={monthLinkRef}
               style={styles.viewLink}
               onPress={() => router.push('/(tabs)/(habits)/month')}
             >

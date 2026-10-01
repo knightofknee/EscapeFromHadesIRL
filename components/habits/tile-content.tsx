@@ -5,7 +5,7 @@ import { ThemedText } from '@/components/themed-text';
 import { useUserSettingsContext } from '@/contexts/user-settings-context';
 import { GlyphRenderer } from './glyph-renderer';
 import type { Habit, HabitRecord, TripleValue, QuadValue, GlyphData } from '@/types/habit';
-import { isValueRecorded } from '@/lib/habit-scoring';
+import { isValueRecorded, valueGoalsOn, valueLevel } from '@/lib/habit-scoring';
 
 /**
  * Design space
@@ -16,12 +16,16 @@ import { isValueRecorded } from '@/lib/habit-scoring';
  * size it works at all of them.
  *
  * Rules that keep the face collision-free:
- * - The name and the footer (count/value) are REAL BANDS at the tile bottom,
- *   not overlays: their heights come off the top before the face is scaled,
- *   and the design-space scale derives from the REMAINING area
- *   (min(width, contentHeight) / 100). Overlaying them on a full-tile face
- *   was aspect-ratio roulette — it happened to clear the glyph on the tile
- *   shapes it was tuned on and clipped the glyph on other screens.
+ * - The name is a REAL BAND at the tile bottom, not an overlay: its height
+ *   comes off the top before the face is scaled, and the design-space scale
+ *   derives from the REMAINING area (min(width, contentHeight) / 100).
+ * - The footer (count/value) is an overlay in the free space UNDER the ink,
+ *   with a collision guard: each branch measures the gap between its ink
+ *   bottom and the face bottom, and the face rises only by the deficit if
+ *   the footer wouldn't fit (usually 0). Treating it as a band re-centered
+ *   the face in a shorter area and bumped the letter up on every tile with
+ *   a value, even when there was room to spare. A blind overlay (no guard)
+ *   was the earlier failure: it clipped the glyph on some tile shapes.
  * - Record-state marks (ring, star) live inside the face's own square, so
  *   the letter sits in the same spot in every record state.
  * - The letter box is derived FROM the ring (≈ its inscribed rect), never
@@ -52,11 +56,14 @@ const D = {
   starFont: 20,
   starMinFont: 12,
   starGapPad: 4,
-  /** footer slot (step count / counter count / value text) */
+  /**
+   * Footer (step count / counter count / value text). One size rule for all
+   * of them: the text fills the free room under the ring/ink (less a gap so
+   * it never touches the ring), capped at footerMaxFont. Per-mode sizes made
+   * a value read smaller than a step count on the same grid.
+   */
   footerGap: 2,
-  footerSteps: 12,
-  footerCounter: 16,
-  footerValue: 13,
+  footerMaxFont: 16,
   /** glyph branch */
   glyphPad: 8,
   glyphStarTop: 3,
@@ -73,12 +80,12 @@ const D = {
  * sequences, skin-tone/variation modifiers, keycaps, and regional-indicator
  * pairs into one visible glyph.
  */
-function countGlyphs(label: string): number {
+function splitGlyphs(label: string): string[] {
   const cps = Array.from(label);
-  let n = 0;
+  const out: string[] = [];
   let i = 0;
   while (i < cps.length) {
-    n++;
+    const start = i;
     const cur = cps[i].codePointAt(0) ?? 0;
     i++;
     // A flag is a pair of regional indicators.
@@ -99,8 +106,31 @@ function countGlyphs(label: string): number {
       }
       break;
     }
+    out.push(cps.slice(start, i).join(''));
   }
-  return n;
+  return out;
+}
+
+function countGlyphs(label: string): number {
+  return splitGlyphs(label).length;
+}
+
+/**
+ * Approximate advance width of the label in ems of the heavy-caps face. A
+ * flat per-character width let "WA" overflow its box and ellipsize to "W.."
+ * — W and M run nearly a full em at weight 800, narrow letters half of one,
+ * and emoji are square. Deliberately generous so the sized text can never
+ * exceed the letter box and trip numberOfLines={1} into an ellipsis.
+ */
+function labelWidthEm(glyphs: string[]): number {
+  let em = 0;
+  for (const g of glyphs) {
+    if (g.length > 1 || (g.codePointAt(0) ?? 0) > 0x2000) em += 1.0; // emoji/symbol
+    else if (/[wm]/i.test(g)) em += 1.0;
+    else if (/[ijl1]/i.test(g)) em += 0.55;
+    else em += 0.75;
+  }
+  return em;
 }
 
 function getGlyphColors(glyph: GlyphData): string[] {
@@ -158,7 +188,7 @@ type FaceState = {
   opacity: number;
   showCircle: boolean;
   showStar: boolean;
-  footer: { text: string; size: number } | null;
+  footer: { text: string } | null;
 };
 
 function getFaceState(habit: Habit, record?: HabitRecord): FaceState {
@@ -186,8 +216,10 @@ function getFaceState(habit: Habit, record?: HabitRecord): FaceState {
       face.showStar = state === 'ideal';
       // Meditation/creative writing carry no subtitle — the tier speaks for
       // itself; details live in the modal / editor.
-      if (habit.recordingMode === 'steps' && record?.steps != null) {
-        face.footer = { text: formatStepCount(record.steps), size: D.footerSteps };
+      // A zero step count says nothing — drop the footer band (same rule as
+      // a counter at 0) so the letter sits level with footerless neighbors.
+      if (habit.recordingMode === 'steps' && record?.steps != null && record.steps > 0) {
+        face.footer = { text: formatStepCount(record.steps) };
       }
       break;
     }
@@ -195,7 +227,7 @@ function getFaceState(habit: Habit, record?: HabitRecord): FaceState {
     case 'counter': {
       const count = getCounterValue(record);
       face.opacity = count > 0 ? 1 : 0.35;
-      if (count > 0) face.footer = { text: String(count), size: D.footerCounter };
+      if (count > 0) face.footer = { text: String(count) };
       break;
     }
 
@@ -203,10 +235,13 @@ function getFaceState(habit: Habit, record?: HabitRecord): FaceState {
       const val = getStringValue(record);
       // "0" is an entry the user zeroed back out, not a completion — dim it
       // and drop the footer, same as a counter at 0 (isValueRecorded owns
-      // that rule).
-      const recorded = isValueRecorded(val);
-      face.opacity = recorded ? 1 : 0.35;
-      if (recorded) face.footer = { text: val, size: D.footerValue };
+      // that rule). With goals the entry climbs the steps-style ladder: an
+      // amount under goal 1 stays dim but still shows its number.
+      const level = valueLevel(val, valueGoalsOn(habit, record?.date));
+      face.opacity = level > 0 ? 1 : 0.35;
+      face.showCircle = level >= 2;
+      face.showStar = level >= 3;
+      if (isValueRecorded(val)) face.footer = { text: val.trim() };
       break;
     }
   }
@@ -219,21 +254,29 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
   const hasGlyph = habit.glyph && habit.glyph.paths.length > 0;
   const hasIconImage = !!habit.iconImage;
 
-  // Bottom bands. Sized from the raw tile (they hold fixed text, so they
-  // must not shrink with the face they themselves shrink), then SUBTRACTED
-  // from the face's available height — bands push, they never overlap.
+  // Name band. Sized from the raw tile (it holds fixed text, so it must not
+  // shrink with the face it shrinks), then SUBTRACTED from the face's
+  // available height — it pushes, it never overlaps.
   // The global "show name on all tiles" switch overrides per-habit showName.
   const { showAllTileNames } = useUserSettingsContext();
   const showName = (!!habit.showName || showAllTileNames) && !!habit.name;
   const base = Math.min(tileWidth, tileHeight);
   const nameSlotHeight = showName ? Math.max(26, base * 0.2) : 0;
   const nameFontSize = nameSlotHeight * 0.5;
-  const footerSlotHeight = face.footer ? Math.max(16, base * 0.15) : 0;
+  // Smallest footer slot that keeps the number legible; on roomy tiles the
+  // slot grows to fill the free space under the ring/ink (see fitFooter).
+  const footerMinSlot = face.footer ? Math.max(16, base * 0.15) : 0;
 
-  // The face gets what's left. The 35% floor only matters on a pathological
-  // sliver of a tile — bands may then overlap the face slightly rather than
-  // vanish it entirely.
-  const contentHeight = Math.max(tileHeight - nameSlotHeight - footerSlotHeight, tileHeight * 0.35);
+  // The face is laid out as if there were NO footer: the footer band is an
+  // overlay in the free space under the ink, so a tile with a value shows
+  // its letter at exactly the same height as its footerless neighbors.
+  // Subtracting the footer band (the old model) re-centered the face in a
+  // shorter area and bumped the letter up by half the band, even when the
+  // band would have fit under the ink with room to spare. The face only
+  // moves when the footer would actually collide with its ink, and then
+  // only by the deficit (faceShift, computed per branch below).
+  // The 35% floor only matters on a pathological sliver of a tile.
+  const contentHeight = Math.max(tileHeight - nameSlotHeight, tileHeight * 0.35);
   const square = Math.min(tileWidth, contentHeight);
   const s = square / 100; // px per design unit
 
@@ -243,6 +286,18 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
   // at the container level so it stays horizontally centered in the tile.
   let starFontPx = D.starFont * s;
   let starTopPx = D.glyphStarTop * s;
+  // How far the face must rise so the footer clears its ink (0 = it fits).
+  let faceShift = 0;
+  let footerSlotHeight = 0;
+  // Size the footer slot from the free room under the ink: it fills that
+  // room (the number grows with the tile instead of sitting at a fixed small
+  // size), and only when the room is below the legible minimum does the
+  // face rise, by exactly the deficit.
+  const fitFooter = (room: number) => {
+    if (!face.footer) return;
+    footerSlotHeight = Math.max(footerMinSlot, room);
+    faceShift = Math.max(0, footerSlotHeight - room);
+  };
 
   if (hasIconImage) {
     // Uploaded icon: a square image centered in the tile with the same
@@ -251,6 +306,10 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
     // 3rd level the star badge.
     const pad = D.glyphPad * s;
     const imgSize = square - pad * 2;
+
+    // Footer gets the room under the image, less the pad the bar lives in.
+    const freeBelow = (contentHeight - imgSize) / 2;
+    fitFooter(freeBelow - pad);
 
     if (face.showCircle) {
       barInfo = {
@@ -274,6 +333,15 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
     const glyphW = tileWidth - pad * 2;
     const glyphH = contentHeight - pad * 2;
 
+    // The renderer aspect-fits and centers the drawing in its box, so the
+    // ink height is known: the footer (plus the pad the bar lives in) must
+    // fit under it. A wide drawing like a hand-drawn W leaves plenty of
+    // room and doesn't move; a tall one rises only by the deficit.
+    const { width: vbW, height: vbH } = habit.glyph.viewBox;
+    const inkH = vbW > 0 && vbH > 0 ? Math.min(glyphW / vbW, glyphH / vbH) * vbH : glyphH;
+    const freeBelow = (contentHeight - inkH) / 2;
+    fitFooter(freeBelow - pad);
+
     // 2nd level on glyph tiles is the underline bar (a ring would fight the
     // drawing); 3rd level is the same star badge as letter tiles.
     if (face.showCircle) {
@@ -295,19 +363,26 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
     const ringStroke = Math.max(1.5, D.ringStroke * s);
     const letterBoxPx = D.letterBox * s;
 
-    // Deterministic shrink for multi-character labels: heavy caps are ~0.72em
-    // wide, so scale the font until the whole label fits the letter box. A
-    // single letter/emoji keeps the full design-space size.
-    const glyphCount = countGlyphs(label ?? '');
+    // Deterministic shrink for multi-character labels: scale the font until
+    // the label's estimated advance width fits the letter box. A single
+    // letter/emoji keeps the full design-space size.
+    const glyphs = splitGlyphs(label ?? '');
     const letterFontPx =
-      glyphCount <= 1
+      glyphs.length <= 1
         ? D.letterFont * s
-        : Math.min(D.letterFont * s, letterBoxPx / (0.72 * glyphCount));
+        : Math.min(D.letterFont * s, letterBoxPx / labelWidthEm(glyphs));
+
+    // The footer lives between the ring's bottom edge (plus a gap, so the
+    // number never touches the ring) and the face bottom. Measured against
+    // the ring in EVERY record state (not just when it's drawn) so neither
+    // the letter nor the number moves when the ring appears.
+    const freeBelowRing = (contentHeight - circlePx) / 2;
+    fitFooter(freeBelowRing - D.footerGap * s);
 
     // Free band between the tile top and the ring's top edge (the ring is
-    // centered in the tile). The star centers in it, shrinking only when
-    // the band is too shallow for the full-size star.
-    const gapAbove = (contentHeight - circlePx) / 2;
+    // centered in the tile, less any footer shift). The star centers in it,
+    // shrinking only when the band is too shallow for the full-size star.
+    const gapAbove = (contentHeight - circlePx) / 2 - faceShift;
     starFontPx = Math.max(
       D.starMinFont * s,
       Math.min(D.starFont * s, gapAbove - D.starGapPad * s),
@@ -351,10 +426,26 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
     );
   }
 
+  // The bar sits just above the footer (inside the glyph pad, as before).
+  const barBottomPx = footerSlotHeight + D.barBottom * s;
+
+  // Footer text: fills its slot (line box = slot height), capped at the
+  // design max, then shrunk per character (digits ~0.6em at weight 600) so
+  // a long value fits the tile width without any runtime re-measure.
+  let footerFontPx = 0;
+  if (face.footer) {
+    const cap = Math.min(D.footerMaxFont * s, footerSlotHeight / 1.25);
+    const availW = tileWidth - 8 * s;
+    const chars = Math.max(1, countGlyphs(face.footer.text));
+    footerFontPx = Math.min(cap, availW / (chars * 0.6));
+  }
+
   return (
     <View style={styles.outer}>
       <View style={[styles.container, { height: contentHeight }]}>
-        {content}
+        <View style={faceShift > 0 ? { transform: [{ translateY: -faceShift }] } : undefined}>
+          {content}
+        </View>
         {face.showStar && (
           <ThemedText
             style={[
@@ -365,28 +456,55 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
             ★
           </ThemedText>
         )}
-      </View>
-      {face.footer && (
-        <View
-          pointerEvents="none"
-          style={[styles.footer, { height: footerSlotHeight, paddingHorizontal: 4 * s }]}
-        >
-          <ThemedText
-            // Remount on text change: adjustsFontSizeToFit can stick at a tiny
-            // scale when a mounted Text updates in place (same iOS bug as the
-            // big letter above).
-            key={face.footer.text}
-            style={[
-              styles.footerText,
-              { fontSize: face.footer.size * s, lineHeight: face.footer.size * s * 1.25 },
-            ]}
-            numberOfLines={1}
-            adjustsFontSizeToFit
+        {barInfo &&
+          (barInfo.colors.length <= 1 ? (
+            <View
+              style={[
+                styles.underline,
+                {
+                  backgroundColor: barInfo.colors[0] ?? habit.color,
+                  width: barInfo.width,
+                  height: barInfo.height,
+                  borderRadius: barInfo.height / 2,
+                  bottom: barBottomPx,
+                },
+              ]}
+            />
+          ) : (
+            <LinearGradient
+              colors={candyCaneColors(barInfo.colors)}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={[
+                styles.underline,
+                {
+                  width: barInfo.width,
+                  height: barInfo.height,
+                  borderRadius: barInfo.height / 2,
+                  bottom: barBottomPx,
+                },
+              ]}
+            />
+          ))}
+        {face.footer && (
+          <View
+            pointerEvents="none"
+            style={[styles.footer, { height: footerSlotHeight, paddingHorizontal: 4 * s }]}
           >
-            {face.footer.text}
-          </ThemedText>
-        </View>
-      )}
+            <ThemedText
+              // No adjustsFontSizeToFit: on iOS it can collapse a mounted Text
+              // to a few pixels when its style changes in place (the "tiny
+              // value" bug, same as the big letter). The size is deterministic
+              // instead — capped so its line height fits the slot, and
+              // shrunk per character for long values so they can't overflow.
+              style={[styles.footerText, { fontSize: footerFontPx, lineHeight: footerFontPx * 1.25 }]}
+              numberOfLines={1}
+            >
+              {face.footer.text}
+            </ThemedText>
+          </View>
+        )}
+      </View>
       {showName && (
         <View style={[styles.nameSlot, { height: nameSlotHeight }]}>
           <ThemedText
@@ -397,37 +515,6 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
             {habit.name}
           </ThemedText>
         </View>
-      )}
-      {barInfo && (
-        barInfo.colors.length <= 1 ? (
-          <View
-            style={[
-              styles.underline,
-              {
-                backgroundColor: barInfo.colors[0] ?? habit.color,
-                width: barInfo.width,
-                height: barInfo.height,
-                borderRadius: barInfo.height / 2,
-                bottom: D.barBottom * s,
-              },
-            ]}
-          />
-        ) : (
-          <LinearGradient
-            colors={candyCaneColors(barInfo.colors)}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={[
-              styles.underline,
-              {
-                width: barInfo.width,
-                height: barInfo.height,
-                borderRadius: barInfo.height / 2,
-                bottom: D.barBottom * s,
-              },
-            ]}
-          />
-        )
       )}
     </View>
   );
@@ -459,9 +546,13 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   footer: {
-    alignSelf: 'stretch',
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
     alignItems: 'center',
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
+    zIndex: 4,
   },
   footerText: {
     fontWeight: '600',

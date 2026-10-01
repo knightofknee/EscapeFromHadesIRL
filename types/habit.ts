@@ -63,6 +63,22 @@ export type Habit = {
    */
   stepGoals?: number[];
   /**
+   * Optional ascending goals for 'value' mode, 0-3 entries. Unset/empty keeps
+   * the plain "any entry counts" behavior. When set, the tier is derived live
+   * from the entered number, same ladder as steps: reaching goal 1/2/3 →
+   * done/goal/ideal (outline, ring, star); an entry below goal 1 is not done.
+   */
+  valueGoals?: number[];
+  /**
+   * When each set of value goals took effect, oldest first. `from` is a month
+   * (YYYY-MM); an entry applies to every day from that month until the next
+   * entry. Editing goals replaces only the CURRENT month's entry, so finished
+   * months keep the tiers they earned. Days before the first entry had no
+   * goals (plain any-entry-counts). '0000-00' = since the beginning (goals
+   * set when the habit was created). `valueGoals` mirrors the latest entry.
+   */
+  valueGoalHistory?: { from: string; goals: number[] }[];
+  /**
    * For 'steps' mode: the last fully-ended local day (YYYY-MM-DD) whose
    * FINAL step count has been written to its record. A day's record is
    * otherwise only as fresh as the last foreground sync that day, so the

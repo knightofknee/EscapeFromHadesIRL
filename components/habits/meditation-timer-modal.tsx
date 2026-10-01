@@ -19,6 +19,8 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { persistHabitRecord } from '@/lib/persist-record';
 import {
+  DEFAULT_MEDITATION_MINUTES,
+  DEFAULT_MEDITATION_SESSIONS,
   formatTimerDuration,
   getMeditationQualifyingCount,
   shouldRingInApp,
@@ -116,8 +118,8 @@ export function MeditationTimerModal({
   const { todayStr } = useTodayDate();
   const isToday = date === todayStr;
 
-  const targetSessions = habit?.meditationSessions ?? 1;
-  const targetMinutes = habit?.meditationMinutes ?? 5;
+  const targetSessions = habit?.meditationSessions ?? DEFAULT_MEDITATION_SESSIONS;
+  const targetMinutes = habit?.meditationMinutes ?? DEFAULT_MEDITATION_MINUTES;
   const defaultDurationSec = targetMinutes * 60;
 
   // Timer state. `totalSec` = the configured run length (editable when idle).

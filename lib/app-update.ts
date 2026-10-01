@@ -22,6 +22,8 @@ export type AppUpdateInfo = {
   latestVersion: string;
   /** Link to this platform's store listing. */
   storeUrl: string;
+  /** Config/app.message: an optional per-release line (what's new) that replaces the card's built-in text. */
+  message?: string;
 };
 
 /**
@@ -134,7 +136,8 @@ export async function checkForAppUpdate(): Promise<AppUpdateInfo | null> {
     if (typeof storeUrl !== 'string' || !storeUrl) return null;
 
     if (!isNewerVersion(latestVersion, installed)) return null;
-    return { latestVersion, storeUrl };
+    const message = typeof data?.message === 'string' ? data.message.trim() : '';
+    return { latestVersion, storeUrl, ...(message ? { message } : {}) };
   } catch {
     return null;
   }

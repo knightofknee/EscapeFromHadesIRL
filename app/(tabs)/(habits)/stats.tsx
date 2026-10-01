@@ -19,7 +19,16 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { Habit, HabitRecord } from '@/types/habit';
 import { LEVEL_CHECKERS } from '@/lib/habit-scoring';
 import type { CompletionChecker } from '@/lib/habit-scoring';
-import { computeRates, computeMonthlyRates, getStatsPageCount, STATS_DISPLAY_MONTHS } from '@/lib/habit-stats';
+import {
+  computeRates,
+  computeMonthlyRates,
+  computeValueAverages,
+  computeMonthlyValueAverages,
+  formatStatValue,
+  getStatsPageCount,
+  isValueTrendHabit,
+  STATS_DISPLAY_MONTHS,
+} from '@/lib/habit-stats';
 import { buildStatsHtml } from '@/lib/stats-pdf';
 import { computeStreak } from '@/lib/habit-streaks';
 import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
@@ -58,17 +67,28 @@ function StatsPageContent({
   vacationSet: Set<string>;
   winOnlyWeekends: boolean;
 }) {
+  // Value habits chart the numeric trend (avg per day) instead of a
+  // completion rate — streaks keep the "any entry counts" reading.
+  const valueTrend = isValueTrendHabit(habit);
+
   const { current, longest } = useMemo(
     () => computeStreak(habit, recordIndex, checker, vacationSet, { winOnlyWeekends }),
     [habit, recordIndex, checker, vacationSet, winOnlyWeekends],
   );
   const rates = useMemo(
-    () => computeRates(habit, recordIndex, checker, vacationSet, winOnlyWeekends),
-    [habit, recordIndex, checker, vacationSet, winOnlyWeekends],
+    () => (valueTrend ? null : computeRates(habit, recordIndex, checker, vacationSet, winOnlyWeekends)),
+    [habit, recordIndex, checker, vacationSet, winOnlyWeekends, valueTrend],
+  );
+  const averages = useMemo(
+    () => (valueTrend ? computeValueAverages(habit, recordIndex, vacationSet, winOnlyWeekends) : null),
+    [habit, recordIndex, vacationSet, winOnlyWeekends, valueTrend],
   );
   const monthlyData = useMemo(
-    () => computeMonthlyRates(habit, recordIndex, STATS_DISPLAY_MONTHS, checker, vacationSet, winOnlyWeekends),
-    [habit, recordIndex, checker, vacationSet, winOnlyWeekends],
+    () =>
+      valueTrend
+        ? computeMonthlyValueAverages(habit, recordIndex, STATS_DISPLAY_MONTHS, vacationSet, winOnlyWeekends)
+        : computeMonthlyRates(habit, recordIndex, STATS_DISPLAY_MONTHS, checker, vacationSet, winOnlyWeekends),
+    [habit, recordIndex, checker, vacationSet, winOnlyWeekends, valueTrend],
   );
 
   return (
@@ -78,14 +98,25 @@ function StatsPageContent({
         <StatsCard label="Longest Streak" value={longest} subtitle="days" color={colors.tileDouble} />
       </View>
       <View style={styles.statsRow}>
-        <StatsCard label="7 Days" value={`${rates.week}%`} />
-        <StatsCard label="30 Days" value={`${rates.month}%`} />
-        <StatsCard label="90 Days" value={`${rates.quarter}%`} />
+        {averages ? (
+          <>
+            <StatsCard label="7 Days" value={formatStatValue(averages.week)} subtitle="avg/day" />
+            <StatsCard label="30 Days" value={formatStatValue(averages.month)} subtitle="avg/day" />
+            <StatsCard label="90 Days" value={formatStatValue(averages.quarter)} subtitle="avg/day" />
+          </>
+        ) : (
+          <>
+            <StatsCard label="7 Days" value={`${rates!.week}%`} />
+            <StatsCard label="30 Days" value={`${rates!.month}%`} />
+            <StatsCard label="90 Days" value={`${rates!.quarter}%`} />
+          </>
+        )}
       </View>
       <StatsChart
         data={monthlyData}
-        title="Monthly Completion Rate"
+        title={valueTrend ? 'Monthly Average Per Day' : 'Monthly Completion Rate'}
         color={habit.color}
+        format={valueTrend ? 'number' : 'percent'}
       />
     </>
   );

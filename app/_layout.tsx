@@ -35,6 +35,8 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { ErrorToast } from '@/components/ui/error-toast';
 import { OfflineModal } from '@/components/ui/offline-modal';
 import { UpdateModal } from '@/components/ui/update-modal';
+import { UpdateRequiredGate } from '@/components/ui/update-required-gate';
+import { CalendarTipsModal } from '@/components/ui/calendar-tips-modal';
 import { ActiveDayTracker } from '@/hooks/use-earned-quote';
 import { MeditationAlarmWatcher } from '@/components/habits/meditation-alarm-watcher';
 import { AuthProvider, useAuth } from '@/contexts/auth-context';
@@ -125,6 +127,8 @@ function RootNavigator() {
           buttons in glass capsules we can't opt out of, so the screen draws
           its own plain-text Cancel/Save row. */}
       <Stack.Screen name="tile-settings" options={{ presentation: 'modal', headerShown: false }} />
+      <Stack.Screen name="chore-edit" options={{ presentation: 'modal', headerShown: false }} />
+      <Stack.Screen name="chore-starter" options={{ presentation: 'modal', headerShown: false }} />
       {/* Draws its own back-row header (same iOS 26 capsule reason as
           tile-settings) — without this entry it gets a default native bar
           titled "revive-habit" stacked above its own. */}
@@ -161,6 +165,7 @@ export default function RootLayout() {
                       while the tour runs) — as an RN Modal its stacking is
                       independent of tree position anyway. */}
                   <UpdateModal />
+                  <CalendarTipsModal />
                 </TourProvider>
                 {/* Counts active days from the root so notes-first sessions
                     still count toward milestone quotes. */}
@@ -171,6 +176,9 @@ export default function RootLayout() {
                 <MeditationAlarmWatcher />
                 <ErrorToast />
                 <OfflineModal />
+                {/* Last in the tree so it paints over everything above: the
+                    hard floor from Config/app.minVersion (lib/update-gate.ts). */}
+                <UpdateRequiredGate />
                 <StatusBar style={effectiveScheme === 'dark' ? 'light' : 'dark'} />
               </ThemeProvider>
             </AppDataProviders>

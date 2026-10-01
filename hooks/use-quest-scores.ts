@@ -1,6 +1,6 @@
 import { useMemo, useRef } from 'react';
 import { formatDate } from '@/lib/date-utils';
-import { shouldSkipWeekend, isTieredMode, recordLevel } from '@/lib/habit-scoring';
+import { shouldSkipWeekend, isTieredHabit, recordLevel } from '@/lib/habit-scoring';
 import type { Quest } from '@/types/quest';
 import type { Habit, HabitRecord } from '@/types/habit';
 
@@ -141,7 +141,7 @@ export function scoreQuest(
     !quest.allHabits &&
     required > 1 &&
     linkedHabits.length > 0 &&
-    !linkedHabits.some((h) => isTieredMode(h.recordingMode))
+    !linkedHabits.some((h) => isTieredHabit(h))
   ) {
     required = 1;
   }
@@ -323,7 +323,7 @@ export function useQuestScores(
         !quest.allHabits &&
         (quest.successLevel ?? 1) > 1 &&
         linkedHabits.length > 0 &&
-        !linkedHabits.some((h) => isTieredMode(h.recordingMode))
+        !linkedHabits.some((h) => isTieredHabit(h))
           ? 1
           : (quest.successLevel ?? 1);
 

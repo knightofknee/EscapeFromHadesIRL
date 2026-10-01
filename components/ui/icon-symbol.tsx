@@ -26,6 +26,7 @@ const MAPPING = {
   'checkmark.square.fill': 'check-box',
   'doc.text.fill': 'description',
   'gearshape.fill': 'settings',
+  'house.fill': 'home',
   'keyboard.chevron.compact.down': 'keyboard-hide',
   'questionmark.circle': 'help-outline',
   strikethrough: 'format-strikethrough',

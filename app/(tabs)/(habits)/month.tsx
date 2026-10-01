@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useCallback } from 'react';
 import { StyleSheet, ScrollView, Pressable, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -10,7 +10,18 @@ import { useHabitRecords, formatDate } from '@/hooks/use-habit-records';
 import { useTodayDate } from '@/hooks/use-today-date';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
-import { isRecordCompleted, shouldSkipWeekend } from '@/lib/habit-scoring';
+import { shouldSkipWeekend } from '@/lib/habit-scoring';
+import { computeDayBreakdown } from '@/lib/day-breakdown';
+import { DayBreakdownPopover, type PopoverAnchor } from '@/components/habits/day-breakdown-popover';
+import { formatStatValue } from '@/lib/habit-stats';
+import {
+  computeMonthHabitStats,
+  formatMinutes,
+  formatSteps,
+  type MonthAmount,
+  type MonthDayInput,
+} from '@/lib/month-habit-stats';
+import { MonthSparkline } from '@/components/habits/month-sparkline';
 import { readableTextOn } from '@/lib/contrast';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -92,60 +103,84 @@ export default function MonthViewScreen() {
     return daysInMonth;
   }, [year, month, daysInMonth, todayDate]);
 
-  // Per-habit completion rate for the month — vacation days and weekend
-  // non-completions are excluded from both numerator and denominator. With
-  // the per-habit weekend-skip rule, each habit can have its own
-  // denominator, so `activeDays` is computed inside the loop rather than
-  // as a shared scalar.
+  // Per-habit month stats (lib/month-habit-stats): completion rate, the
+  // total/average/median trio for amount habits (value, steps, meditation
+  // minutes), and the sparkline series. Vacation days and weekend
+  // non-completions leave the month entirely; with the per-habit
+  // weekend-skip rule each habit can have its own denominator.
   const habitRates = useMemo(() => {
     return habits.map((habit) => {
-      let completed = 0;
-      let activeDays = 0;
+      const days: MonthDayInput[] = [];
       for (let d = 1; d <= countDays; d++) {
         const dateStr = formatDate(new Date(year, month, d));
-        if (vacationSet.has(dateStr)) continue;
         const record = recordIndex.get(`${habit.id}_${dateStr}`);
-        if (shouldSkipWeekend(habit, record, dateStr, winOnlyWeekends)) continue;
-        activeDays++;
-        if (isRecordCompleted(habit, record)) completed++;
+        const excluded =
+          vacationSet.has(dateStr) || shouldSkipWeekend(habit, record, dateStr, winOnlyWeekends);
+        days.push({ day: d, record, excluded });
       }
-      const rate = activeDays > 0 ? Math.round((completed / activeDays) * 100) : null;
-      return { habit, completed, activeDays, rate };
+      return { habit, ...computeMonthHabitStats(habit, days) };
     });
   }, [habits, recordIndex, year, month, countDays, vacationSet, winOnlyWeekends]);
 
-  // Heatmap data: for each day, weighted score of habit completion
-  // Base completion = 1.0, goal/double = 1.25, ideal = 1.5
-  // Vacation days are skipped — they render as the vacation tile, not
-  // part of the heatmap. With "Win only Weekends" on, weekend habits that
-  // weren't completed are excluded from both the numerator and the
-  // per-day denominator (so the day's score reflects only the habits the
-  // user was effectively tracking).
+  // Heatmap data: each day's weighted habit score (see lib/day-breakdown
+  // for the weights). Vacation days are skipped — they render as the
+  // vacation tile, not part of the heatmap.
+  const breakdownFor = useCallback(
+    (day: number) =>
+      computeDayBreakdown(
+        habits,
+        formatDate(new Date(year, month, day)),
+        (habit) => recordIndex.get(`${habit.id}_${formatDate(new Date(year, month, day))}`),
+        winOnlyWeekends,
+      ),
+    [habits, recordIndex, year, month, winOnlyWeekends],
+  );
   const dayCompletionMap = useMemo(() => {
     const map: Record<number, number> = {};
     if (habits.length === 0) return map;
-    // Max possible per habit is 1.5 (ideal).
-    const maxPerHabit = 1.5;
     for (let d = 1; d <= daysInMonth; d++) {
-      const dateStr = formatDate(new Date(year, month, d));
-      if (vacationSet.has(dateStr)) continue;
-      let score = 0;
-      let activeHabits = 0;
-      for (const habit of habits) {
-        const record = recordIndex.get(`${habit.id}_${dateStr}`);
-        if (shouldSkipWeekend(habit, record, dateStr, winOnlyWeekends)) continue;
-        activeHabits++;
-        if (!record) continue;
-        const v = record.value;
-        if (v === 'ideal') score += 1.5;
-        else if (v === 'goal' || v === 'double') score += 1.25;
-        else if (isRecordCompleted(habit, record)) score += 1.0;
-      }
-      const denominator = activeHabits * maxPerHabit;
-      map[d] = denominator > 0 ? score / denominator : 0;
+      if (vacationSet.has(formatDate(new Date(year, month, d)))) continue;
+      map[d] = breakdownFor(d).ratio;
     }
     return map;
-  }, [habits, recordIndex, year, month, daysInMonth, vacationSet, winOnlyWeekends]);
+  }, [habits.length, breakdownFor, year, month, daysInMonth, vacationSet]);
+
+  // Tap a day to see what's behind its shade. The cell is measured against
+  // the screen container so the popover can sit right above it. Any touch
+  // on the container closes it (touches still reach the cells, so a tap on
+  // another day closes this one AND opens that one).
+  const containerRef = useRef<View>(null);
+  const [bounds, setBounds] = useState({ width: 0, height: 0 });
+  const cellRefs = useRef(new Map<number, View | null>());
+  const [popover, setPopover] = useState<{ day: number; anchor: PopoverAnchor } | null>(null);
+  // The day whose popover this touch just closed: tapping it again is a
+  // toggle, so its press must not reopen it.
+  const closedByTouchRef = useRef<number | null>(null);
+  const openDay = useCallback((day: number) => {
+    if (closedByTouchRef.current === day) {
+      closedByTouchRef.current = null;
+      return;
+    }
+    const cell = cellRefs.current.get(day);
+    const container = containerRef.current;
+    if (!cell || !container) return;
+    container.measureInWindow((cx, cy) => {
+      cell.measureInWindow((x, y, width, height) => {
+        setPopover({ day, anchor: { x: x - cx, y: y - cy, width, height } });
+      });
+    });
+  }, []);
+  const popoverBreakdown = useMemo(
+    () => (popover ? breakdownFor(popover.day) : null),
+    [popover, breakdownFor],
+  );
+  const popoverTitle = popover
+    ? new Date(year, month, popover.day).toLocaleDateString(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+      })
+    : '';
 
   function heatmapColor(ratio: number): string {
     if (ratio === 0) return colors.tileUnrecorded;
@@ -171,6 +206,15 @@ export default function MonthViewScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <ThemedView style={styles.container}>
+      <View
+        ref={containerRef}
+        style={styles.container}
+        onLayout={(e) => setBounds(e.nativeEvent.layout)}
+        onTouchStart={() => {
+          closedByTouchRef.current = popover?.day ?? null;
+          if (popover) setPopover(null);
+        }}
+      >
         <View style={styles.header}>
           <Pressable onPress={() => setMonthOffset((o) => o - 1)} style={styles.navButton}>
             <ThemedText style={styles.navText}>‹</ThemedText>
@@ -228,15 +272,21 @@ export default function MonthViewScreen() {
                     );
                   }
                   return (
-                    <View
+                    <Pressable
                       key={di}
+                      ref={(node) => {
+                        cellRefs.current.set(day, node);
+                      }}
+                      onPress={() => openDay(day)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${MONTH_NAMES[month]} ${day}, see habit breakdown`}
                       style={[
                         styles.calendarCell,
                         { backgroundColor: heatmapColor(dayCompletionMap[day] ?? 0) },
                       ]}
                     >
                       <ThemedText style={styles.calendarDayText}>{day}</ThemedText>
-                    </View>
+                    </Pressable>
                   );
                 })}
               </View>
@@ -247,7 +297,7 @@ export default function MonthViewScreen() {
           <ThemedText type="defaultSemiBold" style={styles.sectionTitle}>
             Habit Completion
           </ThemedText>
-          {habitRates.map(({ habit, completed, activeDays, rate }) => (
+          {habitRates.map(({ habit, completed, activeDays, rate, amount, series, yMax }) => (
             <View key={habit.id} style={[styles.habitRow, { borderColor: colors.tileBorder }]}>
               <View style={styles.habitInfo}>
                 <ThemedText style={[styles.habitAbbr, { color: habit.color }]}>
@@ -256,22 +306,59 @@ export default function MonthViewScreen() {
                 <ThemedText style={styles.habitName}>{habit.name}</ThemedText>
               </View>
               <View style={styles.habitStats}>
-                <ThemedText style={styles.rateText}>{rate == null ? '—' : `${rate}%`}</ThemedText>
-                <ThemedText style={styles.countText}>
-                  {completed}/{activeDays}
-                </ThemedText>
+                <View>
+                  <ThemedText style={styles.rateText}>{rate == null ? '—' : `${rate}%`}</ThemedText>
+                  <ThemedText style={styles.countText}>
+                    {completed}/{activeDays} days
+                  </ThemedText>
+                </View>
+                {amount && (
+                  <View style={styles.amountTrio}>
+                    <AmountStat label="avg/day" value={formatAmount(amount, amount.average)} />
+                    {amount.showMedian && (
+                      <AmountStat label="median" value={formatAmount(amount, amount.median)} />
+                    )}
+                    <AmountStat label="total" value={formatAmount(amount, amount.total)} />
+                  </View>
+                )}
               </View>
-              <View style={[styles.rateBar, { backgroundColor: colors.tileUnrecorded }]}>
-                <View
-                  style={[styles.rateFill, { width: `${rate ?? 0}%`, backgroundColor: habit.color }]}
-                />
-              </View>
+              <MonthSparkline
+                id={habit.id}
+                color={habit.color}
+                series={series}
+                yMax={yMax}
+                daysInMonth={daysInMonth}
+                baselineColor={colors.tileUnrecorded}
+              />
             </View>
           ))}
         </ScrollView>
         )}
+        <DayBreakdownPopover
+          anchor={popover?.anchor ?? null}
+          bounds={bounds}
+          title={popoverTitle}
+          breakdown={popoverBreakdown}
+        />
+      </View>
       </ThemedView>
     </SafeAreaView>
+  );
+}
+
+function formatAmount(amount: MonthAmount, n: number | null): string {
+  if (n == null) return '—';
+  if (amount.kind === 'minutes') return formatMinutes(n);
+  if (amount.kind === 'steps') return formatSteps(n);
+  return formatStatValue(n);
+}
+
+function AmountStat({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.amountStat}>
+      <ThemedText style={styles.amountValue} numberOfLines={1}>{value}</ThemedText>
+      <ThemedText style={styles.amountLabel}>{label}</ThemedText>
+    </View>
   );
 }
 
@@ -313,9 +400,11 @@ const styles = StyleSheet.create({
   habitInfo: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   habitAbbr: { fontSize: 16, fontWeight: '700' },
   habitName: { fontSize: 14 },
-  habitStats: { flexDirection: 'row', justifyContent: 'space-between' },
+  habitStats: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', gap: 12 },
   rateText: { fontSize: 20, fontWeight: '700' },
-  countText: { fontSize: 14, opacity: 0.5, alignSelf: 'flex-end' },
-  rateBar: { height: 6, borderRadius: 3, overflow: 'hidden' },
-  rateFill: { height: '100%', borderRadius: 3 },
+  countText: { fontSize: 13, opacity: 0.5 },
+  amountTrio: { flexDirection: 'row', gap: 16, flexShrink: 1 },
+  amountStat: { alignItems: 'flex-end' },
+  amountValue: { fontSize: 17, fontWeight: '700' },
+  amountLabel: { fontSize: 11, opacity: 0.5, lineHeight: 14 },
 });

@@ -20,7 +20,7 @@ import { KIND_COLOR, type QuestKind } from '@/components/quests/quest-card';
 import { questStandingLine } from '@/lib/quest-narrative';
 import { emitError } from '@/lib/error-bus';
 import { get18MonthWindow } from '@/lib/date-utils';
-import { isTieredMode } from '@/lib/habit-scoring';
+import { isTieredHabit } from '@/lib/habit-scoring';
 import { setPendingHabitCallback } from '@/lib/pending-habit-link';
 
 
@@ -69,7 +69,7 @@ export default function QuestDetailScreen() {
     [habits, quest],
   );
   // Success-level editing only applies to a tiered (quad-family) habit.
-  const isQuadHabit = linkedHabits.length > 0 && isTieredMode(linkedHabits[0].recordingMode);
+  const isQuadHabit = linkedHabits.length > 0 && isTieredHabit(linkedHabits[0]);
 
   // Hold while quests/scores load — otherwise a deep link flashes
   // "Quest not found" and scores flash 0 before the data arrives.
@@ -353,7 +353,7 @@ export default function QuestDetailScreen() {
                       // could never be reached — the quest would silently
                       // zero out). Switching between tiered habits must NOT
                       // reset: the level survives the relink.
-                      const linkingTierless = !isTieredMode(h.recordingMode);
+                      const linkingTierless = !isTieredHabit(h);
                       if (linkingTierless && (quest.successLevel ?? 1) > 1) {
                         updateQuest(quest.id, { linkedHabitIds: next, successLevel: 1 });
                       } else {

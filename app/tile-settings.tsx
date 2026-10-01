@@ -14,6 +14,7 @@ import { useTodayRecords } from '@/hooks/use-today-records';
 import { useUserSettingsContext } from '@/contexts/user-settings-context';
 import { consumePendingHabitCallback, clearPendingHabitCallback } from '@/lib/pending-habit-link';
 import { addDays, getTodayString } from '@/lib/date-utils';
+import { monthKey, nextValueGoalHistory, valueGoalsOn } from '@/lib/habit-scoring';
 import type { RecordingMode, GlyphData } from '@/types/habit';
 import { pickTileIconImage } from '@/lib/tile-icon';
 import { emitError } from '@/lib/error-bus';
@@ -25,6 +26,9 @@ import {
   getNotificationPermissionBucket,
   requestNotificationPermission,
 } from '@/lib/meditation-notifications';
+import { DEFAULT_MEDITATION_MINUTES, DEFAULT_MEDITATION_SESSIONS } from '@/lib/meditation';
+import { buildMeditationRecord } from '@/lib/meditation-completion';
+import { persistHabitRecord } from '@/lib/persist-record';
 
 type ModeOption = { value: RecordingMode; label: string; description: string; auto?: boolean };
 
@@ -35,7 +39,7 @@ const RECORDING_MODES: ModeOption[] = [
   { value: 'boolean', label: 'Yes / No', description: 'Tap to toggle' },
   { value: 'triple', label: 'Participation / Goal', description: 'Tap to cycle through 3 levels' },
   { value: 'counter', label: 'Counter', description: 'Tap to increment' },
-  { value: 'value', label: 'Value', description: 'Enter a value' },
+  { value: 'value', label: 'Value', description: 'Enter a number. Optional goals below light up the outline, circle and star' },
   { value: 'steps', label: 'Steps Counter', description: 'Auto-filled from your step count', auto: true },
   { value: 'meditation', label: 'Meditation', description: 'Tap to start a timer; pause/resume, log sessions', auto: true },
   { value: 'creativeWriting', label: 'Creative Writing', description: "Auto-bumps to 'yes' the first time you write a note today", auto: true },
@@ -65,8 +69,6 @@ function defaultAbbreviation(name: string, others: { abbreviation?: string }[]):
   return three.length === 3 && !isTaken(three) ? three : two;
 }
 
-const DEFAULT_MEDITATION_SESSIONS = 1;
-const DEFAULT_MEDITATION_MINUTES = 5;
 const DEFAULT_MEDITATION_IDEAL_TOTAL_MINUTES = 30;
 
 export default function TileSettingsModal() {
@@ -96,6 +98,10 @@ export default function TileSettingsModal() {
     existingHabit?.recordingMode ?? 'quad',
   );
   const [stepGoals, setStepGoals] = useState<number[]>(existingHabit?.stepGoals ?? []);
+  // Value goals are edited as text so decimals ("1.5") can be typed through.
+  const [valueGoals, setValueGoals] = useState<string[]>(
+    (existingHabit?.valueGoals ?? []).map(String),
+  );
   const [meditationSessions, setMeditationSessions] = useState<number>(
     existingHabit?.meditationSessions ?? DEFAULT_MEDITATION_SESSIONS,
   );
@@ -242,6 +248,7 @@ export default function TileSettingsModal() {
       setIcon(existingHabit.icon ?? '');
       setRecordingMode(existingHabit.recordingMode);
       setStepGoals(existingHabit.stepGoals ?? []);
+      setValueGoals((existingHabit.valueGoals ?? []).map(String));
       setMeditationSessions(existingHabit.meditationSessions ?? DEFAULT_MEDITATION_SESSIONS);
       setMeditationMinutes(existingHabit.meditationMinutes ?? DEFAULT_MEDITATION_MINUTES);
       setMeditationIdealTotalMinutes(
@@ -300,6 +307,7 @@ export default function TileSettingsModal() {
     meditationIdealTotalMinutes !==
       (existingHabit?.meditationIdealTotalMinutes ?? DEFAULT_MEDITATION_IDEAL_TOTAL_MINUTES) ||
     JSON.stringify(stepGoals) !== JSON.stringify(existingHabit?.stepGoals ?? []) ||
+    JSON.stringify(valueGoals) !== JSON.stringify((existingHabit?.valueGoals ?? []).map(String)) ||
     (counterInitialized && counterValue !== String(currentCounterValue)) ||
     (positionInitialized && existingHabit != null && position !== currentIndex + 1);
 
@@ -334,6 +342,25 @@ export default function TileSettingsModal() {
       return;
     }
     const goalsToSave = recordingMode === 'steps' ? cleanGoals : undefined;
+
+    // Value goals are optional: positive numbers (decimals allowed),
+    // ascending, deduped, max 3. None → field removed, plain value behavior.
+    const cleanValueGoals = [
+      ...new Set(valueGoals.map((t) => Number(t.trim())).filter((n) => Number.isFinite(n) && n > 0)),
+    ]
+      .sort((a, b) => a - b)
+      .slice(0, 3);
+    const valueGoalsToSave =
+      recordingMode === 'value' && cleanValueGoals.length > 0 ? cleanValueGoals : undefined;
+    // Goal changes take effect from THIS month: finished months keep the
+    // goals (and so the tiers) they had. Omit the key when nothing changed.
+    const today = getTodayString();
+    const goalsInEffect = existingHabit ? valueGoalsOn(existingHabit, today) : [];
+    const valueGoalHistoryUpdate =
+      recordingMode === 'value' &&
+      JSON.stringify(cleanValueGoals) !== JSON.stringify(goalsInEffect)
+        ? { valueGoalHistory: nextValueGoalHistory(existingHabit, cleanValueGoals, monthKey(today)) }
+        : {};
 
     // Pointer rules (see useStepsBackfill): becoming a steps habit → start
     // confirming with the first full day (yesterday; days before the switch
@@ -387,6 +414,8 @@ export default function TileSettingsModal() {
         iconImage,
         recordingMode,
         stepGoals: goalsToSave,
+        valueGoals: valueGoalsToSave,
+        ...valueGoalHistoryUpdate,
         ...(recordingMode === 'steps'
           ? { stepsConfirmedThrough: addDays(getTodayString(), -1) }
           : {}),
@@ -415,6 +444,8 @@ export default function TileSettingsModal() {
         ...(iconImage !== existingHabit.iconImage ? { iconImage } : {}),
         recordingMode,
         stepGoals: goalsToSave,
+        valueGoals: valueGoalsToSave,
+        ...valueGoalHistoryUpdate,
         ...stepsPointerUpdate,
         meditationSessions: meditationSessionsToSave,
         meditationMinutes: meditationMinutesToSave,
@@ -423,6 +454,35 @@ export default function TileSettingsModal() {
         tileSize,
         color,
       });
+
+      // A meditation record freezes its tier at write time, so a target
+      // change would leave the day's tile showing a tier earned under the
+      // old config until the next session recomputes it. Rewrite the viewed
+      // day's record from its sessions under the new config now.
+      if (
+        isMeditation &&
+        existingHabit.recordingMode === 'meditation' &&
+        existingRecord?.sessions?.length &&
+        (meditationSessionsToSave !== existingHabit.meditationSessions ||
+          meditationMinutesToSave !== existingHabit.meditationMinutes ||
+          meditationIdealTotalMinutesToSave !== existingHabit.meditationIdealTotalMinutes)
+      ) {
+        await persistHabitRecord(
+          buildMeditationRecord(
+            {
+              ...existingHabit,
+              meditationSessions: meditationSessionsToSave,
+              meditationMinutes: meditationMinutesToSave,
+              meditationIdealTotalMinutes:
+                meditationIdealTotalMinutesToSave ?? existingHabit.meditationIdealTotalMinutes,
+            },
+            existingRecord.userId,
+            existingRecord.date,
+            existingRecord.sessions,
+          ),
+          { silent: true },
+        );
+      }
 
       // Save counter value if changed
       if (recordingMode === 'counter') {
@@ -820,6 +880,59 @@ export default function TileSettingsModal() {
             <ThemedText style={styles.hint}>
               Level 1 is required. Higher goals light up the next tier: a circle
               for Level 2, a star for Level 3.
+            </ThemedText>
+          </>
+        )}
+
+        {/* Optional goals (value mode) */}
+        {recordingMode === 'value' && (
+          <>
+            <ThemedText type="defaultSemiBold" style={styles.label}>
+              Goals (optional)
+            </ThemedText>
+            {valueGoals.map((goal, i) => (
+              <View key={i} style={styles.goalRow}>
+                <ThemedText style={styles.goalLabel}>Level {i + 1}</ThemedText>
+                <TextInput
+                  style={[styles.goalInput, { color: colors.text, borderColor: colors.tileBorder }]}
+                  value={goal}
+                  onChangeText={(t) => {
+                    const cleaned = t.replace(/[^0-9.]/g, '');
+                    setValueGoals((prev) => {
+                      const next = [...prev];
+                      next[i] = cleaned;
+                      return next;
+                    });
+                  }}
+                  keyboardType="decimal-pad"
+                  placeholder={String(i + 1)}
+                  placeholderTextColor={colors.icon}
+                  maxLength={9}
+                />
+                {i === valueGoals.length - 1 && (
+                  <Pressable
+                    style={[styles.stepperButton, { borderColor: colors.tileBorder }]}
+                    onPress={() => setValueGoals((prev) => prev.slice(0, -1))}
+                  >
+                    <ThemedText style={styles.stepperText}>−</ThemedText>
+                  </Pressable>
+                )}
+              </View>
+            ))}
+            {valueGoals.length < 3 && (
+              <Pressable
+                style={[styles.addLevelButton, { borderColor: colors.tint }]}
+                onPress={() => setValueGoals((prev) => [...prev, ''])}
+              >
+                <ThemedText style={[styles.addLevelText, { color: colors.tint }]}>
+                  {valueGoals.length === 0 ? '+ Add Goal' : '+ Add Level'}
+                </ThemedText>
+              </Pressable>
+            )}
+            <ThemedText style={styles.hint}>
+              {valueGoals.length === 0
+                ? 'No goals: any entry counts as done. Add goals to earn tiers like steps.'
+                : 'Reaching Level 1 counts as done. Level 2 adds the circle, Level 3 the star. Less than Level 1 stays dim. Changes count from this month on; past months keep their goals.'}
             </ThemedText>
           </>
         )}

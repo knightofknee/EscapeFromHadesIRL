@@ -24,6 +24,7 @@ const USER_DATA_COLLECTIONS = [
   'tags',
   'quests',
   'vacationDays',
+  'chores',
 ] as const;
 
 /**

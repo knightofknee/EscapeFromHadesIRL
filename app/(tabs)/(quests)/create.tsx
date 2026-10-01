@@ -19,7 +19,7 @@ import { QuestColors } from '@/constants/theme';
 import { QUEST_TEMPLATES } from '@/constants/quest-templates';
 import { QuestPhilosophy } from '@/components/quests/quest-philosophy';
 import { suggestPactWhy } from '@/lib/quest-narrative';
-import { isTieredMode } from '@/lib/habit-scoring';
+import { isTieredHabit } from '@/lib/habit-scoring';
 import type { QuestType } from '@/types/quest';
 
 const DAYS = [1, 2, 3, 4, 5, 6, 7];
@@ -109,7 +109,7 @@ export default function CreateQuestScreen() {
   // The single linked habit (custom quests link exactly one). The success-
   // level field only applies to quad-type habits (yes/goal/ideal tiers).
   const linkedHabit = habits.find((h) => h.id === linkedHabitIds[0]);
-  const isQuadHabit = !!linkedHabit && isTieredMode(linkedHabit.recordingMode);
+  const isQuadHabit = !!linkedHabit && isTieredHabit(linkedHabit);
 
   function toggleHabit(id: string) {
     setLinkedHabitIds((prev) =>

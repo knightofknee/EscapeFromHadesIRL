@@ -9,21 +9,25 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
  * Onboarding must never be BLOCKED by a storage failure, so every call
  * swallows its error and degrades to "not seen / no-op".
  */
-export type TutorialFeature = 'genesis';
+export type TutorialFeature = 'genesis' | 'calendar-tips';
 
 // Bump to re-show a tour to everyone after a meaningful rewrite of its steps.
 const VERSION = 'v1';
 
-// Flip true while iterating on the tour to force it to re-appear on every
-// refresh (dev builds only — never affects production). Besides re-arming the
-// seen-flag below, this also makes the auto-start ignore the "brand-new
-// account" guard (see DEV_FORCE_TOUR) so you can preview the flow on an
-// account that already has habits/quests.
-// TEMP: ON for previewing the intro/tour on the simulator — set back to false before shipping.
-const DEV_ALWAYS_SHOW = true;
+// Flip a feature true while iterating on it to force it to re-appear on
+// every refresh (dev builds only — never affects production). For the
+// Genesis tour this also makes the auto-start ignore the "brand-new
+// account" guard (see DEV_FORCE_TOUR) so the flow can be previewed on an
+// account that already has habits/quests; leave it false to see the tour
+// only on new accounts, like production.
+const DEV_ALWAYS_SHOW: Record<TutorialFeature, boolean> = {
+  genesis: false,
+  // TEMP: ON to preview the Month-view calendar tips on every reload.
+  'calendar-tips': true,
+};
 
 /** Dev-only: force the Genesis tour to auto-start regardless of account state. */
-export const DEV_FORCE_TOUR = __DEV__ && DEV_ALWAYS_SHOW;
+export const DEV_FORCE_TOUR = __DEV__ && DEV_ALWAYS_SHOW.genesis;
 
 // Session cache is keyed by feature AND uid: a bare feature key would mark the
 // tour "seen" for every account signed into during this app session, so a
@@ -39,7 +43,7 @@ const sessionKeyFor = (feature: TutorialFeature, uid: string) => `${feature}:${u
 /** True once the user has seen (or skipped) the given tutorial. Never throws. */
 export async function getSeen(feature: TutorialFeature, uid: string): Promise<boolean> {
   if (sessionSeen.has(sessionKeyFor(feature, uid))) return true;
-  if (__DEV__ && DEV_ALWAYS_SHOW) return false;
+  if (__DEV__ && DEV_ALWAYS_SHOW[feature]) return false;
   try {
     const v = await AsyncStorage.getItem(keyFor(feature, uid));
     return v === '1';

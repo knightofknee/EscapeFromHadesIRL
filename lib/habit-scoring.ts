@@ -9,6 +9,58 @@ export function isTieredMode(mode: RecordingMode): boolean {
   return TIERED_MODES.includes(mode);
 }
 
+/** Can this habit reach the goal/ideal tiers? The quad-family modes always
+ * can; a value habit can once it has 2+ goals (goal 3 is the star). Quests
+ * use this to offer and enforce goal/ideal bars. */
+export function isTieredHabit(habit: Habit): boolean {
+  if (isTieredMode(habit.recordingMode)) return true;
+  return habit.recordingMode === 'value' && (habit.valueGoals?.length ?? 0) >= 2;
+}
+
+/** Month key used by valueGoalHistory ('YYYY-MM'). */
+export function monthKey(date: string): string {
+  return date.slice(0, 7);
+}
+
+/**
+ * The value goals in effect on `date`: the latest history entry whose month
+ * is on or before the date's month, so a finished month is scored by the
+ * goals it had. No entry yet → no goals. Habits without a history fall back
+ * to their current goals.
+ */
+export function valueGoalsOn(habit: Habit, date: string | undefined): number[] {
+  const history = habit.valueGoalHistory;
+  if (!history?.length || !date) return habit.valueGoals ?? [];
+  const month = monthKey(date);
+  let goals: number[] = [];
+  for (const entry of history) {
+    if (entry.from <= month) goals = entry.goals;
+    else break;
+  }
+  return goals;
+}
+
+/**
+ * History after setting `goals` in `month`: that month's entry is replaced
+ * (edits within a month keep refining it), earlier months are untouched.
+ * A habit that had goals but no history (pre-history) gets its old goals
+ * pinned as the since-the-beginning entry first.
+ */
+export function nextValueGoalHistory(
+  habit: Habit | undefined,
+  goals: number[],
+  month: string,
+): { from: string; goals: number[] }[] {
+  const history = [...(habit?.valueGoalHistory ?? [])];
+  if (history.length === 0 && habit?.valueGoals?.length) {
+    history.push({ from: '0000-00', goals: habit.valueGoals });
+  }
+  const kept = history.filter((e) => e.from < month);
+  // A brand-new habit has no past to protect: its goals apply from the start.
+  const from = habit ? month : '0000-00';
+  return [...kept, { from, goals }];
+}
+
 export type CompletionChecker = (habit: Habit, record?: HabitRecord) => boolean;
 
 /**
@@ -26,6 +78,25 @@ export function isValueRecorded(v: unknown): boolean {
   if (str === '') return false;
   const n = Number(str);
   return Number.isNaN(n) || n !== 0;
+}
+
+/**
+ * Tier of a value-mode entry on the 0-3 scale. Without goals any entry is
+ * level 1 (the original behavior). With goals the number climbs the same
+ * ladder as steps: level = how many goals it reaches, so an entry below
+ * goal 1 (or non-numeric text, which can't reach a number) is level 0.
+ */
+export function valueLevel(v: unknown, goals: number[] | undefined): number {
+  if (!isValueRecorded(v)) return 0;
+  if (!goals || goals.length === 0) return 1;
+  const n = Number(String(v).trim());
+  if (!Number.isFinite(n)) return 0;
+  let level = 0;
+  for (const goal of goals) {
+    if (n >= goal) level++;
+    else break;
+  }
+  return Math.min(3, level);
 }
 
 /**
@@ -52,7 +123,7 @@ export function recordLevel(habit: Habit, record?: HabitRecord): number {
     case 'counter':
       return (v as number) > 0 ? 1 : 0;
     case 'value':
-      return isValueRecorded(v) ? 1 : 0;
+      return valueLevel(v, valueGoalsOn(habit, record.date));
     default:
       return 0;
   }

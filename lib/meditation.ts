@@ -1,5 +1,14 @@
 import type { MeditationSession, QuadValue } from '@/types/habit';
 
+/**
+ * Defaults for a meditation habit with no configured values. Every fallback
+ * (record settlement, timer modal, settings form, starter preset) reads these
+ * so the goal tier can never mean different things in different places. Two
+ * sessions: a single short sit is participation ('yes'), not the goal ring.
+ */
+export const DEFAULT_MEDITATION_SESSIONS = 2;
+export const DEFAULT_MEDITATION_MINUTES = 5;
+
 /** Minutes a single session must last to count as one "long" session for the ideal tier. */
 const IDEAL_SESSION_MIN_MINUTES = 15;
 /** How many "long" sessions in a day earn the ideal tier (independent of the habit's config). */

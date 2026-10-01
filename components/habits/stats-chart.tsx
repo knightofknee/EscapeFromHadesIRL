@@ -1,11 +1,12 @@
 import { StyleSheet, View, Platform } from 'react-native';
-import { CartesianChart, Bar, Line } from 'victory-native';
-import { matchFont, Circle, RoundedRect, Text as SkText } from '@shopify/react-native-skia';
+import { CartesianChart, Bar, Line, useLinePath } from 'victory-native';
+import type { PointsArray } from 'victory-native';
+import { matchFont, Circle, Path, Skia } from '@shopify/react-native-skia';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { rollingAvgLineColor } from '@/constants/grid';
-import { readableTextOn } from '@/lib/contrast';
-import { MONTH_LETTERS, chartHasActivity } from '@/lib/habit-stats';
+import { relativeLuminance } from '@/lib/contrast';
+import { MONTH_LETTERS, STATS_DISPLAY_MONTHS, chartHasActivity, formatStatValue } from '@/lib/habit-stats';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 const axisFont = matchFont({
@@ -13,26 +14,83 @@ const axisFont = matchFont({
   fontSize: 10,
 });
 
-const badgeFont = matchFont({
-  fontFamily: Platform.select({ ios: 'Helvetica', default: 'sans-serif' }),
-  fontSize: 11,
-  fontWeight: 'bold',
-});
-
 type DataPoint = {
   date: string;
   value: number;
   avg?: number;
+  /** Full-window rolling average (pre-start months count as 0). */
+  avgFull?: number;
+  /** Months of history through this month; drives the full-window line's weight. */
+  months?: number;
 };
+
+/** Months of history at which the full-window line reaches full weight —
+ * the display window: a habit with the whole window behind it is solid. */
+const SOLID_MONTHS = STATS_DISPLAY_MONTHS;
+const RIBBON_MIN = 1.5;
+const RIBBON_MAX = 8;
+
+/**
+ * The full-window average, drawn as a ribbon whose width grows with the
+ * months of history behind each point — the habit solidifying. A stroke
+ * can't vary its width along its length, so the smooth path is sampled and
+ * offset along its normals into a filled polygon.
+ */
+function SolidifyingLine({
+  points,
+  months,
+  color,
+}: {
+  points: PointsArray;
+  months: number[];
+  color: string;
+}) {
+  const { path } = useLinePath(points, { curveType: 'monotoneX' });
+  const xs = points.map((p) => p.x);
+  const widthAt = (x: number): number => {
+    // Interpolate months between the two neighbouring month positions.
+    let i = 0;
+    while (i < xs.length - 2 && xs[i + 1] < x) i++;
+    const span = xs[i + 1] - xs[i] || 1;
+    const t = Math.min(1, Math.max(0, (x - xs[i]) / span));
+    const m = (months[i] ?? 0) * (1 - t) + (months[i + 1] ?? 0) * t;
+    return RIBBON_MIN + (RIBBON_MAX - RIBBON_MIN) * Math.min(1, m / SOLID_MONTHS);
+  };
+
+  const ribbon = Skia.Path.Make();
+  const iter = Skia.ContourMeasureIter(path, false, 1);
+  const contour = iter.next();
+  if (contour) {
+    const length = contour.length();
+    const steps = Math.max(2, Math.ceil(length / 2));
+    const left: [number, number][] = [];
+    const right: [number, number][] = [];
+    for (let k = 0; k <= steps; k++) {
+      const [pos, tan] = contour.getPosTan((length * k) / steps);
+      const half = widthAt(pos.x) / 2;
+      // Normal = tangent rotated 90°.
+      left.push([pos.x - tan.y * half, pos.y + tan.x * half]);
+      right.push([pos.x + tan.y * half, pos.y - tan.x * half]);
+    }
+    ribbon.moveTo(left[0][0], left[0][1]);
+    for (const [x, y] of left.slice(1)) ribbon.lineTo(x, y);
+    for (let k = right.length - 1; k >= 0; k--) ribbon.lineTo(right[k][0], right[k][1]);
+    ribbon.close();
+  }
+  return <Path path={ribbon} color={color} style="fill" />;
+}
 
 type StatsChartProps = {
   data: DataPoint[];
   title: string;
   color?: string;
   height?: number;
+  /** Axis/tag formatting: completion percentages (default) or raw numeric
+   * averages (value-trend habits). */
+  format?: 'percent' | 'number';
 };
 
-export function StatsChart({ data, title, color, height = 200 }: StatsChartProps) {
+export function StatsChart({ data, title, color, height = 200, format = 'percent' }: StatsChartProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const chartColor = color ?? colors.tileRecorded;
@@ -50,15 +108,25 @@ export function StatsChart({ data, title, color, height = 200 }: StatsChartProps
     x: i,
     y: d.value,
     avg: d.avg ?? 0,
+    avgFull: d.avgFull ?? 0,
     month: parseInt(d.date.slice(5), 10) - 1,
   }));
 
-  // The current rolling average — the headline number the line tag shows.
+  // The current rolling average — the headline number in the header chip.
   const latestAvg = data[data.length - 1]?.avg ?? 0;
+  const latestAvgText = format === 'percent' ? `${Math.round(latestAvg)}%` : formatStatValue(latestAvg);
   // The featured line wears the habit color's complement (see grid.ts) so
-  // it can never blend into its own bars; tag ink adapts for legibility.
+  // it can never blend into its own bars. Everything that carries the
+  // headline number is outlined in near-black so it reads on any bar/card
+  // combination; tag ink goes dark on bright line colors (green, cyan,
+  // yellow) — white-on-green was unreadable.
   const avgColor = rollingAvgLineColor(chartColor);
-  const tagInk = readableTextOn(avgColor) === '#000000' ? '#1F2937' : '#FFFFFF';
+  const outline = '#0B0D10';
+  const tagInk = relativeLuminance(avgColor) > 0.3 ? outline : '#FFFFFF';
+  // The line begins where the habit's history does (see rollingMonthlyAverage);
+  // pre-start months would otherwise draw it crawling along the floor.
+  const firstActive = Math.max(0, data.findIndex((d) => d.value > 0 || (d.avg ?? 0) > 0));
+  const monthsHistory = data.map((d) => d.months ?? 0);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.tileBackground, borderColor: colors.tileBorder }]}>
@@ -68,6 +136,11 @@ export function StatsChart({ data, title, color, height = 200 }: StatsChartProps
           <View style={styles.legendRow}>
             <View style={[styles.legendLine, { backgroundColor: avgColor }]} />
             <ThemedText style={[styles.legendText, { color: colors.text }]}>rolling average</ThemedText>
+            {/* The headline number lives here, not on the plot, so it never
+                covers the curve. */}
+            <View style={[styles.legendChip, { backgroundColor: avgColor, borderColor: outline }]}>
+              <ThemedText style={[styles.legendValue, { color: tagInk }]}>{latestAvgText}</ThemedText>
+            </View>
           </View>
         )}
       </View>
@@ -75,7 +148,7 @@ export function StatsChart({ data, title, color, height = 200 }: StatsChartProps
         <CartesianChart
           data={chartData}
           xKey="x"
-          yKeys={hasAvg ? ['y', 'avg'] : ['y']}
+          yKeys={hasAvg ? ['y', 'avg', 'avgFull'] : ['y']}
           domainPadding={{ left: 10, right: 10, top: 10 }}
           xAxis={{
             font: axisFont,
@@ -87,7 +160,8 @@ export function StatsChart({ data, title, color, height = 200 }: StatsChartProps
           yAxis={[{
             font: axisFont,
             tickCount: 4,
-            formatYLabel: (v) => `${Math.round(v as number)}%`,
+            formatYLabel: (v) =>
+              format === 'percent' ? `${Math.round(v as number)}%` : formatStatValue(v as number),
             labelColor: colors.text,
             lineColor: `${colors.text}20`,
           }]}
@@ -96,23 +170,10 @@ export function StatsChart({ data, title, color, height = 200 }: StatsChartProps
           }}
         >
           {({ points, chartBounds }) => {
-            // Stock-chart style terminal tag on the rolling-average line:
-            // a dot on the last point plus a gold pill with the current
-            // value — the "current default setting", featured.
-            const last = points.avg?.[points.avg.length - 1];
-            const showTag = hasAvg && last != null && typeof last.y === 'number';
-            const tagText = `${Math.round(latestAvg)}%`;
-            const textW = badgeFont.measureText(tagText).width;
-            const padH = 5;
-            const pillW = textW + padH * 2;
-            const pillH = 17;
-            const lastX = showTag ? (last!.x as number) : 0;
-            const lastY = showTag ? (last!.y as number) : 0;
-            const pillX = Math.min(lastX + 7, chartBounds.right - pillW - 2);
-            const pillY = Math.min(
-              Math.max(lastY - pillH / 2, chartBounds.top + 2),
-              chartBounds.bottom - pillH - 2,
-            );
+            const featured = points.avg?.slice(firstActive) ?? [];
+            const first = featured[0];
+            const last = featured[featured.length - 1];
+            const showDots = hasAvg && first != null && last != null && typeof last.y === 'number';
             return (
               <>
                 {/* Bars carry the month-to-month noise — dimmed so the
@@ -123,25 +184,39 @@ export function StatsChart({ data, title, color, height = 200 }: StatsChartProps
                   color={hasAvg ? `${chartColor}99` : chartColor}
                   roundedCorners={{ topLeft: 3, topRight: 3 }}
                 />
-                {hasAvg && points.avg && (
-                  <Line
-                    points={points.avg}
-                    color={avgColor}
-                    strokeWidth={2.5}
-                    curveType="natural"
-                  />
+                {hasAvg && points.avgFull && (
+                  /* Full-window average, unlabeled: thickens with months of
+                     history and meets the featured line once the whole
+                     window has history. */
+                  <SolidifyingLine points={points.avgFull} months={monthsHistory} color={`${avgColor}80`} />
                 )}
-                {showTag && (
+                {hasAvg && points.avg && (
                   <>
-                    <Circle cx={lastX} cy={lastY} r={3.5} color={avgColor} />
-                    <RoundedRect x={pillX} y={pillY} width={pillW} height={pillH} r={pillH / 2} color={avgColor} />
-                    <SkText
-                      x={pillX + padH}
-                      y={pillY + pillH / 2 + 4}
-                      text={tagText}
-                      font={badgeFont}
-                      color={tagInk}
+                    {/* Dark halo under the line cuts a clean channel through
+                        the bars; monotone curve never overshoots below 0. */}
+                    <Line
+                      points={featured}
+                      color={outline}
+                      strokeWidth={6}
+                      strokeCap="round"
+                      curveType="monotoneX"
                     />
+                    <Line
+                      points={featured}
+                      color={avgColor}
+                      strokeWidth={2.5}
+                      strokeCap="round"
+                      curveType="monotoneX"
+                    />
+                  </>
+                )}
+                {showDots && (
+                  <>
+                    {/* Where the habit began, and where it stands now. */}
+                    <Circle cx={first!.x as number} cy={first!.y as number} r={4} color={outline} />
+                    <Circle cx={first!.x as number} cy={first!.y as number} r={2.5} color={avgColor} />
+                    <Circle cx={last!.x as number} cy={last!.y as number} r={5.5} color={outline} />
+                    <Circle cx={last!.x as number} cy={last!.y as number} r={4} color={avgColor} />
                   </>
                 )}
               </>
@@ -181,6 +256,18 @@ const styles = StyleSheet.create({
   legendText: {
     fontSize: 10,
     opacity: 0.6,
+  },
+  legendChip: {
+    marginLeft: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 2,
+    borderRadius: 999,
+    borderWidth: 1.5,
+  },
+  legendValue: {
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: '700',
   },
   emptyText: {
     textAlign: 'center',
