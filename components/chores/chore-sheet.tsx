@@ -6,7 +6,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { addDays, parseDate } from '@/lib/date-utils';
-import { choreStatus, formatDue, formatFrequency, formatSince } from '@/lib/chores';
+import { choreStatus, formatDue, formatFrequency, formatShortDate, formatSince, isTask } from '@/lib/chores';
 import { CHORE_STATE_COLORS, choreInkColor } from './chore-colors';
 import type { Chore } from '@/types/chore';
 
@@ -30,7 +30,8 @@ function shortDate(date: string): string {
 /**
  * Detail sheet for one chore: a strip of recent days to log when it was
  * done (default today, any of the last 60 days) and tap again to remove,
- * so logging and undoing live on the same control.
+ * so logging and undoing live on the same control. A one-time task shows its
+ * details and one done / not done toggle instead.
  */
 export function ChoreSheet({ chore, today, onClose, onToggleDate, onEdit }: Props) {
   const scheme = useColorScheme() ?? 'light';
@@ -51,6 +52,9 @@ export function ChoreSheet({ chore, today, onClose, onToggleDate, onEdit }: Prop
   if (!chore) return null;
   const status = choreStatus(chore, today);
   const stateColor = CHORE_STATE_COLORS[status.state];
+  const task = isTask(chore);
+  const doneOn = chore.completions[0];
+  const details = chore.description?.trim();
 
   function toggle(date: string) {
     Haptics.selectionAsync().catch(() => {});
@@ -68,14 +72,17 @@ export function ChoreSheet({ chore, today, onClose, onToggleDate, onEdit }: Prop
       >
         <View style={[styles.grabber, { backgroundColor: colors.tileBorder }]} />
         <View style={styles.titleRow}>
-          <ThemedText style={styles.emoji}>{chore.emoji}</ThemedText>
+          {!!chore.emoji && <ThemedText style={styles.emoji}>{chore.emoji}</ThemedText>}
           <View style={{ flex: 1 }}>
             <ThemedText style={styles.title} numberOfLines={2}>
               {chore.name}
             </ThemedText>
             <ThemedText style={styles.sub}>
-              {formatFrequency(chore.frequencyDays)} · Last:{' '}
-              {status.daysSince == null ? 'never' : formatSince(status.daysSince).toLowerCase()}
+              {task
+                ? `One time · Due ${chore.dueDate ? formatShortDate(chore.dueDate, today) : 'anytime'}`
+                : `${formatFrequency(chore.frequencyDays)} · Last: ${
+                    status.daysSince == null ? 'never' : formatSince(status.daysSince).toLowerCase()
+                  }`}
             </ThemedText>
           </View>
           <View style={[styles.pill, { backgroundColor: `${stateColor}26` }]}>
@@ -85,57 +92,79 @@ export function ChoreSheet({ chore, today, onClose, onToggleDate, onEdit }: Prop
           </View>
         </View>
 
-        <ThemedText style={styles.label}>When was it done?</ThemedText>
-        <ThemedText style={styles.hint}>Tap a day to log it. Tap again to remove it.</ThemedText>
-        <ScrollView
-          ref={stripRef}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chips}
-          onContentSizeChange={() => stripRef.current?.scrollToEnd({ animated: false })}
-        >
-          {days.map((date, i) => {
-            const done = doneSet.has(date);
-            const d = parseDate(date);
-            const back = CHIP_DAYS - 1 - i;
-            const top = back === 0 ? 'Today' : back === 1 ? 'Yest.' : WEEKDAYS[d.getDay()];
-            return (
-              <Pressable
-                key={date}
-                onPress={() => toggle(date)}
-                accessibilityRole="button"
-                accessibilityState={{ selected: done }}
-                accessibilityLabel={`${shortDate(date)}${done ? ', done' : ''}`}
-                style={[
-                  styles.chip,
-                  { borderColor: done ? CHORE_STATE_COLORS.fresh : colors.tileBorder },
-                  done && { backgroundColor: CHORE_STATE_COLORS.fresh },
-                ]}
-              >
-                <ThemedText style={[styles.chipTop, done && styles.chipTextDone]}>{top}</ThemedText>
-                <ThemedText style={[styles.chipDay, done && styles.chipTextDone]}>{d.getDate()}</ThemedText>
-                <ThemedText style={[styles.chipTop, done && styles.chipTextDone]}>
-                  {done ? '✓' : d.toLocaleDateString(undefined, { month: 'short' })}
-                </ThemedText>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+        {task ? (
+          <>
+            {!!details && <ThemedText style={styles.details}>{details}</ThemedText>}
+            <Pressable
+              onPress={() => toggle(doneOn ?? today)}
+              accessibilityRole="button"
+              style={[
+                styles.taskToggle,
+                doneOn
+                  ? { borderColor: colors.tileBorder }
+                  : { borderColor: CHORE_STATE_COLORS.fresh, backgroundColor: CHORE_STATE_COLORS.fresh },
+              ]}
+            >
+              <ThemedText style={[styles.taskToggleText, !doneOn && styles.chipTextDone]}>
+                {doneOn ? 'Mark not done' : '✓ Mark done'}
+              </ThemedText>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <ThemedText style={styles.label}>When was it done?</ThemedText>
+            <ThemedText style={styles.hint}>Tap a day to log it. Tap again to remove it.</ThemedText>
+            <ScrollView
+              ref={stripRef}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.chips}
+              onContentSizeChange={() => stripRef.current?.scrollToEnd({ animated: false })}
+            >
+              {days.map((date, i) => {
+                const done = doneSet.has(date);
+                const d = parseDate(date);
+                const back = CHIP_DAYS - 1 - i;
+                const top = back === 0 ? 'Today' : back === 1 ? 'Yest.' : WEEKDAYS[d.getDay()];
+                return (
+                  <Pressable
+                    key={date}
+                    onPress={() => toggle(date)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: done }}
+                    accessibilityLabel={`${shortDate(date)}${done ? ', done' : ''}`}
+                    style={[
+                      styles.chip,
+                      { borderColor: done ? CHORE_STATE_COLORS.fresh : colors.tileBorder },
+                      done && { backgroundColor: CHORE_STATE_COLORS.fresh },
+                    ]}
+                  >
+                    <ThemedText style={[styles.chipTop, done && styles.chipTextDone]}>{top}</ThemedText>
+                    <ThemedText style={[styles.chipDay, done && styles.chipTextDone]}>{d.getDate()}</ThemedText>
+                    <ThemedText style={[styles.chipTop, done && styles.chipTextDone]}>
+                      {done ? '✓' : d.toLocaleDateString(undefined, { month: 'short' })}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
 
-        {older.length > 0 && (
-          <View style={styles.olderRow}>
-            <ThemedText style={styles.hint}>Earlier:</ThemedText>
-            {older.map((date) => (
-              <Pressable
-                key={date}
-                onPress={() => toggle(date)}
-                style={[styles.olderChip, { borderColor: colors.tileBorder }]}
-                accessibilityLabel={`Remove ${shortDate(date)}`}
-              >
-                <ThemedText style={styles.olderText}>{shortDate(date)} ✕</ThemedText>
-              </Pressable>
-            ))}
-          </View>
+            {older.length > 0 && (
+              <View style={styles.olderRow}>
+                <ThemedText style={styles.hint}>Earlier:</ThemedText>
+                {older.map((date) => (
+                  <Pressable
+                    key={date}
+                    onPress={() => toggle(date)}
+                    style={[styles.olderChip, { borderColor: colors.tileBorder }]}
+                    accessibilityLabel={`Remove ${shortDate(date)}`}
+                  >
+                    <ThemedText style={styles.olderText}>{shortDate(date)} ✕</ThemedText>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+          </>
         )}
 
         <View style={styles.actions}>
@@ -144,7 +173,7 @@ export function ChoreSheet({ chore, today, onClose, onToggleDate, onEdit }: Prop
             onPress={onEdit}
             accessibilityRole="button"
           >
-            <ThemedText style={styles.secondaryText}>Edit chore</ThemedText>
+            <ThemedText style={styles.secondaryText}>{task ? 'Edit task' : 'Edit chore'}</ThemedText>
           </Pressable>
           <Pressable
             style={[styles.secondary, { borderColor: colors.tileBorder }]}
@@ -175,6 +204,9 @@ const styles = StyleSheet.create({
   pill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
   pillText: { fontSize: 12, fontWeight: '700', lineHeight: 16 },
   label: { fontSize: 15, fontWeight: '600', marginTop: 20 },
+  details: { fontSize: 15, lineHeight: 21, marginTop: 16, opacity: 0.85 },
+  taskToggle: { borderWidth: 1.5, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 20 },
+  taskToggleText: { fontSize: 16, fontWeight: '700' },
   hint: { fontSize: 12, opacity: 0.55 },
   chips: { gap: 8, paddingVertical: 12 },
   chip: {

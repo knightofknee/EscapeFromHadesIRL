@@ -15,7 +15,7 @@ import * as Haptics from 'expo-haptics';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { formatDue, formatFrequency, formatSince, type ChoreStatus } from '@/lib/chores';
+import { formatDue, formatFrequency, formatShortDate, formatSince, isTask, type ChoreStatus } from '@/lib/chores';
 import { CHORE_STATE_COLORS, choreInkColor } from './chore-colors';
 import type { Chore } from '@/types/chore';
 
@@ -81,7 +81,9 @@ function Particle({ index, progress }: { index: number; progress: SharedValue<nu
 export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpen }: Props) {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
-  const doneToday = status.daysSince === 0;
+  const task = isTask(chore);
+  // A task stays checked once done; a recurring chore only for today.
+  const done = task ? status.state === 'done' : status.daysSince === 0;
   const stateColor = CHORE_STATE_COLORS[status.state];
 
   // The date this row just completed, while its Undo is on offer.
@@ -90,7 +92,7 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
   const pendingWrite = useRef<(() => void) | null>(null);
   const writeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const fill = useSharedValue(doneToday ? 1 : 0);
+  const fill = useSharedValue(done ? 1 : 0);
   const pop = useSharedValue(1);
   const ring = useSharedValue(0);
   const burst = useSharedValue(0);
@@ -99,8 +101,8 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
   // Track the real data: a completion arriving from elsewhere (or an undo)
   // fills/empties the check without the celebration.
   useEffect(() => {
-    fill.set(withTiming(doneToday ? 1 : 0, { duration: 220 }));
-  }, [doneToday, fill]);
+    fill.set(withTiming(done ? 1 : 0, { duration: 220 }));
+  }, [done, fill]);
 
   // Never drop a completion: if the row unmounts mid-celebration, write now.
   useEffect(
@@ -128,7 +130,7 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
   }
 
   function handleCheck() {
-    if (doneToday || pendingWrite.current) {
+    if (done || pendingWrite.current) {
       Haptics.selectionAsync().catch(() => {});
       return;
     }
@@ -181,6 +183,14 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
   }));
 
   const since = status.daysSince == null ? 'Never' : formatSince(status.daysSince);
+  const due = chore.dueDate ? formatShortDate(chore.dueDate, today) : '';
+  const details = chore.description?.trim();
+  // Task: "Oct 12 · details", or "One time · Oct 12" when there are none.
+  const sub = task
+    ? details
+      ? `${due} · ${details}`
+      : `One time · ${due}`
+    : `${since} · ${formatFrequency(chore.frequencyDays)}`;
 
   return (
     <Animated.View
@@ -200,13 +210,13 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
         accessibilityRole="button"
         accessibilityLabel={`${chore.name}, ${formatDue(status)}. Open details`}
       >
-        <ThemedText style={styles.emoji}>{chore.emoji}</ThemedText>
-        <View style={styles.text}>
+        {!!chore.emoji && <ThemedText style={styles.emoji}>{chore.emoji}</ThemedText>}
+        <View style={[styles.text, status.state === 'done' && styles.finished]}>
           <ThemedText style={styles.name} numberOfLines={1}>
             {chore.name}
           </ThemedText>
           <ThemedText style={styles.sub} numberOfLines={1}>
-            {since} · {formatFrequency(chore.frequencyDays)}
+            {sub}
           </ThemedText>
         </View>
         {undoDate ? (
@@ -236,10 +246,12 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
           onPress={handleCheck}
           hitSlop={6}
           accessibilityRole="button"
-          accessibilityLabel={doneToday ? `${chore.name} done today` : `Mark ${chore.name} done today`}
+          accessibilityLabel={
+            done ? `${chore.name} done${task ? '' : ' today'}` : `Mark ${chore.name} done${task ? '' : ' today'}`
+          }
         >
           <Animated.View style={[styles.check, checkStyle]}>
-            <Animated.Text style={[styles.checkMark, { color: doneToday || undoDate ? '#fff' : stateColor }, checkMarkStyle]}>
+            <Animated.Text style={[styles.checkMark, { color: done || undoDate ? '#fff' : stateColor }, checkMarkStyle]}>
               ✓
             </Animated.Text>
           </Animated.View>
@@ -279,6 +291,7 @@ const styles = StyleSheet.create({
   },
   emoji: { fontSize: 28, lineHeight: 34 },
   text: { flex: 1, minWidth: 0 },
+  finished: { opacity: 0.6 },
   name: { fontSize: 16, fontWeight: '600' },
   sub: { fontSize: 13, opacity: 0.55, lineHeight: 18 },
   pill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },

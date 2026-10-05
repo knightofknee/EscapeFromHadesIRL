@@ -17,11 +17,15 @@
         "autoIncrement": "version"
       },
       "android": {
-        "autoIncrement": "version"
+        "autoIncrement": "versionCode"
       }
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "android": {
+        "track": "alpha"
+      }
+    }
   }
 }

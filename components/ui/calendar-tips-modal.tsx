@@ -192,8 +192,9 @@ export function CalendarTipsModal() {
               anywhere else to close it, or tap another day to jump there.
             </ThemedText>
             <ThemedText style={styles.tip}>
-              Below the calendar, each habit shows its month: completion for most habits,
-              average per day for value habits like hours.
+              Below the calendar, each habit shows its month: how often you did it, a trend
+              line, and for habits with amounts like hours or steps, your average, median and
+              total.
             </ThemedText>
           </View>
 

@@ -30,9 +30,17 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "package": "com.briancarlisle.escapefromhadesirl",
+      "versionCode": 3,
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.health.READ_STEPS"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.CAMERA"
       ]
     },
     "plugins": [
@@ -53,7 +61,9 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "We access the photo you pick so it can be used as a habit tile icon. Nothing else in your library is read."
+          "photosPermission": "We access the photo you pick so it can be used as a habit tile icon. Nothing else in your library is read.",
+          "cameraPermission": false,
+          "microphonePermission": false
         }
       ],
       [
@@ -66,6 +76,9 @@
                 "x86_64"
               ]
             }
+          },
+          "android": {
+            "minSdkVersion": 26
           }
         }
       ],
@@ -76,7 +89,6 @@
           "background": false
         }
       ],
-      "react-native-health-connect",
       [
         "expo-notifications",
         {
@@ -90,12 +102,20 @@
         "expo-audio",
         {
           "microphonePermission": false,
-          "enableBackgroundPlayback": false
+          "enableBackgroundPlayback": false,
+          "recordAudioAndroid": false
         }
       ],
       "@bacons/apple-targets",
       "expo-asset",
-      "expo-sharing"
+      "expo-sharing",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.844071641525-l1v60tmbhjgsn0d5umogslp7r4ohbp9g"
+        }
+      ],
+      "expo-health-connect"
     ],
     "experiments": {
       "typedRoutes": true,

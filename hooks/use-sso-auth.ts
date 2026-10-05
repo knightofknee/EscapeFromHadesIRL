@@ -7,6 +7,7 @@ import { useIdTokenAuthRequest } from 'expo-auth-session/providers/google';
 import { signInWithGoogle, signInWithApple, getAuthErrorMessage } from '@/lib/firebase/auth';
 import { generateNonce, sha256 } from '@/lib/crypto-nonce';
 import { GOOGLE_IOS_CLIENT_ID, GOOGLE_CLIENT_ID } from '@/constants/google-oauth';
+import { USE_NATIVE_GOOGLE_SIGN_IN, getGoogleIdTokenNative } from '@/lib/google-native-signin';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -37,6 +38,19 @@ export function useSsoAuth(setError: (message: string) => void) {
 
   async function handleGoogleSignIn() {
     setError('');
+    // Android: native account picker (the browser flow is blocked for
+    // Android OAuth clients). The hook above still mounts there, unused.
+    if (USE_NATIVE_GOOGLE_SIGN_IN) {
+      try {
+        const idToken = await getGoogleIdTokenNative();
+        if (!idToken) return; // picker dismissed
+        await signInWithGoogle(idToken);
+        router.replace('/(tabs)/(habits)');
+      } catch (e: unknown) {
+        setError(getAuthErrorMessage(e));
+      }
+      return;
+    }
     await promptGoogle();
   }
 
@@ -76,7 +90,7 @@ export function useSsoAuth(setError: (message: string) => void) {
   }
 
   return {
-    googleReady: !!googleRequest,
+    googleReady: USE_NATIVE_GOOGLE_SIGN_IN || !!googleRequest,
     handleGoogleSignIn,
     handleAppleSignIn: Platform.OS === 'ios' ? handleAppleSignIn : undefined,
   };

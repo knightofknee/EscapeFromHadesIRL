@@ -19,6 +19,7 @@ import {
 import { deleteAccountAndData } from '@/lib/firebase/account-deletion';
 import { generateNonce, sha256 } from '@/lib/crypto-nonce';
 import { GOOGLE_IOS_CLIENT_ID, GOOGLE_CLIENT_ID } from '@/constants/google-oauth';
+import { USE_NATIVE_GOOGLE_SIGN_IN, getGoogleIdTokenNative } from '@/lib/google-native-signin';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
@@ -60,6 +61,12 @@ export default function AdditionalSettingsScreen() {
     const provider = primaryProviderId(user);
 
     if (provider === 'google.com') {
+      if (USE_NATIVE_GOOGLE_SIGN_IN) {
+        const idToken = await getGoogleIdTokenNative();
+        if (!idToken) return false;
+        await reauthenticateWithGoogleToken(user, idToken);
+        return true;
+      }
       const res = await promptGoogle();
       if (res?.type === 'success' && res.params.id_token) {
         await reauthenticateWithGoogleToken(user, res.params.id_token);

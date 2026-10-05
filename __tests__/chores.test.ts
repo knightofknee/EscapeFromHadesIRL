@@ -2,6 +2,7 @@ import {
   addCompletion,
   choreStatus,
   formatDue,
+  formatDuePreset,
   formatFrequency,
   formatSince,
   removeCompletion,
@@ -93,5 +94,65 @@ describe('formatting', () => {
     expect(formatDue(choreStatus(chore('a', 7, ['2026-09-23']), TODAY))).toBe('Due today');
     expect(formatDue(choreStatus(chore('a', 7, ['2026-09-30']), TODAY))).toBe('Done today');
     expect(formatDue(choreStatus(chore('a', 30, ['2026-09-20']), TODAY))).toBe('Due in 2 weeks');
+  });
+});
+
+function task(name: string, dueDate: string, created: string, completions: string[] = []): Chore {
+  const [y, m, d] = created.split('-').map(Number);
+  return {
+    ...chore(name, 0, completions),
+    kind: 'once',
+    dueDate,
+    createdAt: new Date(y, m - 1, d, 12).getTime(),
+  };
+}
+
+describe('one-time tasks', () => {
+  test('judged by due date: soon in the last quarter (at least the day before), late after', () => {
+    // Created Sep 30, due Oct 30: 30-day span, soon window 7 days.
+    expect(choreStatus(task('t', '2026-10-30', TODAY), TODAY)).toMatchObject({ state: 'fresh', dueIn: 30 });
+    expect(choreStatus(task('t', '2026-10-30', '2026-09-01'), '2026-10-23').state).toBe('soon');
+    // Short span: due tomorrow is already yellow.
+    expect(choreStatus(task('t', '2026-10-01', TODAY), TODAY).state).toBe('soon');
+    expect(choreStatus(task('t', '2026-10-02', TODAY), TODAY).state).toBe('fresh');
+    expect(choreStatus(task('t', TODAY, '2026-09-20'), TODAY).state).toBe('soon');
+    expect(choreStatus(task('t', '2026-09-28', '2026-09-20'), TODAY)).toMatchObject({ state: 'late', dueIn: -2 });
+  });
+
+  test('any completion makes it done, regardless of due date', () => {
+    const s = choreStatus(task('t', '2026-09-28', '2026-09-20', ['2026-09-29']), TODAY);
+    expect(s).toMatchObject({ state: 'done', daysSince: 1, dueIn: null });
+    expect(formatDue(s)).toBe('Done yesterday');
+  });
+
+  test('pill text matches recurring wording', () => {
+    expect(formatDue(choreStatus(task('t', '2026-09-28', '2026-09-20'), TODAY))).toBe('2 days late');
+    expect(formatDue(choreStatus(task('t', TODAY, '2026-09-20'), TODAY))).toBe('Due today');
+    expect(formatDue(choreStatus(task('t', '2026-10-01', TODAY), TODAY))).toBe('Due tomorrow');
+  });
+
+  test('sorts alongside chores, done last (most recent first)', () => {
+    const order = sortChores(
+      [
+        task('old done', '2026-09-20', '2026-09-10', ['2026-09-21']),
+        task('new done', '2026-09-20', '2026-09-10', ['2026-09-29']),
+        task('late task', '2026-09-28', '2026-09-20'),
+        chore('fresh chore', 7, ['2026-09-29']),
+        task('later task', '2026-11-30', TODAY),
+      ],
+      TODAY,
+    ).map((x) => x.chore.name);
+    expect(order).toEqual(['late task', 'fresh chore', 'later task', 'new done', 'old done']);
+  });
+
+  test('due presets', () => {
+    expect([0, 1, 3, 7, 14, 30].map(formatDuePreset)).toEqual([
+      'Today',
+      'Tomorrow',
+      'In 3 days',
+      'In a week',
+      'In 2 weeks',
+      'In a month',
+    ]);
   });
 });

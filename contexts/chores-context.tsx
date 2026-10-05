@@ -26,7 +26,7 @@ import { emitError } from '@/lib/error-bus';
 import { CHORES_COLLECTION, addCompletion, removeCompletion } from '@/lib/chores';
 import type { Chore } from '@/types/chore';
 
-export type ChoreDraft = Pick<Chore, 'name' | 'emoji' | 'frequencyDays'>;
+export type ChoreDraft = Pick<Chore, 'kind' | 'name' | 'emoji' | 'frequencyDays' | 'description' | 'dueDate'>;
 
 type ChoresContextValue = {
   chores: Chore[];
@@ -38,6 +38,8 @@ type ChoresContextValue = {
   createChores: (drafts: ChoreDraft[]) => Promise<boolean>;
   updateChore: (id: string, updates: Partial<ChoreDraft>) => Promise<boolean>;
   deleteChore: (id: string) => Promise<boolean>;
+  /** Bulk delete (clearing finished tasks): one batch write. */
+  deleteChores: (ids: string[]) => Promise<boolean>;
   markDone: (id: string, date: string) => Promise<boolean>;
   unmarkDone: (id: string, date: string) => Promise<boolean>;
 };
@@ -50,6 +52,7 @@ const ChoresContext = createContext<ChoresContextValue>({
   createChores: async () => false,
   updateChore: async () => false,
   deleteChore: async () => false,
+  deleteChores: async () => false,
   markDone: async () => false,
   unmarkDone: async () => false,
 });
@@ -178,6 +181,19 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
     [write],
   );
 
+  const deleteChores = useCallback(
+    (ids: string[]) =>
+      write('bulk delete', async () => {
+        // Firestore caps a batch at 500 writes.
+        for (let i = 0; i < ids.length; i += 450) {
+          const batch = writeBatch(db);
+          for (const id of ids.slice(i, i + 450)) batch.delete(doc(db, CHORES_COLLECTION, id));
+          await batch.commit();
+        }
+      }),
+    [write],
+  );
+
   const setCompletions = useCallback(
     (id: string, change: (completions: string[]) => string[], label: string) => {
       const current = choresRef.current.find((c) => c.id === id);
@@ -211,10 +227,11 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
       createChores,
       updateChore,
       deleteChore,
+      deleteChores,
       markDone,
       unmarkDone,
     }),
-    [chores, isLoading, isOffline, createChore, createChores, updateChore, deleteChore, markDone, unmarkDone],
+    [chores, isLoading, isOffline, createChore, createChores, updateChore, deleteChore, deleteChores, markDone, unmarkDone],
   );
 
   return <ChoresContext.Provider value={value}>{children}</ChoresContext.Provider>;

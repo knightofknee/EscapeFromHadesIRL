@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
@@ -17,7 +17,7 @@ import { useOfflineGuard } from '@/contexts/offline-context';
 import { sortChores, type ChoreState } from '@/lib/chores';
 
 export default function ChoresScreen() {
-  const { chores, isLoading, isOffline, markDone, unmarkDone } = useChores();
+  const { chores, isLoading, isOffline, markDone, unmarkDone, deleteChores } = useChores();
   const { requireOnline } = useOfflineGuard();
   const { todayStr } = useTodayDate();
   const scheme = useColorScheme() ?? 'light';
@@ -26,7 +26,7 @@ export default function ChoresScreen() {
 
   const sorted = useMemo(() => sortChores(chores, todayStr), [chores, todayStr]);
   const counts = useMemo(() => {
-    const c: Record<ChoreState, number> = { late: 0, soon: 0, never: 0, fresh: 0 };
+    const c: Record<ChoreState, number> = { late: 0, soon: 0, never: 0, fresh: 0, done: 0 };
     for (const { status } of sorted) c[status.state]++;
     return c;
   }, [sorted]);
@@ -39,6 +39,19 @@ export default function ChoresScreen() {
     },
     [markDone, unmarkDone],
   );
+
+  function clearDone() {
+    const ids = sorted.filter(({ status }) => status.state === 'done').map(({ chore }) => chore.id);
+    if (ids.length === 0) return;
+    Alert.alert(
+      `Clear ${ids.length} done task${ids.length === 1 ? '' : 's'}?`,
+      'They will be deleted.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Clear', style: 'destructive', onPress: () => void deleteChores(ids) },
+      ],
+    );
+  }
 
   if (isLoading && !isOffline) return <LoadingScreen />;
 
@@ -141,6 +154,17 @@ export default function ChoresScreen() {
                       {CHORE_SECTION_TITLES[item.state]}
                     </ThemedText>
                     <ThemedText style={styles.sectionCount}>{count}</ThemedText>
+                    {item.state === 'done' && (
+                      <Pressable
+                        onPress={clearDone}
+                        hitSlop={8}
+                        style={styles.sectionAction}
+                        accessibilityRole="button"
+                        accessibilityLabel="Clear done tasks"
+                      >
+                        <ThemedText style={[styles.sectionActionText, { color: colors.tint }]}>Clear</ThemedText>
+                      </Pressable>
+                    )}
                   </Animated.View>
                 );
               }
@@ -201,6 +225,8 @@ const styles = StyleSheet.create({
   sectionDot: { width: 10, height: 10, borderRadius: 5 },
   sectionTitle: { fontSize: 13, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, opacity: 0.8 },
   sectionCount: { fontSize: 13, fontWeight: '600', opacity: 0.45 },
+  sectionAction: { marginLeft: 'auto' },
+  sectionActionText: { fontSize: 14, fontWeight: '600' },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, gap: 12 },
   emptyEmoji: { fontSize: 56, lineHeight: 68 },
   emptyTitle: { fontSize: 22, fontWeight: '700', lineHeight: 28 },
