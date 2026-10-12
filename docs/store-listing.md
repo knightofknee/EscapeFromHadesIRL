@@ -53,7 +53,7 @@ QUESTS
 Long-term challenges for walking, meditating, writing, reading, exercise, or anything you make up. Each quest is tied to a habit and shows where you stand over the last 30 days and the last 18 months, so one bad week doesn't erase a good year.
 
 NOTES THAT KEEP UP
-Open straight to a fresh note and start typing. Tag notes, pin them, turn lines into checklists, and undo or redo as you write. Word suggestions learn your own vocabulary. Export your notes in one go to paste into an AI tool or keep as a backup.
+Open straight to a fresh note and start typing. Tag notes, pin them, turn lines into checklists, and undo or redo as you write. Word suggestions learn your own vocabulary. Export your notes in one go to paste into an AI or keep as a backup.
 
 CHORES
 See how long it's been since you last cleaned the fridge or changed the sheets, and which chores are late or coming due. Add one-time tasks with a due date and check them off.

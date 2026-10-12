@@ -25,8 +25,9 @@ import { subscribeWithOfflineState } from '@/lib/firebase/subscribe';
 import { emitError } from '@/lib/error-bus';
 import { CHORES_COLLECTION, addCompletion, removeCompletion } from '@/lib/chores';
 import type { Chore } from '@/types/chore';
+import { syncChoreReminders } from '@/lib/chore-reminders';
 
-export type ChoreDraft = Pick<Chore, 'kind' | 'name' | 'emoji' | 'frequencyDays' | 'description' | 'dueDate'>;
+export type ChoreDraft = Pick<Chore, 'kind' | 'name' | 'emoji' | 'frequencyDays' | 'description' | 'dueDate' | 'reminderTime'>;
 
 type ChoresContextValue = {
   chores: Chore[];
@@ -109,6 +110,16 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
       },
     );
   }, [user]);
+
+  // Keep this phone's task reminders in step with the synced list (set,
+  // moved, done, deleted, or set on another phone). Signed out → none.
+  // Serialized so overlapping snapshots can't schedule duplicates.
+  const reminderSync = useRef<Promise<void>>(Promise.resolve());
+  useEffect(() => {
+    if (user && isLoading) return;
+    const list = user ? chores : [];
+    reminderSync.current = reminderSync.current.then(() => syncChoreReminders(list));
+  }, [chores, isLoading, user]);
 
   const write = useCallback(
     async (label: string, op: () => Promise<void>): Promise<boolean> => {

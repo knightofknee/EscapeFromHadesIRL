@@ -349,12 +349,17 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
 
   // --- caret follow -----------------------------------------------------------
 
-  // Threshold (in chars) for "cursor is at end" — a small slack lets
-  // typing past trailing whitespace still count as appending.
-  const END_SLACK = 5;
+  // When the caret is at the end of the note, the editor's bottom edge is
+  // where the caret is, so the page scrolls to keep that edge above the
+  // keyboard. "At the end" must mean NOTHING but whitespace follows the
+  // caret: a character-count slack wrongly matched a caret with a photo
+  // after it (a photo is 1 char but hundreds of px tall) and scrolled the
+  // page to the bottom of the photo. iOS also reports the new caret BEFORE
+  // the new text (e.g. accepting a keyboard suggestion), so a caret past the
+  // stale text's end counts as at the end too.
   function reportCaretIfAtEnd() {
     if (!onCaretBottom) return;
-    if (selRef.current.end < textRef.current.length - END_SLACK) return;
+    if (/\S/.test(textRef.current.slice(selRef.current.end))) return;
     editorRef.current?.measureInWindow((_x, y, _w, h) => onCaretBottom(y + h));
   }
 
@@ -467,6 +472,11 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
   // convert them to the editor-text model (lib/note-html hiddenCharOffsets).
   const hiddenRef = useRef<{ html: string; offsets: number[] }>({ html: '', offsets: [] });
   function handleSelection(reportedStart: number, reportedEnd: number) {
+    // Our own setValue jumps the native caret to the END of the note before
+    // setBody puts it back. Following that event scrolled the page to the
+    // bottom of the note on every accepted suggestion chip; setBody already
+    // set selRef, so ignore selection events while it applies.
+    if (applyingRef.current) return;
     if (hiddenRef.current.html !== htmlRef.current) {
       hiddenRef.current = { html: htmlRef.current, offsets: hiddenCharOffsets(htmlRef.current) };
     }

@@ -116,7 +116,8 @@
         }
       ],
       "expo-health-connect",
-      "expo-video"
+      "expo-video",
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true,

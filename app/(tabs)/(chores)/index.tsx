@@ -8,13 +8,13 @@ import { ThemedView } from '@/components/themed-view';
 import { LoadingScreen } from '@/components/ui/loading-screen';
 import { CHORE_LAYOUT_TRANSITION, ChoreRow } from '@/components/chores/chore-row';
 import { ChoreSheet } from '@/components/chores/chore-sheet';
-import { CHORE_SECTION_TITLES, CHORE_STATE_COLORS, choreInkColor } from '@/components/chores/chore-colors';
+import { CHORE_SECTION_TITLES, choreInkColor, choreSectionColor } from '@/components/chores/chore-colors';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTodayDate } from '@/hooks/use-today-date';
 import { useChores } from '@/contexts/chores-context';
 import { useOfflineGuard } from '@/contexts/offline-context';
-import { sortChores, type ChoreState } from '@/lib/chores';
+import { isPastDue, sortChores, type ChoreSection } from '@/lib/chores';
 
 export default function ChoresScreen() {
   const { chores, isLoading, isOffline, markDone, unmarkDone, deleteChores } = useChores();
@@ -26,9 +26,14 @@ export default function ChoresScreen() {
 
   const sorted = useMemo(() => sortChores(chores, todayStr), [chores, todayStr]);
   const counts = useMemo(() => {
-    const c: Record<ChoreState, number> = { late: 0, soon: 0, never: 0, fresh: 0, done: 0 };
-    for (const { status } of sorted) c[status.state]++;
-    return c;
+    const c = { late: 0, soon: 0 };
+    const bySection: Record<ChoreSection, number> = { dueTasks: 0, dueChores: 0, tasks: 0, chores: 0, done: 0 };
+    for (const { status, section } of sorted) {
+      if (isPastDue(status.state)) c.late++;
+      if (status.state === 'soon') c.soon++;
+      bySection[section]++;
+    }
+    return { ...c, bySection };
   }, [sorted]);
   const openChore = chores.find((c) => c.id === openId) ?? null;
 
@@ -41,7 +46,7 @@ export default function ChoresScreen() {
   );
 
   function clearDone() {
-    const ids = sorted.filter(({ status }) => status.state === 'done').map(({ chore }) => chore.id);
+    const ids = sorted.filter(({ section }) => section === 'done').map(({ chore }) => chore.id);
     if (ids.length === 0) return;
     Alert.alert(
       `Clear ${ids.length} done task${ids.length === 1 ? '' : 's'}?`,
@@ -57,12 +62,12 @@ export default function ChoresScreen() {
 
   // One flat list of headers + rows under a single parent, so a row that
   // changes section keeps its component (and its animation) and glides there.
-  const items: ({ kind: 'header'; state: ChoreState } | { kind: 'row'; index: number })[] = [];
-  let lastState: ChoreState | null = null;
-  sorted.forEach(({ status }, index) => {
-    if (status.state !== lastState) {
-      items.push({ kind: 'header', state: status.state });
-      lastState = status.state;
+  const items: ({ kind: 'header'; section: ChoreSection } | { kind: 'row'; index: number })[] = [];
+  let lastSection: ChoreSection | null = null;
+  sorted.forEach(({ section }, index) => {
+    if (section !== lastSection) {
+      items.push({ kind: 'header', section });
+      lastSection = section;
     }
     items.push({ kind: 'row', index });
   });
@@ -84,14 +89,14 @@ export default function ChoresScreen() {
                 ) : (
                   <>
                     {counts.late > 0 && (
-                      <ThemedText style={[styles.summaryText, { color: choreInkColor('late', scheme) }]}>
-                        {counts.late} late
+                      <ThemedText style={[styles.summaryText, { color: choreInkColor('due', scheme) }]}>
+                        {counts.late} due
                       </ThemedText>
                     )}
                     {counts.late > 0 && counts.soon > 0 && <ThemedText style={styles.summaryDot}>·</ThemedText>}
                     {counts.soon > 0 && (
                       <ThemedText style={[styles.summaryText, { color: choreInkColor('soon', scheme) }]}>
-                        {counts.soon} due soon
+                        {counts.soon} coming up
                       </ThemedText>
                     )}
                   </>
@@ -123,7 +128,7 @@ export default function ChoresScreen() {
             <ThemedText style={styles.emptyTitle}>How long has it been?</ThemedText>
             <ThemedText style={styles.emptyBody}>
               Sheets, litter, the toilet, calling home. Log it when you do it and each chore turns
-              green, then yellow, then red as it comes due.
+              green, then blue, then gold once it's due.
             </ThemedText>
             <Pressable
               onPress={() => router.push('/chore-starter')}
@@ -140,21 +145,22 @@ export default function ChoresScreen() {
           <ScrollView contentContainerStyle={styles.list}>
             {items.map((item) => {
               if (item.kind === 'header') {
-                const count = counts[item.state];
+                const count = counts.bySection[item.section];
+                const dot = choreSectionColor(item.section);
                 return (
                   <Animated.View
-                    key={`h-${item.state}`}
+                    key={`h-${item.section}`}
                     layout={CHORE_LAYOUT_TRANSITION}
                     entering={FadeIn.duration(250)}
                     exiting={FadeOut.duration(150)}
                     style={styles.sectionHeader}
                   >
-                    <View style={[styles.sectionDot, { backgroundColor: CHORE_STATE_COLORS[item.state] }]} />
+                    {dot && <View style={[styles.sectionDot, { backgroundColor: dot }]} />}
                     <ThemedText style={styles.sectionTitle}>
-                      {CHORE_SECTION_TITLES[item.state]}
+                      {CHORE_SECTION_TITLES[item.section]}
                     </ThemedText>
                     <ThemedText style={styles.sectionCount}>{count}</ThemedText>
-                    {item.state === 'done' && (
+                    {item.section === 'done' && (
                       <Pressable
                         onPress={clearDone}
                         hitSlop={8}

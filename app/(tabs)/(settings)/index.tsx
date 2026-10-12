@@ -253,7 +253,7 @@ export default function SettingsScreen() {
             <View style={{ flex: 1 }}>
               <ThemedText style={styles.label}>Export Notes</ThemedText>
               <ThemedText style={[styles.value, { opacity: 0.5, fontSize: 12, lineHeight: 16, marginTop: 4 }]}>
-                Share your notes with an AI tool or another notes app.
+                Share your notes with an AI or another notes app.
               </ThemedText>
             </View>
             <ThemedText style={styles.chevron}>›</ThemedText>

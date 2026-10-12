@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Alert, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, Linking, Platform, Pressable, StyleSheet, Switch, TextInput, View } from 'react-native';
+import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -14,6 +15,13 @@ import { useTodayDate } from '@/hooks/use-today-date';
 import { useChores, type ChoreDraft } from '@/contexts/chores-context';
 import { DUE_PRESETS, FREQUENCY_PRESETS, formatDuePreset, formatFrequency, formatShortDate } from '@/lib/chores';
 import { addDays } from '@/lib/date-utils';
+import {
+  DEFAULT_REMINDER_TIME,
+  formatReminderTime,
+  parseReminderTime,
+  toReminderTime,
+} from '@/lib/chore-reminders';
+import { getNotificationPermissionBucket, requestNotificationPermission } from '@/lib/meditation-notifications';
 import type { ChoreKind } from '@/types/chore';
 
 const DEFAULT_EMOJI = '🧹';
@@ -43,6 +51,8 @@ const KIND_CHOICES: { kind: ChoreKind; emoji: string; title: string; body: strin
  * emoji, how often) or one time (name, description, due date).
  */
 export default function ChoreEditScreen() {
+  // React Compiler memoization breaks the native Switch slide animation.
+  'use no memo';
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { chores, createChore, updateChore, deleteChore } = useChores();
   const { todayStr } = useTodayDate();
@@ -60,6 +70,14 @@ export default function ChoreEditScreen() {
   const [description, setDescription] = useState(existing?.description ?? '');
   const [dueDate, setDueDate] = useState(existing?.dueDate ?? addDays(todayStr, DEFAULT_DUE_DAYS));
   const [saving, setSaving] = useState(false);
+  // Optional reminder on the due date: off by default, 3pm when switched on.
+  const [reminderOn, setReminderOn] = useState(!!parseReminderTime(existing?.reminderTime));
+  const [reminderTime, setReminderTime] = useState(
+    parseReminderTime(existing?.reminderTime) ? existing!.reminderTime! : DEFAULT_REMINDER_TIME,
+  );
+  const [notificationsBlocked, setNotificationsBlocked] = useState(false);
+  const savedReminder = parseReminderTime(existing?.reminderTime) ? existing!.reminderTime! : null;
+  const draftReminder = reminderOn ? reminderTime : null;
 
   const isTask = kind === 'once';
   const isPreset = (FREQUENCY_PRESETS as readonly number[]).includes(frequency);
@@ -67,7 +85,9 @@ export default function ChoreEditScreen() {
     isCreating ||
     name.trim() !== existing.name ||
     (isTask
-      ? description.trim() !== (existing.description ?? '') || dueDate !== existing.dueDate
+      ? description.trim() !== (existing.description ?? '') ||
+        dueDate !== existing.dueDate ||
+        draftReminder !== savedReminder
       : emoji !== existing.emoji || frequency !== existing.frequencyDays);
   const canSave = kind !== null && name.trim().length > 0 && (isTask || frequency >= 1) && dirty && !saving;
   const title = kind === null ? 'New' : `${isCreating ? 'New' : 'Edit'} ${isTask ? 'Task' : 'Chore'}`;
@@ -81,11 +101,45 @@ export default function ChoreEditScreen() {
     if (!canSave) return;
     setSaving(true);
     const draft: ChoreDraft = isTask
-      ? { kind: 'once', name: name.trim(), emoji: '', frequencyDays: 0, description: description.trim(), dueDate }
+      ? {
+          kind: 'once',
+          name: name.trim(),
+          emoji: '',
+          frequencyDays: 0,
+          description: description.trim(),
+          dueDate,
+          reminderTime: draftReminder,
+        }
       : { kind: 'recurring', name: name.trim(), emoji: emoji.trim() || DEFAULT_EMOJI, frequencyDays: frequency };
     const ok = isCreating ? !!(await createChore(draft)) : await updateChore(existing.id, draft);
     setSaving(false);
     if (ok) router.back();
+  }
+
+  async function toggleReminder(on: boolean) {
+    setReminderOn(on);
+    if (!on) {
+      setNotificationsBlocked(false);
+      return;
+    }
+    let bucket = await getNotificationPermissionBucket();
+    if (bucket === 'undetermined') bucket = (await requestNotificationPermission()) ? 'granted' : 'denied';
+    setNotificationsBlocked(bucket !== 'granted');
+  }
+
+  const reminderDate = (() => {
+    const t = parseReminderTime(reminderTime) ?? { hours: 15, minutes: 0 };
+    return new Date(2000, 0, 1, t.hours, t.minutes);
+  })();
+
+  function openAndroidTimePicker() {
+    DateTimePickerAndroid.open({
+      value: reminderDate,
+      mode: 'time',
+      onChange: (event, date) => {
+        if (event.type === 'set' && date) setReminderTime(toReminderTime(date));
+      },
+    });
   }
 
   function handleDelete() {
@@ -214,6 +268,53 @@ export default function ChoreEditScreen() {
                 })}
               </View>
               <DateCalendar value={dueDate} today={todayStr} onChange={setDueDate} />
+
+              <View style={[styles.reminderCard, { borderColor: colors.tileBorder, backgroundColor: colors.tileBackground }]}>
+                <View style={styles.reminderRow}>
+                  <ThemedText style={styles.reminderLabel}>Remind me</ThemedText>
+                  <Switch
+                    value={reminderOn}
+                    onValueChange={(v) => void toggleReminder(v)}
+                    trackColor={{ false: scheme === 'dark' ? '#5A5E66' : '#D8DBE0', true: colors.tint }}
+                    ios_backgroundColor={scheme === 'dark' ? '#5A5E66' : '#D8DBE0'}
+                    thumbColor="#fff"
+                  />
+                </View>
+                {reminderOn && (
+                  <View style={[styles.reminderRow, styles.reminderTimeRow, { borderTopColor: colors.tileBorder }]}>
+                    <ThemedText style={styles.reminderLabel}>
+                      {formatShortDate(dueDate, todayStr)} at
+                    </ThemedText>
+                    {Platform.OS === 'ios' ? (
+                      <DateTimePicker
+                        value={reminderDate}
+                        mode="time"
+                        display="compact"
+                        themeVariant={scheme}
+                        accentColor={colors.tint}
+                        onChange={(_e, date) => date && setReminderTime(toReminderTime(date))}
+                      />
+                    ) : (
+                      <Pressable
+                        onPress={openAndroidTimePicker}
+                        style={[styles.timeButton, { borderColor: colors.tileBorder }]}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Reminder time ${formatReminderTime(reminderTime)}`}
+                      >
+                        <ThemedText style={styles.timeButtonText}>{formatReminderTime(reminderTime)}</ThemedText>
+                      </Pressable>
+                    )}
+                  </View>
+                )}
+              </View>
+              {reminderOn && notificationsBlocked && (
+                <Pressable onPress={() => void Linking.openSettings()} accessibilityRole="button">
+                  <ThemedText style={styles.hint}>
+                    Notifications are off for this app, so the reminder can&apos;t ring.{' '}
+                    <ThemedText style={[styles.hint, { color: colors.tint }]}>Turn them on in Settings</ThemedText>
+                  </ThemedText>
+                </Pressable>
+              )}
             </>
           ) : (
             <>
@@ -293,8 +394,8 @@ export default function ChoreEditScreen() {
                 <ThemedText style={styles.customLabel}>{frequency === 1 ? 'day' : 'days'}</ThemedText>
               </View>
               <ThemedText style={styles.hint}>
-                Green while it&apos;s fresh, yellow in the last stretch before it&apos;s due, red once
-                it&apos;s late.
+                Green while it&apos;s fresh, blue in the last stretch before it&apos;s due, gold once
+                it&apos;s due.
               </ThemedText>
             </>
           )}
@@ -328,6 +429,19 @@ const styles = StyleSheet.create({
   navTitle: { fontSize: 17, fontWeight: '600' },
   cancelText: { fontSize: 16, fontWeight: '500' },
   saveText: { fontSize: 16, fontWeight: '600' },
+  reminderCard: { borderWidth: 1, borderRadius: 12, marginTop: 16, overflow: 'hidden' },
+  reminderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    minHeight: 52,
+  },
+  reminderTimeRow: { borderTopWidth: StyleSheet.hairlineWidth },
+  reminderLabel: { fontSize: 16, fontWeight: '500' },
+  timeButton: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 },
+  timeButtonText: { fontSize: 16, fontWeight: '600' },
   hidden: { opacity: 0 },
   content: { padding: 16, paddingBottom: 60 },
   label: { marginTop: 16, marginBottom: 6 },

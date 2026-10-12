@@ -24,6 +24,9 @@ export type Chore = {
   description?: string;
   /** One-time tasks: due date (YYYY-MM-DD). */
   dueDate?: string;
+  /** One-time tasks: optional reminder time on the due date ("HH:MM", local).
+   *  Missing or null = no reminder (the default). */
+  reminderTime?: string | null;
   /**
    * Days it was done (YYYY-MM-DD), newest first, deduped, capped at
    * CHORE_HISTORY_CAP. completions[0] is "last done". A one-time task is

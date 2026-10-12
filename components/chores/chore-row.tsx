@@ -15,7 +15,7 @@ import * as Haptics from 'expo-haptics';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { formatDue, formatFrequency, formatShortDate, formatSince, isTask, type ChoreStatus } from '@/lib/chores';
+import { formatDue, formatFrequency, formatShortDate, formatSince, isTask, pastDueMarker, type ChoreStatus } from '@/lib/chores';
 import { CHORE_STATE_COLORS, choreInkColor } from './chore-colors';
 import type { Chore } from '@/types/chore';
 
@@ -183,6 +183,7 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
   }));
 
   const since = status.daysSince == null ? 'Never' : formatSince(status.daysSince);
+  const marker = pastDueMarker(status);
   const due = chore.dueDate ? formatShortDate(chore.dueDate, today) : '';
   const details = chore.description?.trim();
   // Task: "Oct 12 · details", or "One time · Oct 12" when there are none.
@@ -191,7 +192,7 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
       ? `${due} · ${details}`
       : `One time · ${due}`
     : status.daysSince == null
-      ? formatFrequency(chore.frequencyDays) // the pill already says "Not logged yet"
+      ? formatFrequency(chore.frequencyDays) // never logged: nothing to say about the past
       : `${since} · ${formatFrequency(chore.frequencyDays)}`;
 
   return (
@@ -235,6 +236,16 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
               <View style={[styles.pill, { backgroundColor: `${stateColor}26` }]}>
                 <ThemedText style={[styles.pillText, { color: choreInkColor(status.state, scheme) }]}>
                   {formatDue(status)}
+                </ThemedText>
+              </View>
+            )}
+            {!undoDate && marker && (
+              <View
+                style={[styles.marker, { borderColor: `${stateColor}88` }]}
+                accessibilityLabel={`${marker} past due`}
+              >
+                <ThemedText style={[styles.pillText, { color: choreInkColor(status.state, scheme) }]}>
+                  {marker}
                 </ThemedText>
               </View>
             )}
@@ -304,6 +315,7 @@ const styles = StyleSheet.create({
   sub: { flexShrink: 1, fontSize: 13, opacity: 0.55, lineHeight: 18 },
   pill: { borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1, marginTop: 1 },
   undoPill: { borderWidth: 1 },
+  marker: { borderRadius: 999, borderWidth: 1, paddingHorizontal: 6, marginTop: 1 },
   pillText: { fontSize: 11, fontWeight: '700', lineHeight: 15 },
   checkWrap: { width: CHECK, height: CHECK, alignItems: 'center', justifyContent: 'center' },
   check: {
