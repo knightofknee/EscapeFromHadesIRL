@@ -11,6 +11,13 @@
 // version the store CDN won't actually hand over yet: the field changes only
 // once the store really serves the update, so the Update button never leads
 // to a dead end.
+//
+// ANDROID compares the build number (versionCode), not the version name:
+// Android builds only bump versionCode (eas.json autoIncrement), and the name
+// only moves when an iOS build bumps app.json, so several Play releases share
+// one name. It gets its own dials, androidLatestBuild / androidMinBuild, which
+// also lets each store be flipped when IT goes live. Android builds up to
+// versionCode 3 predate this and still read latestVersion / minVersion.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Application from 'expo-application';
 import { doc, getDoc } from 'firebase/firestore';
@@ -18,7 +25,10 @@ import { Platform } from 'react-native';
 import { db } from '@/lib/firebase/firestore';
 
 export type AppUpdateInfo = {
-  /** Latest released binary version (Config/app.latestVersion), e.g. "1.0.18". */
+  /**
+   * The release this build is behind: Config/app.latestVersion on iOS (e.g.
+   * "1.0.18"), "android build N" on Android. Keys the snooze.
+   */
   latestVersion: string;
   /** Link to this platform's store listing. */
   storeUrl: string;
@@ -44,6 +54,35 @@ export function isNewerVersion(latest: string, installed: string): boolean {
     if (x < y) return false;
   }
   return false;
+}
+
+/**
+ * True when a whole-number build `target` (Config/app androidLatestBuild /
+ * androidMinBuild) is above the running build number. Anything that isn't a
+ * positive whole number on either side bails to false: never prompt on
+ * garbage data.
+ */
+export function isOlderBuild(target: unknown, installed: string | null | undefined): boolean {
+  const have = Number(installed);
+  if (typeof target !== 'number' || !Number.isInteger(target) || target <= 0) return false;
+  if (!installed || !Number.isInteger(have) || have <= 0) return false;
+  return have < target;
+}
+
+/**
+ * Whether this build sits below one of Config/app's dials ('latest' warns,
+ * 'min' blocks), on this platform's scheme. Resolves the dial's release id
+ * when it does, null when current or the dial is unset.
+ */
+export function behindDial(data: Record<string, unknown> | undefined, dial: 'latest' | 'min'): string | null {
+  if (Platform.OS === 'android') {
+    const target = data?.[dial === 'latest' ? 'androidLatestBuild' : 'androidMinBuild'];
+    return isOlderBuild(target, Application.nativeBuildVersion) ? `android build ${target}` : null;
+  }
+  const raw = data?.[dial === 'latest' ? 'latestVersion' : 'minVersion'];
+  const target = typeof raw === 'string' ? raw.trim() : '';
+  const installed = Application.nativeApplicationVersion;
+  return target && installed && isNewerVersion(target, installed) ? target : null;
 }
 
 // Dismissing the nudge is a snooze, not a mute: Close (or an Update tap) buys
@@ -101,10 +140,11 @@ export async function saveDismissRecord(version: string): Promise<void> {
 /**
  * Checks Config/app for a newer released version of the app.
  *
- * Compares the running binary's own version (Application.nativeApplicationVersion,
+ * iOS compares the running binary's own version (Application.nativeApplicationVersion,
  * the same number EAS stamps from app.json) against Config/app.latestVersion,
  * which is on the same scheme. The App Store's public version name never
- * enters the comparison.
+ * enters the comparison. Android compares its build number against
+ * androidLatestBuild (see the top of this file).
  *
  * Resolves with the latest version + this platform's store URL when the
  * installed build is behind, or null when up to date / not applicable (dev
@@ -112,30 +152,25 @@ export async function saveDismissRecord(version: string): Promise<void> {
  * Never throws — an update nudge is not worth surfacing an error for.
  *
  * Config/app is world-readable by rule, so this works signed-out too. Fields:
- *   latestVersion  string  latest released binary version; blank/absent disables the nudge
- *   iosUrl         string  App Store listing link
- *   androidUrl     string  Play Store listing link (absent while Android has no public release)
+ *   latestVersion       string  iOS: latest released binary version; blank/absent disables the nudge
+ *   androidLatestBuild  number  Android: latest released versionCode; absent disables the nudge
+ *   iosUrl              string  App Store listing link
+ *   androidUrl          string  Play Store listing link
  */
 export async function checkForAppUpdate(): Promise<AppUpdateInfo | null> {
   // Dev builds always report the in-progress version and would nag constantly.
   if (__DEV__) return null;
-
-  const installed = Application.nativeApplicationVersion;
-  if (!installed) return null;
 
   try {
     const snap = await getDoc(doc(db, 'Config', 'app'));
     if (!snap.exists()) return null;
     const data = snap.data();
 
-    const latestVersion =
-      typeof data?.latestVersion === 'string' ? data.latestVersion.trim() : '';
-    if (!latestVersion) return null;
-
     const storeUrl = Platform.OS === 'ios' ? data?.iosUrl : data?.androidUrl;
     if (typeof storeUrl !== 'string' || !storeUrl) return null;
 
-    if (!isNewerVersion(latestVersion, installed)) return null;
+    const latestVersion = behindDial(data, 'latest');
+    if (!latestVersion) return null;
     const message = typeof data?.message === 'string' ? data.message.trim() : '';
     return { latestVersion, storeUrl, ...(message ? { message } : {}) };
   } catch {

@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Note, Tag } from '@/types/note';
+import { notePlainText } from '@/lib/note-content';
 
 /**
  * Personal typing vocabulary + suggestion engine for the notes editor.
@@ -305,7 +306,8 @@ export async function seedVocabFromNotes(userId: string, notes: Note[]): Promise
     seeded.add(n.id);
     any = true;
     harvestText(n.title);
-    harvestText(n.content);
+    // Rich notes store HTML; harvest their text, never tag names.
+    harvestText(notePlainText(n));
     if (n.description) harvestText(n.description);
   }
   if (!any) return;

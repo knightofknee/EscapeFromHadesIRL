@@ -1,5 +1,12 @@
 import { formatChecklistAsText } from '@/lib/checklist-format';
+import { htmlToMarkdown } from '@/lib/note-html';
+import { isRichNote } from '@/lib/note-content';
 import type { ChecklistItem, Note, Tag } from '@/types/note';
+
+export type ExportOptions = {
+  /** Markdown for a photo/video in a rich note, given its <img src>. */
+  image?: (src: string) => string;
+};
 
 /** Escape a string for a double-quoted YAML scalar: backslashes first, then
  * quotes, then literal newlines (a raw newline breaks the frontmatter line). */
@@ -7,7 +14,7 @@ function yamlEscape(text: string): string {
   return text.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
 }
 
-function noteToMarkdown(note: Note, tags: Tag[], items?: ChecklistItem[]): string {
+function noteToMarkdown(note: Note, tags: Tag[], items?: ChecklistItem[], opts?: ExportOptions): string {
   const noteTagIds = [...new Set(note.tags.map((t) => t.tagId))];
   const noteTagNames = noteTagIds
     .map((id) => tags.find((t) => t.id === id)?.name)
@@ -30,7 +37,9 @@ function noteToMarkdown(note: Note, tags: Tag[], items?: ChecklistItem[]): strin
   const body =
     note.type === 'checklist'
       ? formatChecklistAsText(note.description ?? '', items ?? note.checklist ?? [])
-      : note.content;
+      : isRichNote(note)
+        ? htmlToMarkdown(note.content, { image: opts?.image ?? (() => '[photo]') })
+        : note.content;
   return frontmatter + body;
 }
 
@@ -48,6 +57,7 @@ export function allNotesToMarkdown(
   tags: Tag[],
   /** Live subcollection items per checklist note id (see noteToMarkdown). */
   checklistItems?: Map<string, ChecklistItem[]>,
+  opts?: ExportOptions,
 ): { filename: string; content: string }[] {
   const usedNames = new Map<string, number>();
   return notes.map((note) => {
@@ -60,7 +70,7 @@ export function allNotesToMarkdown(
     }
     return {
       filename,
-      content: noteToMarkdown(note, tags, checklistItems?.get(note.id)),
+      content: noteToMarkdown(note, tags, checklistItems?.get(note.id), opts),
     };
   });
 }

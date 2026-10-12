@@ -48,8 +48,9 @@ type ChecklistEditorProps = {
   onUpdateTitle: (title: string) => void;
   onUpdateDescription: (description: string) => void;
   onUpdateTags: (tags: InlineTag[]) => void;
-  /** Create a blank item at the end; returns its new id (for focusing). */
-  onAddItem: () => string;
+  /** Create an item (blank at the end by default; text/afterId prefill and
+   *  position it); returns its new id (for focusing). */
+  onAddItem: (opts?: { text?: string; afterId?: string }) => string;
   onToggleItem: (id: string) => void;
   onSetItemText: (id: string, text: string) => void;
   onDeleteItem: (id: string) => void;
@@ -243,6 +244,42 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
       [onAddItem],
     );
 
+    // All row text changes funnel through here. Newlines arrive from the
+    // return key or a multi-line paste (rows are multiline TextInputs so
+    // iOS can't flatten pasted newlines into spaces): the first line stays
+    // in this item and each further non-empty line becomes its own item
+    // right below it — pasting a list builds a list.
+    const handleItemTextChange = useCallback(
+      (item: ChecklistItemDoc, text: string) => {
+        if (!text.includes('\n')) {
+          onSetItemText(item.id, text);
+          return;
+        }
+        const [first, ...rest] = text.split('\n');
+        const extraLines = rest.map((l) => l.trim()).filter((l) => l.length > 0);
+        onSetItemText(item.id, first);
+        // Force the native input back to the first line NOW. The controlled
+        // `value` round-trips through state and can lose the race against
+        // further input events, which would re-deliver the newline text and
+        // split again (duplicate items).
+        inputRefs.current.get(item.id)?.setNativeProps({ text: first });
+        if (extraLines.length > 0) {
+          let afterId = item.id;
+          for (const line of extraLines) {
+            afterId = onAddItem({ text: line, afterId });
+          }
+          pendingFocusId.current = afterId;
+        } else if (first.trim().length > 0) {
+          // Plain return at the end of a non-empty item: new item below it.
+          pendingFocusId.current = onAddItem({ afterId: item.id });
+        } else {
+          // Return on an empty item: done with the list.
+          Keyboard.dismiss();
+        }
+      },
+      [onSetItemText, onAddItem],
+    );
+
     const handleDelete = useCallback(
       (item: ChecklistItemDoc) => {
         // Snapshot the full item so undo can re-create it exactly.
@@ -425,7 +462,19 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
             // owns scroll. The library still handles long-press-and-drag
             // for reorder gesture inside this flat list.
             scrollEnabled={false}
-            activationDistance={5}
+            // With scrolling disabled the virtualization window never
+            // extends (the list gets no scroll events), so anything past
+            // the initial render window would simply not exist on screen.
+            // Render every row up front — the parent ScrollView is the
+            // one doing the scrolling.
+            initialNumToRender={Math.max(1, uncompletedItems.length)}
+            // Tuned so the parent ScrollView wins plain vertical swipes
+            // that start on a row (at 5 the list's pan claimed them first,
+            // freezing page scroll), while long-press handle drags still
+            // activate. Don't raise it much further — the pan gesture also
+            // drives an in-progress drag, and a huge threshold leaves the
+            // lifted row stuck.
+            activationDistance={20}
             renderItem={({ item, drag, isActive }: RenderItemParams<ChecklistItemDoc>) => (
               <ScaleDecorator>
                 <ChecklistRow
@@ -434,14 +483,7 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
                   colors={colors}
                   registerRef={(t) => inputRefs.current.set(item.id, t)}
                   onToggle={() => onToggleItem(item.id)}
-                  onChangeText={(text) => onSetItemText(item.id, text)}
-                  onSubmitEditing={() => {
-                    if (item.text.trim().length > 0) {
-                      addNewItem(true);
-                    } else {
-                      Keyboard.dismiss();
-                    }
-                  }}
+                  onChangeText={(text) => handleItemTextChange(item, text)}
                   onDelete={() => handleDelete(item)}
                   onFocus={onFocus}
                   onBlur={onBlur}
@@ -462,14 +504,7 @@ export const ChecklistEditor = forwardRef<ChecklistEditorHandle, ChecklistEditor
               colors={colors}
               registerRef={(t) => inputRefs.current.set(item.id, t)}
               onToggle={() => onToggleItem(item.id)}
-              onChangeText={(text) => onSetItemText(item.id, text)}
-              onSubmitEditing={() => {
-                if (item.text.trim().length > 0) {
-                  addNewItem(true);
-                } else {
-                  Keyboard.dismiss();
-                }
-              }}
+              onChangeText={(text) => handleItemTextChange(item, text)}
               onDelete={() => handleDelete(item)}
               onFocus={onFocus}
               onBlur={onBlur}
@@ -542,7 +577,6 @@ type ChecklistRowProps = {
   registerRef: (t: TextInput | null) => void;
   onToggle: () => void;
   onChangeText: (text: string) => void;
-  onSubmitEditing: () => void;
   onDelete: () => void;
   onFocus?: () => void;
   onBlur?: () => void;
@@ -564,7 +598,6 @@ function ChecklistRow({
   registerRef,
   onToggle,
   onChangeText,
-  onSubmitEditing,
   onDelete,
   onFocus,
   onBlur,
@@ -623,7 +656,6 @@ function ChecklistRow({
           ]}
           value={item.text}
           onChangeText={onChangeText}
-          onSubmitEditing={onSubmitEditing}
           onFocus={() => {
             onFocus?.();
             // A newly-created row is often focused below the keyboard;
@@ -634,10 +666,12 @@ function ChecklistRow({
           onSelectionChange={measureCaret}
           onTouchStart={onTouchStart}
           placeholder=""
-          // Single line per item so Enter triggers onSubmitEditing.
-          // blurOnSubmit defaults to true on iOS — we set false because
-          // we handle our own focus shifting.
-          blurOnSubmit={false}
+          // Multiline so pasted newlines reach onChangeText intact (a
+          // single-line UITextField flattens them to spaces before the JS
+          // side ever sees them). Stored item text never actually holds a
+          // newline — the editor's handleItemTextChange splits every "\n"
+          // into separate items, so the return key still means "next item".
+          multiline
           returnKeyType="next"
           keyboardAppearance={Platform.OS === 'ios' ? 'default' : undefined}
         />

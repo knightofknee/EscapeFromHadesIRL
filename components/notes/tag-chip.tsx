@@ -10,9 +10,11 @@ type TagChipProps = {
   onPress?: () => void;
   onLongPress?: () => void;
   small?: boolean;
+  /** Tight line height, for display-only chips in dense lists. */
+  dense?: boolean;
 };
 
-export function TagChip({ name, color, selected, onPress, onLongPress, small }: TagChipProps) {
+export function TagChip({ name, color, selected, onPress, onLongPress, small, dense }: TagChipProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
@@ -34,6 +36,7 @@ export function TagChip({ name, color, selected, onPress, onLongPress, small }: 
         style={[
           styles.label,
           small && styles.labelSmall,
+          dense && styles.labelDense,
           { color: selected ? '#fff' : (color ?? colors.tagText) },
         ]}
       >
@@ -59,5 +62,10 @@ const styles = StyleSheet.create({
   },
   labelSmall: {
     fontSize: 11,
+  },
+  // ThemedText's default 24pt line height makes a chip about twice as tall
+  // as its text; dense lists (the notes list) tighten it.
+  labelDense: {
+    lineHeight: 15,
   },
 });

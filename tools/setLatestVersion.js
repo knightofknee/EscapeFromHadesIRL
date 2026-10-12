@@ -1,17 +1,23 @@
 #!/usr/bin/env node
 // tools/setLatestVersion.js
 //
-// The two update dials on Config/app, both on the BINARY version scheme (the
-// one EAS stamps from app.json):
+// The update dials on Config/app. iOS uses the BINARY version scheme (the one
+// EAS stamps from app.json); Android uses the build number (versionCode),
+// since Android builds share a version name (see lib/app-update.ts):
 //
-//   WARN   latestVersion  older builds get the snoozable "Update available" card
-//   BLOCK  minVersion     older builds get the full-screen "Update required"
-//                         screen (components/ui/update-required-gate.tsx)
+//   WARN   latestVersion / androidLatestBuild  older builds get the snoozable
+//                                              "Update available" card
+//   BLOCK  minVersion / androidMinBuild        older builds get the full-screen
+//          "Update required" screen (components/ui/update-required-gate.tsx)
 //
-//   node tools/setLatestVersion.js 1.0.22                          warn only
-//   node tools/setLatestVersion.js 1.0.22 --min-version 1.0.22     warn + block
-//   node tools/setLatestVersion.js --min-version ""                lift the block
+//   node tools/setLatestVersion.js 1.0.22                          iOS warn only
+//   node tools/setLatestVersion.js 1.0.22 --min-version 1.0.22     iOS warn + block
+//   node tools/setLatestVersion.js --min-version ""                lift the iOS block
+//   node tools/setLatestVersion.js --android-latest 4              Android warn
+//   node tools/setLatestVersion.js --android-min 4                 Android block ("" lifts)
 //   ... --message "Text for the block screen"                      optional copy
+//
+// Each store's dial moves on its own: flip it once THAT store serves the build.
 //
 // Run the warn flip only once the store actually serves the update. The block
 // only reaches builds that contain the gate (the first build made after
@@ -36,16 +42,24 @@ function flag(name) {
 }
 const version = argv.find((a, i) => !a.startsWith('--') && !(i > 0 && argv[i - 1].startsWith('--')));
 const minVersion = flag('min-version');
+const androidLatest = flag('android-latest');
+const androidMin = flag('android-min');
 const message = flag('message');
+const WHOLE = /^[1-9]\d*$/;
 
 function usage(msg) {
   if (msg) console.error(msg);
-  console.error('Usage: node tools/setLatestVersion.js [<latest, e.g. 1.0.22>] [--min-version <floor>|""] [--message "..."]');
+  console.error(
+    'Usage: node tools/setLatestVersion.js [<latest, e.g. 1.0.22>] [--min-version <floor>|""]' +
+      ' [--android-latest <build>] [--android-min <build>|""] [--message "..."]',
+  );
   process.exit(1);
 }
-if (!version && minVersion === null && message === null) usage();
+if (!version && minVersion === null && androidLatest === null && androidMin === null && message === null) usage();
 if (version && !DOTTED.test(version)) usage(`Not a dotted version: ${version}`);
 if (minVersion && !DOTTED.test(minVersion)) usage(`Not a dotted version: ${minVersion}`);
+if (androidLatest !== null && !WHOLE.test(androidLatest)) usage(`Not a build number: ${androidLatest}`);
+if (androidMin && !WHOLE.test(androidMin)) usage(`Not a build number: ${androidMin}`);
 
 function compare(a, b) {
   const x = a.split('.').map(Number);
@@ -69,10 +83,16 @@ const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application
 async function main() {
   const current = await (await fetch(DOC_URL, { headers })).json();
   const str = (f) => current?.fields?.[f]?.stringValue ?? '';
+  const int = (f) => Number(current?.fields?.[f]?.integerValue ?? 0);
   const latest = version || str('latestVersion');
   const floor = minVersion !== null ? minVersion : str('minVersion');
   if (floor && latest && compare(floor, latest) > 0) {
     usage(`minVersion ${floor} is above latestVersion ${latest}: that would block the current release.`);
+  }
+  const aLatest = androidLatest !== null ? Number(androidLatest) : int('androidLatestBuild');
+  const aFloor = androidMin !== null ? Number(androidMin || 0) : int('androidMinBuild');
+  if (aFloor && aLatest && aFloor > aLatest) {
+    usage(`androidMinBuild ${aFloor} is above androidLatestBuild ${aLatest}: that would block the current release.`);
   }
   // PATCH with an updateMask touches only the named fields; a masked field left
   // out of the body is deleted, which is how "" clears the floor or message.
@@ -80,6 +100,8 @@ async function main() {
   const fields = {};
   if (version) { mask.push('latestVersion'); fields.latestVersion = { stringValue: version }; }
   if (minVersion !== null) { mask.push('minVersion'); if (minVersion) fields.minVersion = { stringValue: minVersion }; }
+  if (androidLatest !== null) { mask.push('androidLatestBuild'); fields.androidLatestBuild = { integerValue: androidLatest }; }
+  if (androidMin !== null) { mask.push('androidMinBuild'); if (androidMin) fields.androidMinBuild = { integerValue: androidMin }; }
   if (message !== null) { mask.push('message'); if (message) fields.message = { stringValue: message }; }
   const qs = mask.map((f) => `updateMask.fieldPaths=${f}`).join('&');
   const res = await fetch(`${DOC_URL}?${qs}`, { method: 'PATCH', headers, body: JSON.stringify({ fields }) });
@@ -88,7 +110,7 @@ async function main() {
     process.exit(1);
   }
   const readBack = await (await fetch(DOC_URL, { headers })).json();
-  const out = Object.fromEntries(Object.entries(readBack.fields ?? {}).map(([k, v]) => [k, v.stringValue ?? v.booleanValue]));
+  const out = Object.fromEntries(Object.entries(readBack.fields ?? {}).map(([k, v]) => [k, v.stringValue ?? v.integerValue ?? v.booleanValue]));
   console.log('Config/app is now:', JSON.stringify(out, null, 2));
 }
 

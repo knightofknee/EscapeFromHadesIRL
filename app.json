@@ -61,7 +61,7 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "We access the photo you pick so it can be used as a habit tile icon. Nothing else in your library is read.",
+          "photosPermission": "We only read the photos and videos you pick, to add them to a note or use one as a habit tile icon. Nothing else in your library is read.",
           "cameraPermission": false,
           "microphonePermission": false
         }
@@ -115,7 +115,8 @@
           "iosUrlScheme": "com.googleusercontent.apps.844071641525-l1v60tmbhjgsn0d5umogslp7r4ohbp9g"
         }
       ],
-      "expo-health-connect"
+      "expo-health-connect",
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true,

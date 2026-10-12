@@ -19,7 +19,14 @@
  * entries evict first.
  */
 
-export type UndoSnapshot = { title: string; content: string };
+/**
+ * `content` is whatever the editor stores (rich notes: HTML). `text`, when
+ * present, is the visible text it renders; chunk sizing and the caret
+ * restore use it so markup length never counts as typing.
+ */
+export type UndoSnapshot = { title: string; content: string; text?: string };
+
+const visible = (s: UndoSnapshot) => s.text ?? s.content;
 
 const IDLE_MS = 2000;
 const PASTE_CHARS = 24;
@@ -66,7 +73,7 @@ export class UndoHistory {
     if (sameSnapshot(prev, next)) return;
 
     const delta =
-      next.content.length - prev.content.length + (next.title.length - prev.title.length);
+      visible(next).length - visible(prev).length + (next.title.length - prev.title.length);
     const kind: EditKind = delta < 0 ? 'delete' : 'insert';
     const size = Math.max(1, Math.abs(delta));
 

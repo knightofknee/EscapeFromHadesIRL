@@ -1,10 +1,26 @@
-import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
-import { StyleSheet, TextInput, View, Pressable, ScrollView, type NativeSyntheticEvent, type TextInputSelectionChangeEventData } from 'react-native';
+import { useState, useEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react';
+import {
+  StyleSheet,
+  TextInput,
+  View,
+  Pressable,
+  ScrollView,
+  useWindowDimensions,
+  type NativeSyntheticEvent,
+} from 'react-native';
+import {
+  EnrichedTextInput,
+  type EnrichedTextInputInstance,
+  type OnChangeStateEvent,
+} from 'react-native-enriched-html';
+import * as ImagePicker from 'expo-image-picker';
 import { ThemedText } from '@/components/themed-text';
 import { TagChip } from './tag-chip';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { UndoHistory, caretAfterRestore } from '@/lib/undo-history';
+import { useAuth } from '@/contexts/auth-context';
+import { emitError } from '@/lib/error-bus';
+import { UndoHistory, caretAfterRestore, type UndoSnapshot } from '@/lib/undo-history';
 import {
   applySuggestionToText,
   getSuggestions,
@@ -12,13 +28,53 @@ import {
   learnWord,
   type Suggestion,
 } from '@/lib/word-suggestions';
+import {
+  IMAGE_CHAR,
+  hiddenCharOffsets,
+  htmlToEditorText,
+  selectionToEditorOffset,
+  imageSources,
+  insertImageBlock,
+  replaceEditorRange,
+} from '@/lib/note-html';
+import { noteBodyHtml } from '@/lib/note-content';
+import {
+  editorImageTag,
+  importPhoto,
+  importVideo,
+  isVideoPoster,
+  nameFromSrc,
+  toEditorHtml,
+  toStorageHtml,
+} from '@/lib/note-media';
+import type { MediaChip } from './suggestion-bar';
 import type { Note, Tag, InlineTag } from '@/types/note';
+
+/** Which toolbar toggles are active at the caret (drives their tint). */
+export type FormatState = {
+  bold: boolean;
+  italic: boolean;
+  strike: boolean;
+  heading: boolean;
+  bullets: boolean;
+  numbers: boolean;
+};
+
+const NO_FORMAT: FormatState = {
+  bold: false,
+  italic: false,
+  strike: false,
+  heading: false,
+  bullets: false,
+  numbers: false,
+};
 
 type NoteEditorProps = {
   note: Note;
   tags: Tag[];
   isNew?: boolean;
   onUpdateTitle: (title: string) => void;
+  /** Receives the body as STORED HTML (efh-media:// image refs). */
   onUpdateContent: (content: string) => void;
   onUpdateTags: (tags: InlineTag[]) => void;
   onFocus?: () => void;
@@ -45,30 +101,46 @@ type NoteEditorProps = {
    * strip re-renders while typing.
    */
   onSuggestions?: (suggestions: Suggestion[]) => void;
+  /** The photo/video the caret is touching, or null (see SuggestionBar). */
+  onMediaChip?: (chip: MediaChip | null) => void;
+  /** Toolbar toggle states; fires only when one flips. */
+  onFormatState?: (state: FormatState) => void;
+  /** True while picked/pasted media is being copied in. */
+  onImportingChange?: (importing: boolean) => void;
 };
 
 export type NoteEditorHandle = {
   applyStrikethrough: () => void;
   applyBullets: () => void;
   applyNumberedList: () => void;
+  applyBold: () => void;
+  applyItalic: () => void;
+  applyHeading: () => void;
+  /** Open the photo library and insert the picked photos/videos at the caret. */
+  addMedia: () => void;
   /** Step the title+content back/forward one history chunk. */
   undo: () => void;
   redo: () => void;
+  /** Drop the keyboard. Keyboard.dismiss() can't blur the rich input. */
+  blur: () => void;
   /**
-   * Snapshot of the editor's *local* content — including any unsaved
-   * typing that hasn't yet been debounced into Firestore. The parent's
-   * `note.content` prop can lag this by up to 500ms, so callers (notably
-   * the text↔checklist toggle parsing the content into items) should
-   * prefer this over `note.content` to avoid losing recent edits.
+   * Snapshot of the editor's *local* body as STORED HTML — including any
+   * unsaved typing that hasn't yet been debounced into Firestore. The
+   * parent's `note.content` prop can lag this by up to 500ms.
    */
   getLatestContent: () => string;
+  /**
+   * The body's text in the editor's offset model (one line per paragraph,
+   * each photo one IMAGE_CHAR) — the space getSelection() offsets index.
+   */
+  getLatestText: () => string;
   /** Same as getLatestContent, for the title field. */
   getLatestTitle: () => string;
   /**
-   * The content field's current selection (caret/highlight) as char offsets.
-   * The text→checklist toggle reads this so a highlight scopes which lines
-   * become items. Snapshot it on the button's onPressIn — by the time the
-   * press completes the input may have blurred and collapsed the selection.
+   * The content field's current selection (caret/highlight) as offsets into
+   * getLatestText(). The text→checklist toggle reads this so a highlight
+   * scopes which lines become items. Snapshot it on the button's onPressIn —
+   * by the time the press completes the input may have blurred.
    */
   getSelection: () => { start: number; end: number };
   /** Accept a suggestion chip: replace the typed span with the full word/
@@ -76,94 +148,15 @@ export type NoteEditorHandle = {
   applySuggestion: (suggestion: Suggestion) => void;
 };
 
-// U+0336 is the Unicode combining long stroke overlay — visually strikes through
-// the preceding character. Works in any plain-text field including TextInput.
-const STRIKE_CHAR = '\u0336';
+/** Firestore's document cap is 1 MiB; leave headroom for the other fields. */
+const MAX_STORED_HTML = 900_000;
+// Editor body padding — photos are sized to the width inside it.
+const BODY_PAD_H = 16;
 
-/** Toggle actual visual strikethrough on the selected text using U+0336 overlay. */
-function formatStrikethrough(content: string, sel: { start: number; end: number }) {
-  if (sel.end <= sel.start) return { content, newSelection: sel };
-  const before = content.slice(0, sel.start);
-  const middle = content.slice(sel.start, sel.end);
-  const after = content.slice(sel.end);
-  // If already striked (contains the overlay), remove it
-  if (middle.includes(STRIKE_CHAR)) {
-    const stripped = middle.split(STRIKE_CHAR).join('');
-    return {
-      content: before + stripped + after,
-      newSelection: { start: sel.start, end: sel.start + stripped.length },
-    };
-  }
-  // Otherwise strike each visible character
-  const striked = Array.from(middle).map((c) => (c === '\n' ? c : c + STRIKE_CHAR)).join('');
-  return {
-    content: before + striked + after,
-    newSelection: { start: sel.start, end: sel.start + striked.length },
-  };
+/** Collapse the editor's pretty-print whitespace for change detection. */
+function normalize(html: string): string {
+  return html.replace(/>\s*\n\s*</g, '><').trim();
 }
-
-const BULLET_PREFIX = '  • ';
-// Matches a line like `  • anything` — permissive about whitespace
-const BULLET_LINE_RE = /^(\s*•\s+)(.*)$/;
-// Matches a line like `  1. anything` — permissive about whitespace
-const NUM_LINE_RE = /^(\s*)(\d+)\.\s+(.*)$/;
-
-type ListKind = 'bullet' | 'number';
-
-/** Toggle a list style on the lines touched by the selection.
- *  - Same kind clicked again → strip the prefix (un-list).
- *  - Other kind clicked on an existing list → swap the prefix.
- *  - No list → add the prefix. */
-function toggleList(
-  content: string,
-  sel: { start: number; end: number },
-  kind: ListKind,
-) {
-  const lineStart = content.lastIndexOf('\n', sel.start - 1) + 1;
-  const nlAt = content.indexOf('\n', sel.end);
-  const lineEnd = nlAt === -1 ? content.length : nlAt;
-
-  const block = content.slice(lineStart, lineEnd);
-  const lines = block.split('\n');
-
-  const currentRe = kind === 'bullet' ? BULLET_LINE_RE : NUM_LINE_RE;
-  const otherRe = kind === 'bullet' ? NUM_LINE_RE : BULLET_LINE_RE;
-  const firstLineHasCurrent = currentRe.test(lines[0] ?? '');
-
-  let transformed: string[];
-  if (firstLineHasCurrent) {
-    // Un-list: strip the current kind's prefix from any line that has it.
-    transformed = lines.map((l) => {
-      const m = l.match(currentRe);
-      if (!m) return l;
-      // Bullet regex: [2]=text. Number regex: [3]=text.
-      return kind === 'bullet' ? m[2] : m[3];
-    });
-  } else {
-    // Apply (or swap from the other kind): strip any existing other-kind
-    // prefix, then add this kind's prefix. Skip lines that already have
-    // this kind's prefix (mixed selection).
-    transformed = lines.map((l, i) => {
-      const om = l.match(otherRe);
-      const stripped = om ? (kind === 'bullet' ? om[3] : om[2]) : l;
-      if (currentRe.test(stripped)) return stripped;
-      const prefix = kind === 'bullet' ? BULLET_PREFIX : `  ${i + 1}. `;
-      return prefix + stripped;
-    });
-  }
-
-  const rebuilt = transformed.join('\n');
-  const newContent = content.slice(0, lineStart) + rebuilt + content.slice(lineEnd);
-  const endOfBlock = lineStart + rebuilt.length;
-  return {
-    content: newContent,
-    newSelection: { start: endOfBlock, end: endOfBlock },
-  };
-}
-
-// The content input's maxLength. Programmatic inserts (accepted suggestion
-// chips) bypass TextInput's own enforcement, so they check this too.
-const CONTENT_MAX_LENGTH = 50000;
 
 export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function NoteEditor(
   {
@@ -180,21 +173,51 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     onCaretBottom,
     onHistoryChange,
     onSuggestions,
+    onMediaChip,
+    onFormatState,
+    onImportingChange,
   },
   ref,
 ) {
+  const { user } = useAuth();
+  const uid = user?.uid ?? '';
+  const colorScheme = useColorScheme();
+  const colors = Colors[colorScheme ?? 'light'];
+  const { width: windowWidth } = useWindowDimensions();
+  const imageMaxWidth = windowWidth - BODY_PAD_H * 2;
+
   const [title, setTitle] = useState(note.title);
-  const [content, setContent] = useState(note.content);
+  const editorRef = useRef<EnrichedTextInputInstance>(null);
+
+  // The body the editor starts from, computed once per note: stored HTML (or
+  // a converted legacy string) with efh-media:// refs swapped for this
+  // phone's file URLs. The editor is uncontrolled; later content flows out
+  // through onChangeHtml and in only via setValue (undo, chips, photos).
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- once per note id
+  const initialHtml = useMemo(() => toEditorHtml(noteBodyHtml(note), uid, imageMaxWidth), [note.id, uid]);
+
+  // Live mirrors of the editor (editor-form HTML, its text model, selection).
+  const htmlRef = useRef(initialHtml);
+  const textRef = useRef(htmlToEditorText(initialHtml));
+  const selRef = useRef({ start: 0, end: 0 });
+  const lastNormRef = useRef(normalize(initialHtml));
+  // The editor emits an onChangeHtml for its initial value; that one is the
+  // baseline, not an edit (saving it would convert/bump every opened note).
+  const baselinedRef = useRef(false);
+  // Set around programmatic setValue / format toggles: the change they cause
+  // must be saved but not recorded as a fresh typing edit (the action has
+  // already pushed its own undo boundary).
+  const suppressRecordRef = useRef(false);
+  const suppressTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
   // Chunked undo/redo for title+content. Lives for the editing session of
   // one note; reset when the note id changes. See lib/undo-history.ts for
   // the chunk-boundary policy (deletes always seal the pre-delete state).
   const historyRef = useRef<UndoHistory | null>(null);
   if (historyRef.current === null) historyRef.current = new UndoHistory();
   const history = historyRef.current;
-  const [selection, setSelection] = useState({ start: 0, end: 0 });
-  const [pendingSelection, setPendingSelection] = useState<{ start: number; end: number } | null>(null);
-  const colorScheme = useColorScheme();
-  const colors = Colors[colorScheme ?? 'light'];
+  const notifyHistory = () => onHistoryChange?.(history.canUndo, history.canRedo);
+
   // Separate debounce timers: with a single shared timer, a title keystroke
   // cancelled a still-pending content save (and vice versa) — the cancelled
   // edit then never persisted unless that field was typed in again.
@@ -214,49 +237,315 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     return () => {
       clearTimeout(titleSaveTimeout.current);
       clearTimeout(saveTimeout.current);
+      clearTimeout(suppressTimer.current);
+      clearTimeout(applyTimer.current);
       if (pendingTitleRef.current != null) onUpdateTitleRef.current(pendingTitleRef.current);
       if (pendingContentRef.current != null) onUpdateContentRef.current(pendingContentRef.current);
     };
   }, []);
-  const contentRef = useRef<TextInput>(null);
-  // Threshold (in chars) for "cursor is at end" — a small slack lets
-  // typing past trailing whitespace still count as appending.
-  const END_SLACK = 5;
-  // When the caret is at (or near) the end of the content, measure the
-  // content input's on-screen rect and hand the parent the window-Y of
-  // its bottom edge — a close proxy for the caret's line when appending.
-  // The parent decides whether that point is hidden by the keyboard and
-  // scrolls if needed. We bail when the caret is mid-content: the bottom
-  // edge wouldn't be where the caret is, and following it would scroll
-  // the user away from their edit.
-  function reportCaretIfAtEnd(cursorPos: number, contentLength: number) {
-    if (!onCaretBottom) return;
-    if (cursorPos < contentLength - END_SLACK) return;
-    contentRef.current?.measureInWindow((_x, y, _w, h) => onCaretBottom(y + h));
-  }
 
   useEffect(() => {
     setTitle(note.title);
-    setContent(note.content);
     history.reset();
     onHistoryChange?.(false, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-sync when switching notes, not on every content change
   }, [note.id]);
 
-  const notifyHistory = () => onHistoryChange?.(history.canUndo, history.canRedo);
-
-  // Release controlled selection after it's applied so the user can move the cursor freely
+  const titleValueRef = useRef(title);
   useEffect(() => {
-    if (pendingSelection) {
-      const t = setTimeout(() => setPendingSelection(null), 50);
-      return () => clearTimeout(t);
+    titleValueRef.current = title;
+  }, [title]);
+
+  const snapshot = (): UndoSnapshot => ({ title: titleValueRef.current, content: htmlRef.current, text: textRef.current });
+
+  // --- saving ---------------------------------------------------------------
+
+  function persistBody(editorHtml: string) {
+    const stored = toStorageHtml(editorHtml);
+    if (stored.length > MAX_STORED_HTML) {
+      emitError('This note is too long to save. Split it into two notes.');
+      return;
     }
-  }, [pendingSelection]);
+    onUpdateContentRef.current(stored);
+  }
+
+  function scheduleSave(editorHtml: string) {
+    clearTimeout(saveTimeout.current);
+    pendingContentRef.current = toStorageHtml(editorHtml);
+    saveTimeout.current = setTimeout(() => {
+      pendingContentRef.current = null;
+      persistBody(editorHtml);
+    }, 500);
+  }
+
+  function saveNow(editorHtml: string) {
+    clearTimeout(saveTimeout.current);
+    pendingContentRef.current = null;
+    persistBody(editorHtml);
+  }
+
+  function suppressNextRecord() {
+    suppressRecordRef.current = true;
+    clearTimeout(suppressTimer.current);
+    // A toggle that changes nothing emits no event — don't let the flag
+    // linger and swallow a real keystroke's history entry.
+    suppressTimer.current = setTimeout(() => {
+      suppressRecordRef.current = false;
+    }, 400);
+  }
+
+  // True while a programmatic setValue is being applied. The editor emits
+  // SEVERAL change events for one setValue, including a half-built one
+  // (text in, list styles not yet applied — seen on device). Recording that
+  // one as the "before" state corrupted undo, and saving it would flatten
+  // lists, so every event in the window is ignored; settleBody() then reads
+  // the editor's settled HTML once.
+  const applyingRef = useRef(false);
+  const applyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  /** Replace the whole body programmatically and park the caret. */
+  function setBody(nextHtml: string, caret: number) {
+    htmlRef.current = nextHtml;
+    textRef.current = htmlToEditorText(nextHtml);
+    lastNormRef.current = normalize(nextHtml);
+    applyingRef.current = true;
+    clearTimeout(applyTimer.current);
+    editorRef.current?.setValue(nextHtml);
+    editorRef.current?.setSelection(caret, caret);
+    selRef.current = { start: caret, end: caret };
+    saveNow(nextHtml);
+    refreshChips();
+    const expected = textRef.current;
+    applyTimer.current = setTimeout(() => void settleBody(expected), 300);
+  }
+
+  async function settleBody(expected: string) {
+    let html: string | undefined;
+    try {
+      html = await editorRef.current?.getHTML();
+    } catch {
+      html = undefined;
+    }
+    applyingRef.current = false;
+    if (!html) return;
+    const text = htmlToEditorText(html);
+    lastNormRef.current = normalize(html);
+    // The editor drops a trailing empty line when serializing; that's not an edit.
+    const trimEnd = (t: string) => t.replace(/\n+$/, '');
+    if (trimEnd(text) === trimEnd(expected)) {
+      htmlRef.current = html;
+      textRef.current = text;
+      return;
+    }
+    // Typing landed inside the window: keep it as a normal edit.
+    const prev = snapshot();
+    history.record(prev, { title: prev.title, content: html, text });
+    notifyHistory();
+    htmlRef.current = html;
+    textRef.current = text;
+    scheduleSave(html);
+    refreshChips();
+  }
+
+  // --- caret follow -----------------------------------------------------------
+
+  // Threshold (in chars) for "cursor is at end" — a small slack lets
+  // typing past trailing whitespace still count as appending.
+  const END_SLACK = 5;
+  function reportCaretIfAtEnd() {
+    if (!onCaretBottom) return;
+    if (selRef.current.end < textRef.current.length - END_SLACK) return;
+    editorRef.current?.measureInWindow((_x, y, _w, h) => onCaretBottom(y + h));
+  }
+
+  // --- suggestion strip -------------------------------------------------------
+
+  // While the TITLE input has focus the body's selection/content don't
+  // change, so without this gate the strip would keep showing stale body
+  // chips — and a tap would splice text into the body and yank focus away
+  // from the title mid-word.
+  const titleFocusedRef = useRef(false);
+  const [, setTitleFocused] = useState(false);
+  // Pre-apply text of the last accepted chip (same-frame double-tap guard).
+  const lastApplyTextRef = useRef<string | null>(null);
+
+  function mediaAt(caret: number): MediaChip | null {
+    const text = textRef.current;
+    const at = text[caret - 1] === IMAGE_CHAR ? caret - 1 : text[caret] === IMAGE_CHAR ? caret : -1;
+    if (at < 0) return null;
+    let index = 0;
+    for (let i = 0; i < at; i++) if (text[i] === IMAGE_CHAR) index++;
+    const src = imageSources(htmlRef.current)[index];
+    const name = src ? nameFromSrc(src) : null;
+    if (!name) return null;
+    return { name, kind: isVideoPoster(name) ? 'video' : 'photo' };
+  }
+
+  function refreshChips() {
+    lastApplyTextRef.current = null;
+    const { start, end } = selRef.current;
+    if (start !== end || titleFocusedRef.current) {
+      onSuggestions?.([]);
+      onMediaChip?.(null);
+      return;
+    }
+    const text = textRef.current;
+    onSuggestions?.(getSuggestions(text.slice(0, start), tags, text[start]));
+    onMediaChip?.(mediaAt(start));
+  }
+
+  // Tags can change while the caret sits still (a new tag created).
+  useEffect(() => {
+    refreshChips();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tags]);
+
+  function handleApplySuggestion(suggestion: Suggestion) {
+    const { start, end } = selRef.current;
+    if (start !== end || titleFocusedRef.current) return;
+    const text = textRef.current;
+    if (lastApplyTextRef.current === text) return; // same-frame double-tap
+    const result = applySuggestionToText(text, start, suggestion);
+    if (!result) return; // stale tap racing a keystroke — safe no-op
+    // Reduce the text change to one splice and apply it to the HTML.
+    let a = 0;
+    while (a < text.length && a < result.content.length && text[a] === result.content[a]) a++;
+    let b = 0;
+    while (
+      b < text.length - a &&
+      b < result.content.length - a &&
+      text[text.length - 1 - b] === result.content[result.content.length - 1 - b]
+    ) {
+      b++;
+    }
+    const nextHtml = replaceEditorRange(htmlRef.current, a, text.length - b, result.content.slice(a, result.content.length - b));
+    if (!nextHtml) return;
+    lastApplyTextRef.current = text;
+    history.recordAction(snapshot());
+    notifyHistory();
+    setBody(nextHtml, result.caret);
+    // An accepted chip is a deliberate use — reinforce it.
+    if (suggestion.kind === 'word') learnWord(suggestion.display);
+    editorRef.current?.focus();
+  }
+
+  // --- editor events ------------------------------------------------------------
+
+  function handleChangeHtml(html: string) {
+    if (applyingRef.current) return;
+    const text = htmlToEditorText(html);
+    const norm = normalize(html);
+    if (!baselinedRef.current) {
+      baselinedRef.current = true;
+      if (text === textRef.current) {
+        htmlRef.current = html;
+        lastNormRef.current = norm;
+        return;
+      }
+    }
+    if (norm === lastNormRef.current) return;
+    lastNormRef.current = norm;
+    const prev = snapshot();
+    const next: UndoSnapshot = { title: prev.title, content: html, text };
+    if (suppressRecordRef.current) {
+      suppressRecordRef.current = false;
+    } else {
+      history.record(prev, next);
+      notifyHistory();
+      // Feed the personal-vocabulary model whenever this edit committed a
+      // word boundary (separator keystroke, autocorrect replacement, paste).
+      learnFromEdit(prev.text ?? '', text);
+    }
+    htmlRef.current = html;
+    textRef.current = text;
+    scheduleSave(html);
+    refreshChips();
+    reportCaretIfAtEnd();
+  }
+
+  // Reported selections count the editor's hidden placeholder chars;
+  // convert them to the editor-text model (lib/note-html hiddenCharOffsets).
+  const hiddenRef = useRef<{ html: string; offsets: number[] }>({ html: '', offsets: [] });
+  function handleSelection(reportedStart: number, reportedEnd: number) {
+    if (hiddenRef.current.html !== htmlRef.current) {
+      hiddenRef.current = { html: htmlRef.current, offsets: hiddenCharOffsets(htmlRef.current) };
+    }
+    const hidden = hiddenRef.current.offsets;
+    const start = selectionToEditorOffset(reportedStart, hidden);
+    const end = selectionToEditorOffset(reportedEnd, hidden);
+    selRef.current = { start, end };
+    refreshChips();
+    reportCaretIfAtEnd();
+  }
+
+  const formatRef = useRef<FormatState>(NO_FORMAT);
+  function handleState(e: NativeSyntheticEvent<OnChangeStateEvent>) {
+    const s = e.nativeEvent;
+    const next: FormatState = {
+      bold: s.bold.isActive,
+      italic: s.italic.isActive,
+      strike: s.strikeThrough.isActive,
+      heading: s.h2.isActive,
+      bullets: s.unorderedList.isActive,
+      numbers: s.orderedList.isActive,
+    };
+    const prev = formatRef.current;
+    if ((Object.keys(next) as (keyof FormatState)[]).every((k) => prev[k] === next[k])) return;
+    formatRef.current = next;
+    onFormatState?.(next);
+  }
+
+  // One formatting tap = one undo step.
+  function format(toggle: (e: EnrichedTextInputInstance) => void) {
+    const editor = editorRef.current;
+    if (!editor) return;
+    history.recordAction(snapshot());
+    notifyHistory();
+    suppressNextRecord();
+    toggle(editor);
+    editor.focus();
+  }
+
+  // --- undo / redo ------------------------------------------------------------
+
+  // Restore a history snapshot: swap the fields, move the caret to the edge
+  // of the restored region, and persist immediately — an undo/redo is an
+  // explicit action, so it shouldn't sit in the debounce window where a
+  // pending autosave could race it.
+  function applySnapshot(snap: UndoSnapshot) {
+    clearTimeout(titleSaveTimeout.current);
+    pendingTitleRef.current = null;
+    if (snap.title !== titleValueRef.current) {
+      setTitle(snap.title);
+      titleValueRef.current = snap.title;
+      onUpdateTitle(snap.title);
+    }
+    if (snap.content !== htmlRef.current) {
+      const restoredText = snap.text ?? htmlToEditorText(snap.content);
+      setBody(snap.content, caretAfterRestore(textRef.current, restoredText));
+    }
+    notifyHistory();
+  }
+
+  function handleUndo() {
+    const snap = history.undo(snapshot());
+    if (snap) applySnapshot(snap);
+    // A null result still mutates the stacks (snapshots identical to the
+    // live state are popped and discarded) — keep the buttons honest.
+    else notifyHistory();
+  }
+
+  function handleRedo() {
+    const snap = history.redo(snapshot());
+    if (snap) applySnapshot(snap);
+    else notifyHistory();
+  }
 
   function handleTitleChange(text: string) {
-    history.record({ title, content }, { title: text, content });
+    history.record(snapshot(), { title: text, content: htmlRef.current, text: textRef.current });
     notifyHistory();
     setTitle(text);
+    titleValueRef.current = text;
     clearTimeout(titleSaveTimeout.current);
     pendingTitleRef.current = text;
     titleSaveTimeout.current = setTimeout(() => {
@@ -265,216 +554,83 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     }, 500);
   }
 
-  function scheduleSave(text: string) {
-    clearTimeout(saveTimeout.current);
-    pendingContentRef.current = text;
-    saveTimeout.current = setTimeout(() => {
-      pendingContentRef.current = null;
-      onUpdateContent(text);
-    }, 500);
-  }
+  // --- photos & videos ----------------------------------------------------------
 
-  // Single commit path for every content mutation (typing, auto-list
-  // continuation, list exit) so history records each one exactly once.
-  function commitContent(next: string, caret?: number) {
-    history.record({ title, content }, { title, content: next });
-    notifyHistory();
-    setContent(next);
-    scheduleSave(next);
-    if (caret != null) setPendingSelection({ start: caret, end: caret });
-  }
-
-  // Restore a history snapshot: move the caret to the edge of the restored
-  // region, swap the fields, and persist immediately — an undo/redo is an
-  // explicit action, so it shouldn't sit in the debounce window where a
-  // pending autosave could race it.
-  function applySnapshot(snap: { title: string; content: string }) {
-    if (snap.content !== content) {
-      const caret = caretAfterRestore(content, snap.content);
-      setSelection({ start: caret, end: caret });
-      setPendingSelection({ start: caret, end: caret });
-    }
-    clearTimeout(saveTimeout.current);
-    clearTimeout(titleSaveTimeout.current);
-    pendingTitleRef.current = null;
-    pendingContentRef.current = null;
-    if (snap.title !== title) {
-      setTitle(snap.title);
-      onUpdateTitle(snap.title);
-    }
-    if (snap.content !== content) {
-      setContent(snap.content);
-      onUpdateContent(snap.content);
-    }
-    notifyHistory();
-  }
-
-  function handleUndo() {
-    const snap = history.undo({ title, content });
-    if (snap) applySnapshot(snap);
-    // A null result still mutates the stacks (snapshots identical to the
-    // live state are popped and discarded) — keep the buttons honest.
-    else notifyHistory();
-  }
-
-  function handleRedo() {
-    const snap = history.redo({ title, content });
-    if (snap) applySnapshot(snap);
-    else notifyHistory();
-  }
-
-  function handleContentChange(text: string) {
-    // Feed the personal-vocabulary model whenever this edit committed a word
-    // boundary (separator keystroke, autocorrect replacement, paste).
-    learnFromEdit(content, text);
-
-    // Auto-continue list on Enter. Trigger whenever at least one newline has
-    // been added (iOS autocorrect may insert other chars alongside the \n, so
-    // we don't require a strict length diff of exactly 1).
-    const oldNewlines = (content.match(/\n/g) || []).length;
-    const newNewlines = (text.match(/\n/g) || []).length;
-
-    if (newNewlines > oldNewlines) {
-      // Find the position of the newly added \n.
-      // Start from the first differing position and locate the next \n from there.
-      let diffPos = 0;
-      while (diffPos < content.length && diffPos < text.length && content[diffPos] === text[diffPos]) {
-        diffPos++;
-      }
-      const nlPos = text.indexOf('\n', diffPos);
-
-      if (nlPos !== -1) {
-        const prevLineStart = nlPos > 0 ? text.lastIndexOf('\n', nlPos - 1) + 1 : 0;
-        const prevLine = text.slice(prevLineStart, nlPos);
-
-        const bm = prevLine.match(BULLET_LINE_RE);
-        if (bm) {
-          const itemText = bm[2];
-          if (itemText.trim().length === 0) {
-            // Empty bullet — exit list: remove the prefix line entirely
-            const newContent = text.slice(0, prevLineStart) + text.slice(nlPos + 1);
-            commitContent(newContent, prevLineStart);
-            return;
-          }
-          const insert = BULLET_PREFIX;
-          const newContent = text.slice(0, nlPos + 1) + insert + text.slice(nlPos + 1);
-          commitContent(newContent, nlPos + 1 + insert.length);
-          return;
-        }
-
-        const nm = prevLine.match(NUM_LINE_RE);
-        if (nm) {
-          const num = parseInt(nm[2], 10);
-          const itemText = nm[3];
-          if (itemText.trim().length === 0) {
-            const newContent = text.slice(0, prevLineStart) + text.slice(nlPos + 1);
-            commitContent(newContent, prevLineStart);
-            return;
-          }
-          const insert = `  ${num + 1}. `;
-          const newContent = text.slice(0, nlPos + 1) + insert + text.slice(nlPos + 1);
-          commitContent(newContent, nlPos + 1 + insert.length);
-          return;
+  const importingRef = useRef(false);
+  async function insertMedia(items: { uri: string; type: 'photo' | 'video'; mime?: string }[]) {
+    if (!uid || items.length === 0 || importingRef.current) return;
+    importingRef.current = true;
+    onImportingChange?.(true);
+    let html = htmlRef.current;
+    let caret = selRef.current.end;
+    const before = snapshot();
+    let added = 0;
+    try {
+      for (const item of items) {
+        try {
+          const stored = item.type === 'video' ? await importVideo(uid, item.uri) : await importPhoto(uid, item.uri, item.mime);
+          // After the first item, insert at the END of the previous image's
+          // line (caret - 1) so a batch stays together even when the line
+          // after it is a list item (which would push the next one below
+          // the whole list).
+          const at = added > 0 ? caret - 1 : caret;
+          const r = insertImageBlock(html, at, editorImageTag(uid, stored, imageMaxWidth));
+          html = r.html;
+          caret = r.caret;
+          added++;
+        } catch (e) {
+          console.error('[note-editor] media import failed', e);
+          emitError(item.type === 'video' ? "Couldn't add that video." : "Couldn't add that photo.");
         }
       }
+      if (added > 0) {
+        history.recordAction(before);
+        notifyHistory();
+        setBody(html, caret);
+      }
+    } finally {
+      importingRef.current = false;
+      onImportingChange?.(false);
+      editorRef.current?.focus();
     }
-
-    commitContent(text);
   }
 
-  function handleSelectionChange(e: NativeSyntheticEvent<TextInputSelectionChangeEventData>) {
-    const sel = e.nativeEvent.selection;
-    setSelection(sel);
-    // Follow the caret while typing. Uses current `content.length`
-    // because onChangeText may not have fired yet for this keystroke
-    // (selection often updates first on iOS).
-    reportCaretIfAtEnd(sel.end, content.length);
-  }
-
-  function applyFormatting(result: { content: string; newSelection: { start: number; end: number } }) {
-    // A no-op (e.g. strikethrough with nothing selected) must not pollute
-    // history — it would light the undo button with nothing to undo.
-    if (result.content === content) {
-      contentRef.current?.focus();
+  async function handleAddMedia() {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images', 'videos'],
+      allowsMultipleSelection: true,
+      selectionLimit: 10,
+      orderedSelection: true,
+      quality: 1,
+    });
+    if (result.canceled) {
+      editorRef.current?.focus();
       return;
     }
-    // One formatting tap = one undo step.
-    history.recordAction({ title, content });
-    notifyHistory();
-    setContent(result.content);
-    clearTimeout(saveTimeout.current);
-    pendingContentRef.current = null;
-    onUpdateContent(result.content); // save immediately on formatting
-    setSelection(result.newSelection);
-    setPendingSelection(result.newSelection);
-    // Keep focus on the content input
-    contentRef.current?.focus();
-  }
-
-  // Mirror `title`/`content` into refs so `getLatest*()` always returns
-  // the latest committed state, even when the imperative handle's
-  // closure was created on an earlier render.
-  const contentValueRef = useRef(content);
-  const titleValueRef = useRef(title);
-  useEffect(() => {
-    contentValueRef.current = content;
-    titleValueRef.current = title;
-  }, [content, title]);
-  // Mirror the selection too, so getSelection() returns the live caret/
-  // highlight even when read from a stale handle closure.
-  const selectionValueRef = useRef(selection);
-  useEffect(() => {
-    selectionValueRef.current = selection;
-  }, [selection]);
-
-  // While the TITLE input has focus the body's selection/content don't
-  // change, so without this gate the strip would keep showing stale body
-  // chips — and a tap would splice text into the body and yank focus away
-  // from the title mid-word. (Gate on "title focused", not "content
-  // focused": a chip tap must not be blocked by any transient blur it
-  // causes on the content input.)
-  const [titleFocused, setTitleFocused] = useState(false);
-  // Pre-apply content of the last accepted chip. A double-tap lands twice on
-  // the SAME rendered content (the re-render hasn't happened yet) — the
-  // second commit is deduped by history, but learnWord would double-count.
-  const lastApplyContentRef = useRef<string | null>(null);
-
-  // Recompute the suggestion strip on every caret/content change. No chips
-  // while a range is highlighted or the caret sits mid-word.
-  useEffect(() => {
-    lastApplyContentRef.current = null;
-    if (!onSuggestions) return;
-    if (selection.start !== selection.end || titleFocused) {
-      onSuggestions([]);
-      return;
-    }
-    onSuggestions(
-      getSuggestions(content.slice(0, selection.start), tags, content[selection.start]),
+    await insertMedia(
+      result.assets.map((a) => ({
+        uri: a.uri,
+        type: a.type === 'video' ? 'video' : 'photo',
+        mime: a.mimeType ?? undefined,
+      })),
     );
-  }, [content, selection, tags, onSuggestions, titleFocused]);
-
-  function handleApplySuggestion(suggestion: Suggestion) {
-    if (selection.start !== selection.end || titleFocused) return;
-    if (lastApplyContentRef.current === content) return; // same-frame double-tap
-    const result = applySuggestionToText(content, selection.start, suggestion);
-    if (!result) return; // stale tap racing a keystroke — safe no-op
-    if (result.content.length > CONTENT_MAX_LENGTH) return; // never bypass maxLength
-    lastApplyContentRef.current = content;
-    commitContent(result.content, result.caret);
-    // An accepted chip is a deliberate use — reinforce it.
-    if (suggestion.kind === 'word') learnWord(suggestion.display);
-    contentRef.current?.focus();
   }
 
   useImperativeHandle(ref, () => ({
-    applyStrikethrough: () => applyFormatting(formatStrikethrough(content, selection)),
-    applyBullets: () => applyFormatting(toggleList(content, selection, 'bullet')),
-    applyNumberedList: () => applyFormatting(toggleList(content, selection, 'number')),
+    applyStrikethrough: () => format((e) => e.toggleStrikeThrough()),
+    applyBullets: () => format((e) => e.toggleUnorderedList()),
+    applyNumberedList: () => format((e) => e.toggleOrderedList()),
+    applyBold: () => format((e) => e.toggleBold()),
+    applyItalic: () => format((e) => e.toggleItalic()),
+    applyHeading: () => format((e) => e.toggleH2()),
+    addMedia: () => void handleAddMedia(),
     undo: handleUndo,
     redo: handleRedo,
-    getLatestContent: () => contentValueRef.current,
+    blur: () => editorRef.current?.blur(),
+    getLatestContent: () => toStorageHtml(htmlRef.current),
+    getLatestText: () => textRef.current,
     getLatestTitle: () => titleValueRef.current,
-    getSelection: () => selectionValueRef.current,
+    getSelection: () => selRef.current,
     applySuggestion: handleApplySuggestion,
   }));
 
@@ -496,6 +652,22 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
     onUpdateTags(newTags);
   }
 
+  const htmlStyle = useMemo(
+    () => ({
+      h2: { fontSize: 22, bold: true },
+      h1: { fontSize: 26, bold: true },
+      h3: { fontSize: 19, bold: true },
+      ul: { bulletColor: colors.text, bulletSize: 6, marginLeft: 8, gapWidth: 12 },
+      ol: { markerColor: colors.text, marginLeft: 8, gapWidth: 10 },
+      ulCheckbox: { boxColor: colors.tint, marginLeft: 8, gapWidth: 10 },
+      blockquote: { borderColor: colors.tint, borderWidth: 3, gapWidth: 12, color: colors.text },
+      codeblock: { color: colors.text, backgroundColor: colors.tileBackground, borderRadius: 8 },
+      code: { color: colors.text, backgroundColor: colors.tileBackground },
+      a: { color: colors.tint, textDecorationLine: 'underline' as const },
+    }),
+    [colors],
+  );
+
   return (
     <View style={styles.container}>
       <TextInput
@@ -507,10 +679,16 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
         placeholderTextColor={colors.icon}
         keyboardAppearance={colorScheme === 'dark' ? 'dark' : 'light'}
         onFocus={() => {
+          titleFocusedRef.current = true;
           setTitleFocused(true);
+          refreshChips();
+          // The body's styles don't apply to the title — unlight the toggles.
+          formatRef.current = NO_FORMAT;
+          onFormatState?.(NO_FORMAT);
           onFocus?.();
         }}
         onBlur={() => {
+          titleFocusedRef.current = false;
           setTitleFocused(false);
           onBlur?.();
         }}
@@ -540,30 +718,33 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
       </View>
 
       {/* Content */}
-      <TextInput
-        ref={contentRef}
-        style={[styles.contentInput, { color: colors.text }]}
-        value={content}
-        onChangeText={handleContentChange}
-        maxLength={CONTENT_MAX_LENGTH}
-        onSelectionChange={handleSelectionChange}
-        selection={pendingSelection ?? undefined}
-        placeholder="Start writing..."
-        placeholderTextColor={colors.icon}
-        multiline
-        textAlignVertical="top"
-        scrollEnabled={false}
-        autoFocus={isNew}
-        keyboardAppearance={colorScheme === 'dark' ? 'dark' : 'light'}
-        onFocus={onFocus}
-        onBlur={onBlur}
-        onTouchStart={onTouchStart}
-        onContentSizeChange={() => {
-          // Content grew/shrank (Enter, wrap, paste). If the caret is at
-          // the end, re-follow so the new last line clears the keyboard.
-          reportCaretIfAtEnd(selection.end, content.length);
-        }}
-      />
+      <View onLayout={reportCaretIfAtEnd}>
+        <EnrichedTextInput
+          key={note.id}
+          ref={editorRef}
+          defaultValue={initialHtml}
+          style={{ ...styles.contentInput, color: colors.text }}
+          htmlStyle={htmlStyle}
+          placeholder="Start writing..."
+          placeholderTextColor={colors.icon}
+          selectionColor={colors.tint}
+          cursorColor={colors.tint}
+          scrollEnabled={false}
+          autoFocus={isNew}
+          onFocus={() => {
+            refreshChips();
+            onFocus?.();
+          }}
+          onBlur={() => onBlur?.()}
+          onTouchStart={onTouchStart}
+          onChangeHtml={(e) => handleChangeHtml(e.nativeEvent.value)}
+          onChangeSelection={(e) => handleSelection(e.nativeEvent.start, e.nativeEvent.end)}
+          onChangeState={handleState}
+          onPasteImages={(e) =>
+            void insertMedia(e.nativeEvent.images.map((img) => ({ uri: img.uri, type: 'photo' as const, mime: img.type })))
+          }
+        />
+      </View>
     </View>
   );
 });
@@ -601,10 +782,9 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   contentInput: {
-    flex: 1,
     fontSize: 16,
     lineHeight: 28,
-    paddingHorizontal: 16,
+    paddingHorizontal: BODY_PAD_H,
     paddingVertical: 12,
     minHeight: 200,
   },

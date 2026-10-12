@@ -27,6 +27,7 @@ import { emitError } from '@/lib/error-bus';
 import { subscribeWithOfflineState } from '@/lib/firebase/subscribe';
 import { deleteAllItems } from '@/lib/firebase/checklist-items';
 import { maybeBumpCreativeWriting } from '@/lib/creative-writing';
+import { clearNoteView } from '@/lib/last-view';
 import { useTodayDate } from '@/hooks/use-today-date';
 import { useNotesSort } from '@/hooks/use-notes-sort';
 import type { Note } from '@/types/note';
@@ -47,6 +48,8 @@ type NoteUpdates = Partial<
     | 'checklistSummary'
     | 'checklistNumbered'
     | 'itemsMigrated'
+    | 'format'
+    | 'contentLegacy'
   >
 >;
 
@@ -476,6 +479,8 @@ export function NotesProvider({ children }: { children: ReactNode }) {
         // read for text notes — the subcollection is just empty.)
         await deleteAllItems(noteId, user.uid);
         await deleteDoc(doc(db, 'notes', noteId));
+        // Don't let the reopen-where-you-were restore target a deleted note.
+        void clearNoteView(noteId);
       } catch (err) {
         // Surface the failure with a Retry — otherwise the note just stays in
         // the list with no explanation (delete is idempotent, safe to retry).

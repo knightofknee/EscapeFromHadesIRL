@@ -4,6 +4,9 @@ export type Tag = {
   name: string;
   color?: string;
   createdAt: number;
+  /** User-set display position (Settings > Keyword Order). Tags without one
+   *  sort after ordered tags, oldest first. */
+  order?: number;
 };
 
 export type InlineTag = {
@@ -96,4 +99,15 @@ export type Note = {
    *  presentational (items/dump format unchanged), so it survives the
    *  checklist ↔ text round trip untouched. */
   checklistNumbered?: boolean;
+  /**
+   * 'html' once the note has been edited in the rich editor: `content` is
+   * react-native-enriched-html markup (lib/note-html.ts) with photos as
+   * `<img src="efh-media://...">` pointing at files stored on the phone
+   * (lib/note-media.ts). Missing = a pre-rich-text plain-string body, which
+   * the editor converts with plainToHtml on first edit.
+   */
+  format?: 'html';
+  /** The plain-string body as it was before the first rich edit. Written
+   *  once at conversion as a backup; never read by the app. */
+  contentLegacy?: string;
 };

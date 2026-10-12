@@ -12,8 +12,8 @@ import { useAuth } from '@/contexts/auth-context';
 import { useOfflineGuard } from '@/contexts/offline-context';
 import { db, collection, query, where, doc, setDoc, onSnapshot } from '@/lib/firebase/firestore';
 import { emitError } from '@/lib/error-bus';
-import { invalidateRecordsSnapshotCache } from '@/hooks/use-records-snapshot';
-import { addDays } from '@/lib/date-utils';
+import { prefetchRecordsSnapshot } from '@/lib/records-snapshot-store';
+import { addDays, get18MonthWindow, getTodayString } from '@/lib/date-utils';
 import type { HabitRecord, TripleValue, QuadValue } from '@/types/habit';
 
 type Range = { start: string; end: string };
@@ -190,6 +190,23 @@ export function RecordsProvider({ children }: { children: ReactNode }) {
     return unsubscribe;
   }, [user, windowState, setRecordsMap]);
 
+  // Warm the quests' 18-month snapshot once the app's first records have
+  // landed, so the quests tab usually opens on data that's already here
+  // (lib/records-snapshot-store). Once per account per session; the delay
+  // keeps it off the launch's critical path.
+  const prefetchedUidRef = useRef<string | null>(null);
+  const firstDelivered = loadedRange !== null;
+  useEffect(() => {
+    if (!user || !firstDelivered || prefetchedUidRef.current === user.uid) return;
+    const uid = user.uid;
+    const timer = setTimeout(() => {
+      prefetchedUidRef.current = uid;
+      const { startDate, endDate } = get18MonthWindow(getTodayString());
+      void prefetchRecordsSnapshot(uid, startDate, endDate);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [user, firstDelivered]);
+
   const getRecordForDay = useCallback(
     (habitId: string, date: string) => recordsMapRef.current.get(`${habitId}_${date}`),
     [],
@@ -218,9 +235,6 @@ export function RecordsProvider({ children }: { children: ReactNode }) {
       const next = new Map(recordsMapRef.current);
       next.set(docId, record);
       setRecordsMap(next);
-      // The quests 18-month snapshot is a cached one-shot; drop it so quest
-      // scores refetch and reflect this write on the next quests focus.
-      invalidateRecordsSnapshotCache();
       setDoc(doc(db, 'records', docId), record).catch((err) => {
         console.error('Failed to save habit record:', err);
         // Optimistic update already showed it as recorded; the write failed

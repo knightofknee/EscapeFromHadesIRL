@@ -7,6 +7,7 @@ import { TagChip } from './tag-chip';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { Note, Tag } from '@/types/note';
+import { noteDisplayLines } from '@/lib/note-content';
 
 type NoteListItemProps = {
   note: Note;
@@ -17,6 +18,9 @@ type NoteListItemProps = {
   onDelete?: (noteId: string) => void;
   onTogglePin?: (noteId: string, pinned: boolean) => void;
 };
+
+/** Enough text to fill the preview's lines on a wide phone; the rest is cut by numberOfLines. */
+const PREVIEW_CHARS = 400;
 
 export const NoteListItem = memo(function NoteListItem({ note, tags, sortBy = 'updated', onPress, onDelete, onTogglePin }: NoteListItemProps) {
   const colorScheme = useColorScheme();
@@ -87,17 +91,17 @@ export const NoteListItem = memo(function NoteListItem({ note, tags, sortBy = 'u
       if (desc.length > 0 && firstUncompletedText) preview = firstUncompletedText;
       else preview = '';
     }
-    preview = preview.slice(0, 100);
+    preview = preview.slice(0, PREVIEW_CHARS);
   } else {
-    const contentLines = note.content
-      .split('\n')
+    // Rich notes store HTML: read their visible lines, never the markup.
+    const contentLines = noteDisplayLines(note)
       .map((l) => l.trim())
       .filter(Boolean);
-    displayTitle = hasTitle ? note.title : contentLines[0] || 'Empty note';
-    const previewLine = hasTitle
-      ? contentLines[0] || ''
-      : contentLines[1] || contentLines[0] || '';
-    preview = previewLine.slice(0, 100);
+    const hasPhoto = note.format === 'html' && note.content.includes('<img');
+    displayTitle = hasTitle ? note.title : contentLines[0] || (hasPhoto ? 'Photo' : 'Empty note');
+    // Everything after the title line, run together so short lines (lists,
+    // jottings) fill the preview's width instead of one line each.
+    preview = (hasTitle ? contentLines : contentLines.slice(1)).join(' · ').slice(0, PREVIEW_CHARS);
   }
 
   // Primary date matches the active sort so the list visibly reads in order.
@@ -158,41 +162,43 @@ export const NoteListItem = memo(function NoteListItem({ note, tags, sortBy = 'u
         style={[styles.container, { backgroundColor: colors.noteBackground, borderColor: colors.noteBorder }]}
         onPress={() => onPress(note.id)}
       >
-        <View style={styles.leftColumn}>
+        {/* Title line carries the date and bookmark, so the preview below
+            gets the card's full width. */}
+        <View style={styles.titleRow}>
           <ThemedText type="defaultSemiBold" style={styles.title} numberOfLines={1} ellipsizeMode="tail">
             {displayTitle}
           </ThemedText>
-          {preview.length > 0 && (
-            <ThemedText style={styles.preview} numberOfLines={2}>
-              {preview}
-            </ThemedText>
-          )}
-          {uniqueTags.length > 0 && (
-            <View style={styles.tags}>
-              {uniqueTags.slice(0, 5).map((tag) => (
-                <TagChip key={tag.id} name={tag.name} color={tag.color} small />
-              ))}
-            </View>
-          )}
-        </View>
-
-        <View style={styles.rightColumn}>
+          {/* The other date tucks under the main one (when it's a different
+              day) instead of costing the card a line of its own. */}
           <View style={styles.dates}>
             <ThemedText style={styles.date}>{dateStr}</ThemedText>
             {secondaryStr && <ThemedText style={styles.dateSecondary}>{secondaryStr}</ThemedText>}
           </View>
           <Pressable
             onPress={() => onTogglePin?.(note.id, !isPinned)}
-            hitSlop={8}
-            style={styles.pinButton}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={isPinned ? 'Remove bookmark' : 'Bookmark note'}
           >
             <IconSymbol
               name={isPinned ? 'bookmark.fill' : 'bookmark'}
-              size={18}
+              size={16}
               color={isPinned ? colors.tint : colors.icon}
             />
           </Pressable>
         </View>
+        {preview.length > 0 && (
+          <ThemedText style={styles.preview} numberOfLines={3}>
+            {preview}
+          </ThemedText>
+        )}
+        {uniqueTags.length > 0 && (
+          <View style={styles.tagRow}>
+            {uniqueTags.slice(0, 5).map((tag) => (
+              <TagChip key={tag.id} name={tag.name} color={tag.color} small dense />
+            ))}
+          </View>
+        )}
       </Pressable>
     </Swipeable>
   );
@@ -200,50 +206,45 @@ export const NoteListItem = memo(function NoteListItem({ note, tags, sortBy = 'u
 
 const styles = StyleSheet.create({
   container: {
-    flexDirection: 'row',
-    padding: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
     borderRadius: 8,
     borderWidth: 1,
-    gap: 10,
+    gap: 3,
   },
-  leftColumn: {
-    flex: 1,
-    gap: 6,
-  },
-  rightColumn: {
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    minHeight: 40,
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   title: {
+    flex: 1,
     fontSize: 16,
+    lineHeight: 21,
   },
   dates: {
     alignItems: 'flex-end',
   },
   date: {
     fontSize: 12,
+    lineHeight: 15,
     opacity: 0.5,
   },
-  dateSecondary: {
-    fontSize: 10,
-    lineHeight: 13,
-    opacity: 0.35,
-  },
-  pinButton: {
-    paddingTop: 6,
-    paddingLeft: 6,
-  },
   preview: {
-    fontSize: 13,
-    opacity: 0.6,
-    lineHeight: 18,
+    fontSize: 14,
+    opacity: 0.7,
+    lineHeight: 19,
   },
-  tags: {
+  tagRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 4,
     marginTop: 2,
+  },
+  dateSecondary: {
+    fontSize: 10,
+    lineHeight: 12,
+    opacity: 0.4,
   },
   deleteAction: {
     justifyContent: 'center',

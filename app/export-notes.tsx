@@ -12,6 +12,8 @@ import { itemsQuery } from '@/lib/firebase/checklist-items';
 import { fromSnapshot } from '@/lib/checklist-item-doc';
 import { allNotesToMarkdown } from '@/lib/export/markdown-export';
 import { saveAndShareFiles } from '@/lib/export/file-saver';
+import { isVideoPoster, mediaFile, nameFromSrc } from '@/lib/note-media';
+import type { File } from 'expo-file-system';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { ChecklistItem } from '@/types/note';
@@ -61,8 +63,20 @@ export default function ExportScreen() {
             }),
         );
       }
-      const files = allNotesToMarkdown(filteredNotes, tags, checklistItems);
-      await saveAndShareFiles(files);
+      // Photos in rich notes ride along in a media/ folder (a .zip); videos
+      // are left out (too big for an export) and marked in the text.
+      const media = new Map<string, File>();
+      const image = (src: string) => {
+        const name = nameFromSrc(src);
+        if (!name || !user) return '';
+        if (isVideoPoster(name)) return '[video]';
+        const file = mediaFile(user.uid, name);
+        if (!file.exists) return '[photo not on this phone]';
+        media.set(name, file);
+        return `![](media/${name})`;
+      };
+      const files = allNotesToMarkdown(filteredNotes, tags, checklistItems, { image });
+      await saveAndShareFiles(files, [...media.values()]);
     } catch (e: any) {
       Alert.alert('Export failed', e.message ?? 'Unknown error');
     } finally {
@@ -76,6 +90,7 @@ export default function ExportScreen() {
         <ThemedText type="title">Export Notes</ThemedText>
         <ThemedText style={styles.description}>
           Export as Markdown (.md) with YAML frontmatter, optimized for AI agents and standard editors.
+          Notes with photos export as a .zip with the photos in a media folder. Videos aren&apos;t included.
         </ThemedText>
 
         {/* Filter */}

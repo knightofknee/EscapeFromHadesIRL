@@ -29,6 +29,13 @@ export function useTags() {
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Tag);
+      // Deliver in display order everywhere (chips, picker, export): the
+      // user-set order first, then unordered tags oldest-first.
+      data.sort(
+        (a, b) =>
+          (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER) ||
+          a.createdAt - b.createdAt,
+      );
       setTags(data);
     });
 
@@ -77,5 +84,19 @@ export function useTags() {
     [user],
   );
 
-  return { tags, createTag, deleteTags };
+  // Persist a full display ordering (Settings > Keyword Order): each tag's
+  // `order` becomes its index in the given list. One batched commit.
+  const setTagOrder = useCallback(
+    async (orderedIds: string[]) => {
+      if (!user || orderedIds.length === 0) return;
+      const batch = writeBatch(db);
+      orderedIds.forEach((tagId, index) => {
+        batch.set(doc(db, 'tags', tagId), { order: index }, { merge: true });
+      });
+      await batch.commit();
+    },
+    [user],
+  );
+
+  return { tags, createTag, deleteTags, setTagOrder };
 }

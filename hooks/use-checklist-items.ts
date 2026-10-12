@@ -62,7 +62,9 @@ export type UseChecklistItems = {
   /** Latest display items, including not-yet-flushed typing — for the
    *  checklist→text dump. */
   getItems: () => ChecklistItemDoc[];
-  addItem: () => string;
+  /** Create an item — blank at the end by default; `text` prefills it and
+   *  `afterId` inserts it right below that uncompleted item (paste-split). */
+  addItem: (opts?: { text?: string; afterId?: string }) => string;
   toggleItem: (id: string) => void;
   setItemText: (id: string, text: string) => void;
   deleteItem: (id: string) => void;
@@ -201,20 +203,31 @@ export function useChecklistItems({
 
   // ----- mutations (read itemsRef.current so identity = [noteId]) -----
 
-  const addItem = useCallback((): string => {
+  const addItem = useCallback((opts?: { text?: string; afterId?: string }): string => {
     if (!requireOnline()) return '';
     const id = makeItemId();
     const now = Date.now();
     const cur = itemsRef.current;
-    const maxOrder = cur
+    const uncompleted = cur
       .filter((i) => !i.completed)
-      .reduce((m, i) => Math.max(m, i.order), -1);
+      .sort((a, b) => a.order - b.order);
+    // Default: append after the last uncompleted item. With afterId,
+    // slot between that item and its successor using a fractional order —
+    // one write, no renumbering (reorder normalizes orders later anyway).
+    let order = uncompleted.reduce((m, i) => Math.max(m, i.order), -1) + 1;
+    const after = opts?.afterId
+      ? uncompleted.find((i) => i.id === opts.afterId)
+      : undefined;
+    if (after) {
+      const next = uncompleted.find((i) => i.order > after.order);
+      order = next ? (after.order + next.order) / 2 : after.order + 1;
+    }
     const item: ChecklistItemDoc = {
       id,
       userId: userId ?? '',
-      text: '',
+      text: opts?.text ?? '',
       completed: false,
-      order: maxOrder + 1,
+      order,
       createdAt: now,
     };
     setPending((p) => new Map(p).set(id, { kind: 'write', item }));

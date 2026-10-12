@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Modal, StyleSheet, View, Pressable, Keyboard, ActivityIndicator, useWindowDimensions } from 'react-native';
+import { Modal, StyleSheet, View, Pressable, Keyboard, ActivityIndicator, ScrollView, useWindowDimensions } from 'react-native';
 import { useLocalSearchParams, useNavigation, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useBottomTabBarHeight } from 'expo-router/js-tabs';
@@ -17,13 +17,14 @@ import Animated, {
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { NoteEditor, type NoteEditorHandle } from '@/components/notes/note-editor';
+import { NoteEditor, type NoteEditorHandle, type FormatState } from '@/components/notes/note-editor';
 import { ChecklistEditor, type ChecklistEditorHandle } from '@/components/notes/checklist-editor';
 import { TagPicker } from '@/components/notes/tag-picker';
 import {
   SuggestionBar,
   SUGGESTION_BAR_HEIGHT,
   type SuggestionBarHandle,
+  type MediaChip,
 } from '@/components/notes/suggestion-bar';
 import {
   loadVocab,
@@ -33,6 +34,7 @@ import {
 } from '@/lib/word-suggestions';
 import { useNotes, useNote } from '@/hooks/use-notes';
 import { useTags } from '@/hooks/use-tags';
+import { recordNoteView } from '@/lib/last-view';
 import { useOfflineGuard } from '@/contexts/offline-context';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -41,6 +43,8 @@ import {
   formatChecklistAsText,
   parseChecklistFromText,
 } from '@/lib/checklist-format';
+import { IMAGE_CHAR, appendBlocks, imageParagraphs, isHtmlEmpty, plainToHtml } from '@/lib/note-html';
+import { notePlainText } from '@/lib/note-content';
 import { useAuth } from '@/contexts/auth-context';
 import { useChecklistItems } from '@/hooks/use-checklist-items';
 import { toItemDoc, summaryOf, makeItemId } from '@/lib/firebase/checklist-items';
@@ -57,7 +61,7 @@ export default function NoteEditorScreen() {
   // window. (useNotes' own window still backs updateNote's no-op/creative-
   // writing context for recently-edited notes, and seeds the typing
   // vocabulary below.)
-  const { updateNote, deleteNote, notes } = useNotes();
+  const { updateNote, deleteNote, togglePinNote, notes } = useNotes();
   const { tags, createTag } = useTags();
   const { isOffline } = useOfflineGuard();
   const colorScheme = useColorScheme();
@@ -81,16 +85,33 @@ export default function NoteEditorScreen() {
       prev.canUndo === canUndo && prev.canRedo === canRedo ? prev : { canUndo, canRedo },
     );
   }, []);
+  // Toolbar toggle tints, reported by NoteEditor only when one flips.
+  const [formatState, setFormatState] = useState<FormatState>({
+    bold: false,
+    italic: false,
+    strike: false,
+    heading: false,
+    bullets: false,
+    numbers: false,
+  });
+  // Photo/video import in progress (the photo button shows a spinner).
+  const [importingMedia, setImportingMedia] = useState(false);
 
   const { note, isLoading: noteLoading } = useNote(id);
   const noteRef = useRef(note);
   noteRef.current = note;
 
+  // Remember "the user was in this note" for the reopen-where-you-were restore.
+  useEffect(() => {
+    if (id) recordNoteView(id);
+  }, [id]);
+
   const { user } = useAuth();
 
-  // The suggestion strip only exists in text mode, so the accessory stack
-  // sitting above the keyboard is taller there — every caret-clearance
-  // calculation below must use this, not DISMISS_BAR_HEIGHT alone.
+  // The suggestion strip auto-hides when empty, so the accessory stack's
+  // real height varies. Caret-clearance math budgets the WORST CASE (strip
+  // showing) — over-reserving a strip's height when it's hidden is harmless,
+  // while under-reserving would put the caret behind the bar.
   const isTextNote = note?.type !== 'checklist';
   const accessoryHeight = DISMISS_BAR_HEIGHT + (isTextNote ? SUGGESTION_BAR_HEIGHT : 0);
 
@@ -265,8 +286,13 @@ export default function NoteEditorScreen() {
       // keystrokes inside the 500ms save debounce aren't in Firestore yet,
       // and deleting based on the stale doc would discard them.
       const latestTitle = noteEditorRef.current?.getLatestTitle() ?? n.title;
-      const latestContent = noteEditorRef.current?.getLatestContent() ?? n.content;
-      if (!latestTitle.trim() && !latestContent.trim()) {
+      const latestContent = noteEditorRef.current?.getLatestContent();
+      // A body holding only a photo is not empty.
+      const bodyEmpty =
+        latestContent != null
+          ? isHtmlEmpty(latestContent)
+          : !notePlainText(n).trim() && !(n.format === 'html' && n.content.includes('<img'));
+      if (!latestTitle.trim() && bodyEmpty) {
         deleteNote(n.id);
       }
     });
@@ -280,9 +306,14 @@ export default function NoteEditorScreen() {
     [id, updateNote],
   );
 
+  // The editor always hands back rich HTML. The first rich save of a
+  // pre-rich-text note also keeps its original string as contentLegacy.
   const handleUpdateContent = useCallback(
     (content: string) => {
-      if (id) updateNote(id, { content });
+      if (!id) return;
+      const n = noteRef.current;
+      const legacy = n && n.format !== 'html' && n.content && n.contentLegacy === undefined ? n.content : undefined;
+      updateNote(id, { content, format: 'html', ...(legacy !== undefined ? { contentLegacy: legacy } : {}) });
     },
     [id, updateNote],
   );
@@ -330,12 +361,16 @@ export default function NoteEditorScreen() {
       const desc = checklistEditorRef.current?.getLatestState()?.description ?? note.description ?? '';
       const items = checklist.getItems();
       const dumped = formatChecklistAsText(desc, items);
+      // Photos the note held before it became a checklist are still in its
+      // (untouched) content — carry them back at the end of the text.
+      const photos = note.format === 'html' ? imageParagraphs(note.content) : '';
       // Flip first (optimistic — unmounts the checklist editor), then drop
       // the item docs in the background. The dumped content is the backstop
       // if the delete is interrupted.
       updateNote(id, {
         type: 'text',
-        content: dumped,
+        content: appendBlocks(plainToHtml(dumped), photos),
+        format: 'html',
         description: '',
       });
       checklist.clearItems().catch((e) =>
@@ -347,16 +382,25 @@ export default function NoteEditorScreen() {
       // to the save-debounce window, so reading it would silently lose
       // any in-flight typing. Falls back to the prop value if the
       // editor handle isn't available yet.
-      const latestContent = noteEditorRef.current?.getLatestContent() ?? note.content ?? '';
+      // getLatestText is the editor's offset model (each photo one
+      // IMAGE_CHAR), the same space the captured selection indexes.
+      const latestText = noteEditorRef.current?.getLatestText() ?? notePlainText(note);
       // A highlight (captured on press-in) scopes which lines become items;
       // with none, only existing `- [ ]` lines convert (the revert path).
       const selection = pendingSelection.current ?? undefined;
       pendingSelection.current = null;
-      const { description, items: parsed } = parseChecklistFromText(
-        latestContent,
-        makeItemId,
-        selection,
-      );
+      const parsedRaw = parseChecklistFromText(latestText, makeItemId, selection);
+      // Photos stay in the note's content (left as-is below) and come back
+      // on Undo Checklist; strip their placeholders from the text parts.
+      const stripPhotos = (t: string) => t.split(IMAGE_CHAR).join('');
+      const description = parsedRaw.description
+        .split('\n')
+        .filter((l) => l.trim() !== IMAGE_CHAR)
+        .map(stripPhotos)
+        .join('\n');
+      const parsed = parsedRaw.items
+        .map((it) => ({ ...it, text: stripPhotos(it.text) }))
+        .filter((it) => it.text.trim().length > 0);
       const now = Date.now();
       const itemDocs = parsed.map((it, idx) => toItemDoc(it, idx, user?.uid ?? '', now));
       const summary = summaryOf(itemDocs);
@@ -445,8 +489,28 @@ export default function NoteEditorScreen() {
     [id, updateNote],
   );
 
+  const handleTogglePin = useCallback(() => {
+    const n = noteRef.current;
+    if (n) togglePinNote(n.id, !n.pinned);
+  }, [togglePinNote]);
+
   const handleSuggestions = useCallback((suggestions: Suggestion[]) => {
     suggestionBarRef.current?.setSuggestions(suggestions);
+  }, []);
+
+  const handleMediaChip = useCallback((chip: MediaChip | null) => {
+    suggestionBarRef.current?.setMediaChip(chip);
+  }, []);
+
+  const handleOpenMedia = useCallback((chip: MediaChip) => {
+    noteEditorRef.current?.blur();
+    router.push({ pathname: '/media-viewer', params: { name: chip.name } });
+  }, []);
+
+  // The rich input ignores Keyboard.dismiss(); blur it explicitly too.
+  const dismissKeyboard = useCallback(() => {
+    noteEditorRef.current?.blur();
+    Keyboard.dismiss();
   }, []);
 
   const handlePickSuggestion = useCallback(
@@ -465,6 +529,33 @@ export default function NoteEditorScreen() {
     },
     [id, updateNote],
   );
+
+  // ••• menu in the header center: Create Checklist (text mode) + Delete.
+  // Custom modal, NOT Alert.alert — native alerts follow the SYSTEM
+  // appearance, so with the app in dark mode on a light-mode phone they
+  // rendered as a glaring light card. This one uses the app theme.
+  const [noteMenuOpen, setNoteMenuOpen] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  const openNoteMenu = useCallback(() => {
+    setConfirmingDelete(false);
+    setNoteMenuOpen(true);
+  }, []);
+
+  const closeNoteMenu = useCallback(() => {
+    setNoteMenuOpen(false);
+    setConfirmingDelete(false);
+  }, []);
+
+  // Delete is the one action in here that can't be taken back, so it takes
+  // two taps: Delete Note, then the confirm step inside the same card.
+  const handleDeleteNote = useCallback(() => {
+    setNoteMenuOpen(false);
+    setConfirmingDelete(false);
+    if (!id) return;
+    deleteNote(id);
+    router.dismissTo('/(tabs)/(notes)');
+  }, [id, deleteNote]);
 
   const noteTagIds = note ? [...new Set(note.tags.map((t) => t.tagId))] : [];
 
@@ -497,31 +588,69 @@ export default function NoteEditorScreen() {
             <IconSymbol name="chevron.left" size={22} color={'#3B82F6'} />
             <ThemedText style={[styles.headerButtonText, { color: '#3B82F6' }]}>Notes</ThemedText>
           </Pressable>
-          {/* Centered "Create Checklist" — text mode only. Once clicked it
-              disappears; the reverse action ("Undo Checklist") lives at the
-              bottom of the page, far below Add item, so it can't be hit by
-              accident. Round-trip stays data-preserving via the markdown
-              dump format. */}
-          {note.type !== 'checklist' && (
+          {/* Centered cluster: undo | ••• menu | redo. The ••• menu holds
+              Create Checklist (text mode) + Delete Note; the reverse
+              checklist action ("Undo Checklist") lives at the bottom of the
+              page, far below Add item, so it can't be hit by accident.
+              Undo/redo mirror the keyboard toolbar's buttons so recovery is
+              reachable with the keyboard down too (text mode only — the
+              checklist editor has no history). */}
+          <View style={styles.headerCenter} pointerEvents="box-none">
+            {note.type !== 'checklist' && (
+              <Pressable
+                onPress={() => noteEditorRef.current?.undo()}
+                disabled={!historyState.canUndo}
+                style={[styles.headerIconButton, !historyState.canUndo && styles.headerIconDisabled]}
+                hitSlop={8}
+                accessibilityLabel="Undo"
+                accessibilityRole="button"
+              >
+                <IconSymbol name="arrow.uturn.backward" size={20} color={colors.icon} />
+              </Pressable>
+            )}
             <Pressable
-              onPress={handleToggleType}
+              onPress={openNoteMenu}
               // Snapshot the editor's highlight the instant the press starts —
-              // completing the tap can blur the input and collapse it. Read in
+              // opening the menu blurs the input and collapses it. Read in
               // handleToggleType to scope which lines convert to items.
               onPressIn={() => {
                 pendingSelection.current = noteEditorRef.current?.getSelection() ?? null;
               }}
-              style={styles.headerCenterButton}
+              style={styles.headerIconButton}
               hitSlop={8}
-              accessibilityLabel="Convert note to checklist"
+              accessibilityLabel="Note options"
               accessibilityRole="button"
             >
-              <ThemedText style={[styles.headerButtonText, { color: colors.tint }]}>
-                Create Checklist
-              </ThemedText>
+              <IconSymbol name="ellipsis" size={22} color={colors.tint} />
             </Pressable>
-          )}
+            {note.type !== 'checklist' && (
+              <Pressable
+                onPress={() => noteEditorRef.current?.redo()}
+                disabled={!historyState.canRedo}
+                style={[styles.headerIconButton, !historyState.canRedo && styles.headerIconDisabled]}
+                hitSlop={8}
+                accessibilityLabel="Redo"
+                accessibilityRole="button"
+              >
+                <IconSymbol name="arrow.uturn.forward" size={20} color={colors.icon} />
+              </Pressable>
+            )}
+          </View>
           <View style={styles.headerRight}>
+            {/* Bookmark toggle — same ribbon as the list rows. */}
+            <Pressable
+              onPress={handleTogglePin}
+              style={styles.headerIconButton}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={note.pinned ? 'Remove bookmark' : 'Bookmark note'}
+            >
+              <IconSymbol
+                name={note.pinned ? 'bookmark.fill' : 'bookmark'}
+                size={20}
+                color={note.pinned ? colors.tint : colors.icon}
+              />
+            </Pressable>
             {/* Help for the highlight-to-pick-items flow. Only shown in text
                 mode, where "Create Checklist" is the relevant action. */}
             {note.type !== 'checklist' && (
@@ -536,7 +665,7 @@ export default function NoteEditorScreen() {
               </Pressable>
             )}
             <Pressable
-              onPress={() => { setIsFocused(false); Keyboard.dismiss(); }}
+              onPress={() => { setIsFocused(false); dismissKeyboard(); }}
               disabled={!isFocused}
               style={styles.headerButton}
               hitSlop={8}
@@ -546,6 +675,58 @@ export default function NoteEditorScreen() {
           </View>
         </View>
       </SafeAreaView>
+
+      {/* Note options — themed card so it matches the app, unlike a native
+          alert. Delete flips the card into a confirm step. */}
+      <Modal
+        visible={noteMenuOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={closeNoteMenu}
+      >
+        <Pressable style={styles.helpBackdrop} onPress={closeNoteMenu}>
+          {/* Inner press swallows taps so tapping the card doesn't dismiss. */}
+          <Pressable
+            style={[styles.menuCard, { backgroundColor: colors.background, borderColor: colors.tileBorder }]}
+            onPress={() => {}}
+          >
+            {confirmingDelete ? (
+              <>
+                <ThemedText style={styles.menuTitle}>Delete this note?</ThemedText>
+                <ThemedText style={styles.menuSubtitle}>This cannot be undone.</ThemedText>
+                <Pressable style={styles.menuRow} onPress={handleDeleteNote} accessibilityRole="button">
+                  <ThemedText style={[styles.menuRowText, styles.menuDestructive]}>Delete Note</ThemedText>
+                </Pressable>
+                <Pressable style={[styles.menuRow, styles.menuRowLast]} onPress={closeNoteMenu} accessibilityRole="button">
+                  <ThemedText style={styles.menuRowText}>Cancel</ThemedText>
+                </Pressable>
+              </>
+            ) : (
+              <>
+                <ThemedText style={styles.menuTitle}>Note Options</ThemedText>
+                {note.type !== 'checklist' && (
+                  <Pressable
+                    style={styles.menuRow}
+                    onPress={() => {
+                      setNoteMenuOpen(false);
+                      handleToggleType();
+                    }}
+                    accessibilityRole="button"
+                  >
+                    <ThemedText style={[styles.menuRowText, { color: colors.tint }]}>Create Checklist</ThemedText>
+                  </Pressable>
+                )}
+                <Pressable style={styles.menuRow} onPress={() => setConfirmingDelete(true)} accessibilityRole="button">
+                  <ThemedText style={[styles.menuRowText, styles.menuDestructive]}>Delete Note</ThemedText>
+                </Pressable>
+                <Pressable style={[styles.menuRow, styles.menuRowLast]} onPress={closeNoteMenu} accessibilityRole="button">
+                  <ThemedText style={styles.menuRowText}>Cancel</ThemedText>
+                </Pressable>
+              </>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <Modal
         visible={helpOpen}
@@ -562,7 +743,8 @@ export default function NoteEditorScreen() {
             <ThemedText style={styles.helpTitle}>Creating a checklist</ThemedText>
             <ThemedText style={[styles.helpHeading, { color: colors.tint }]}>Highlight to pick items</ThemedText>
             <ThemedText style={styles.helpBody}>
-              Select the lines you want as checklist items, then tap Create Checklist.
+              Select the lines you want as checklist items, then choose Create
+              Checklist from the ••• menu above.
               Only the highlighted lines become items (blank lines are skipped). The
               rest of your note stays as the description. A highlighted line already
               written as “- [ ]” / “- [x]” keeps just its text, and the box decides
@@ -664,6 +846,9 @@ export default function NoteEditorScreen() {
             onCaretBottom={ensureCaretVisible}
             onHistoryChange={handleHistoryChange}
             onSuggestions={handleSuggestions}
+            onMediaChip={handleMediaChip}
+            onFormatState={setFormatState}
+            onImportingChange={setImportingMedia}
           />
         )}
       </Animated.ScrollView>
@@ -677,17 +862,26 @@ export default function NoteEditorScreen() {
           animatedBarStyle,
         ]}
       >
-        {/* Word/tag autocomplete strip — text mode only, fixed height so the
-            caret-clearance math above stays constant while typing. */}
+        {/* Word/tag autocomplete strip — text mode only. Renders nothing
+            until the personal vocab has a match, then pops in above the
+            toolbar (the stack is bottom-anchored, so it grows upward). */}
         {note.type !== 'checklist' && (
-          <SuggestionBar ref={suggestionBarRef} onPick={handlePickSuggestion} />
+          <SuggestionBar ref={suggestionBarRef} onPick={handlePickSuggestion} onOpenMedia={handleOpenMedia} />
         )}
         <View style={styles.dismissBar}>
-        {/* Markdown formatting toolbar applies only to text-mode notes.
-            In checklist mode the items are short single-line inputs and
-            formatting tools would conflict with the checklist semantics. */}
-        {note.type !== 'checklist' && (
-          <>
+        {/* Formatting toolbar applies only to text-mode notes. In checklist
+            mode the items are short single-line inputs and formatting tools
+            would conflict with the checklist semantics. The tools scroll
+            sideways on narrow phones; the photo and keyboard buttons stay
+            pinned at the right. */}
+        {note.type !== 'checklist' ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="always"
+            style={styles.toolScroll}
+            contentContainerStyle={styles.toolRow}
+          >
             {/* Undo/redo lead the toolbar — losing content is the editor's
                 cardinal sin, so recovery sits closest to the thumb. */}
             <Pressable
@@ -712,27 +906,76 @@ export default function NoteEditorScreen() {
               onPress={() => noteEditorRef.current?.applyStrikethrough()}
               style={styles.toolbarButton}
               hitSlop={8}
+              accessibilityLabel="Strikethrough"
+              accessibilityState={{ selected: formatState.strike }}
             >
-              <IconSymbol name="strikethrough" size={20} color={colors.icon} />
+              <IconSymbol name="strikethrough" size={20} color={formatState.strike ? colors.tint : colors.icon} />
             </Pressable>
             <Pressable
               onPress={() => noteEditorRef.current?.applyBullets()}
               style={styles.toolbarButton}
               hitSlop={8}
+              accessibilityLabel="Bulleted list"
+              accessibilityState={{ selected: formatState.bullets }}
             >
-              <IconSymbol name="list.bullet" size={20} color={colors.icon} />
+              <IconSymbol name="list.bullet" size={20} color={formatState.bullets ? colors.tint : colors.icon} />
             </Pressable>
             <Pressable
               onPress={() => noteEditorRef.current?.applyNumberedList()}
               style={styles.toolbarButton}
               hitSlop={8}
+              accessibilityLabel="Numbered list"
+              accessibilityState={{ selected: formatState.numbers }}
             >
-              <IconSymbol name="list.number" size={20} color={colors.icon} />
+              <IconSymbol name="list.number" size={20} color={formatState.numbers ? colors.tint : colors.icon} />
             </Pressable>
-          </>
+            <Pressable
+              onPress={() => noteEditorRef.current?.applyBold()}
+              style={styles.toolbarButton}
+              hitSlop={8}
+              accessibilityLabel="Bold"
+              accessibilityState={{ selected: formatState.bold }}
+            >
+              <IconSymbol name="bold" size={20} color={formatState.bold ? colors.tint : colors.icon} />
+            </Pressable>
+            <Pressable
+              onPress={() => noteEditorRef.current?.applyItalic()}
+              style={styles.toolbarButton}
+              hitSlop={8}
+              accessibilityLabel="Italic"
+              accessibilityState={{ selected: formatState.italic }}
+            >
+              <IconSymbol name="italic" size={20} color={formatState.italic ? colors.tint : colors.icon} />
+            </Pressable>
+            <Pressable
+              onPress={() => noteEditorRef.current?.applyHeading()}
+              style={styles.toolbarButton}
+              hitSlop={8}
+              accessibilityLabel="Heading"
+              accessibilityState={{ selected: formatState.heading }}
+            >
+              <IconSymbol name="textformat" size={20} color={formatState.heading ? colors.tint : colors.icon} />
+            </Pressable>
+          </ScrollView>
+        ) : (
+          <View style={styles.dismissSpacer} />
         )}
-        <View style={styles.dismissSpacer} />
-        <Pressable onPress={Keyboard.dismiss} style={styles.dismissButton} hitSlop={8}>
+        {note.type !== 'checklist' && (
+          <Pressable
+            onPress={() => noteEditorRef.current?.addMedia()}
+            disabled={importingMedia}
+            style={styles.toolbarButton}
+            hitSlop={8}
+            accessibilityLabel="Add photo or video"
+          >
+            {importingMedia ? (
+              <ActivityIndicator size="small" color={colors.icon} />
+            ) : (
+              <IconSymbol name="photo.on.rectangle" size={20} color={colors.icon} />
+            )}
+          </Pressable>
+        )}
+        <Pressable onPress={dismissKeyboard} style={styles.dismissButton} hitSlop={8} accessibilityLabel="Hide keyboard">
           <IconSymbol name="keyboard.chevron.compact.down" size={22} color={colors.icon} />
         </Pressable>
         </View>
@@ -775,13 +1018,18 @@ const styles = StyleSheet.create({
   headerIconButton: {
     padding: 8,
   },
-  headerCenterButton: {
+  headerCenter: {
     position: 'absolute',
     left: 0,
     right: 0,
+    flexDirection: 'row',
+    justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 8,
+    gap: 18,
     pointerEvents: 'box-none',
+  },
+  headerIconDisabled: {
+    opacity: 0.3,
   },
   headerButtonText: {
     fontSize: 16,
@@ -817,8 +1065,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  // Outer accessory stack: suggestion strip on top, dismiss/toolbar row
-  // below. Anchored to the bottom and slid with the keyboard as one unit.
+  // Accessory stack: the dismiss/toolbar row, anchored to the bottom and
+  // slid with the keyboard.
   barStack: {
     position: 'absolute',
     left: 0,
@@ -834,6 +1082,12 @@ const styles = StyleSheet.create({
   },
   dismissSpacer: {
     flex: 1,
+  },
+  toolScroll: {
+    flex: 1,
+  },
+  toolRow: {
+    alignItems: 'center',
   },
   dismissButton: {
     paddingHorizontal: 8,
@@ -856,6 +1110,41 @@ const styles = StyleSheet.create({
     color: '#1F2937',
     fontWeight: '600',
     textAlign: 'center',
+  },
+  menuCard: {
+    width: '100%',
+    maxWidth: 340,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingTop: 18,
+    paddingBottom: 6,
+    paddingHorizontal: 8,
+  },
+  menuTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  menuSubtitle: {
+    fontSize: 13,
+    opacity: 0.55,
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  menuRow: {
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(128,128,128,0.25)',
+  },
+  menuRowLast: {},
+  menuRowText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  menuDestructive: {
+    color: '#E74C3C',
   },
   helpBackdrop: {
     flex: 1,

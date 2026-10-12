@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Image, StyleSheet, View } from 'react-native';
+import { Image, Platform, StyleSheet, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ThemedText } from '@/components/themed-text';
 import { useUserSettingsContext } from '@/contexts/user-settings-context';
@@ -116,6 +116,15 @@ function countGlyphs(label: string): number {
 }
 
 /**
+ * An emoji's advance width in ems. Apple Color Emoji is about square, but
+ * Android's emoji fonts (Noto, Samsung) run about a quarter wider than the
+ * font size: at the full letter size a single emoji overflowed the letter box
+ * and numberOfLines={1} replaced it with a tile-colored "…". Generous on
+ * Android so OEM emoji fonts fit too.
+ */
+const EMOJI_EM = Platform.OS === 'android' ? 1.35 : 1.0;
+
+/**
  * Approximate advance width of the label in ems of the heavy-caps face. A
  * flat per-character width let "WA" overflow its box and ellipsize to "W.."
  * — W and M run nearly a full em at weight 800, narrow letters half of one,
@@ -125,7 +134,7 @@ function countGlyphs(label: string): number {
 function labelWidthEm(glyphs: string[]): number {
   let em = 0;
   for (const g of glyphs) {
-    if (g.length > 1 || (g.codePointAt(0) ?? 0) > 0x2000) em += 1.0; // emoji/symbol
+    if (g.length > 1 || (g.codePointAt(0) ?? 0) > 0x2000) em += EMOJI_EM; // emoji/symbol
     else if (/[wm]/i.test(g)) em += 1.0;
     else if (/[ijl1]/i.test(g)) em += 0.55;
     else em += 0.75;
@@ -363,12 +372,13 @@ export function TileContent({ habit, record, tileWidth, tileHeight }: TileConten
     const ringStroke = Math.max(1.5, D.ringStroke * s);
     const letterBoxPx = D.letterBox * s;
 
-    // Deterministic shrink for multi-character labels: scale the font until
-    // the label's estimated advance width fits the letter box. A single
-    // letter/emoji keeps the full design-space size.
+    // Deterministic shrink: scale the font until the label's estimated
+    // advance width fits the letter box. Any single letter (and a single
+    // emoji on iOS) is narrower than the box, so it keeps the full
+    // design-space size; a single emoji on Android shrinks to fit (EMOJI_EM).
     const glyphs = splitGlyphs(label ?? '');
     const letterFontPx =
-      glyphs.length <= 1
+      glyphs.length === 0
         ? D.letterFont * s
         : Math.min(D.letterFont * s, letterBoxPx / labelWidthEm(glyphs));
 

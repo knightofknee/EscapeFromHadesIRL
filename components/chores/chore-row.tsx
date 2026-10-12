@@ -190,7 +190,9 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
     ? details
       ? `${due} · ${details}`
       : `One time · ${due}`
-    : `${since} · ${formatFrequency(chore.frequencyDays)}`;
+    : status.daysSince == null
+      ? formatFrequency(chore.frequencyDays) // the pill already says "Not logged yet"
+      : `${since} · ${formatFrequency(chore.frequencyDays)}`;
 
   return (
     <Animated.View
@@ -211,31 +213,36 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
         accessibilityLabel={`${chore.name}, ${formatDue(status)}. Open details`}
       >
         {!!chore.emoji && <ThemedText style={styles.emoji}>{chore.emoji}</ThemedText>}
+        {/* The name gets the full width and wraps as far as it needs; the
+            status pill rides under it with the details instead of squeezing
+            it. Nothing here truncates. */}
         <View style={[styles.text, status.state === 'done' && styles.finished]}>
-          <ThemedText style={styles.name} numberOfLines={1}>
+          <ThemedText style={styles.name}>
             {chore.name}
           </ThemedText>
-          <ThemedText style={styles.sub} numberOfLines={1}>
-            {sub}
-          </ThemedText>
-        </View>
-        {undoDate ? (
-          <Pressable
-            onPress={handleUndo}
-            hitSlop={8}
-            style={[styles.pill, styles.undoPill, { borderColor: colors.icon }]}
-            accessibilityRole="button"
-            accessibilityLabel={`Undo ${chore.name}`}
-          >
-            <ThemedText style={[styles.pillText, { color: colors.text }]}>Undo</ThemedText>
-          </Pressable>
-        ) : (
-          <View style={[styles.pill, { backgroundColor: `${stateColor}26` }]}>
-            <ThemedText style={[styles.pillText, { color: choreInkColor(status.state, scheme) }]}>
-              {formatDue(status)}
+          <View style={styles.meta}>
+            {undoDate ? (
+              <Pressable
+                onPress={handleUndo}
+                hitSlop={10}
+                style={[styles.pill, styles.undoPill, { borderColor: colors.icon }]}
+                accessibilityRole="button"
+                accessibilityLabel={`Undo ${chore.name}`}
+              >
+                <ThemedText style={[styles.pillText, { color: colors.text }]}>Undo</ThemedText>
+              </Pressable>
+            ) : (
+              <View style={[styles.pill, { backgroundColor: `${stateColor}26` }]}>
+                <ThemedText style={[styles.pillText, { color: choreInkColor(status.state, scheme) }]}>
+                  {formatDue(status)}
+                </ThemedText>
+              </View>
+            )}
+            <ThemedText style={styles.sub}>
+              {sub}
             </ThemedText>
           </View>
-        )}
+        </View>
       </Pressable>
       <View style={styles.checkWrap}>
         <Animated.View pointerEvents="none" style={[styles.ring, ringStyle]} />
@@ -292,11 +299,12 @@ const styles = StyleSheet.create({
   emoji: { fontSize: 28, lineHeight: 34 },
   text: { flex: 1, minWidth: 0 },
   finished: { opacity: 0.6 },
-  name: { fontSize: 16, fontWeight: '600' },
-  sub: { fontSize: 13, opacity: 0.55, lineHeight: 18 },
-  pill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
+  name: { fontSize: 16, fontWeight: '600', lineHeight: 21 },
+  meta: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 3 },
+  sub: { flexShrink: 1, fontSize: 13, opacity: 0.55, lineHeight: 18 },
+  pill: { borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1, marginTop: 1 },
   undoPill: { borderWidth: 1 },
-  pillText: { fontSize: 12, fontWeight: '700', lineHeight: 16 },
+  pillText: { fontSize: 11, fontWeight: '700', lineHeight: 15 },
   checkWrap: { width: CHECK, height: CHECK, alignItems: 'center', justifyContent: 'center' },
   check: {
     width: CHECK,

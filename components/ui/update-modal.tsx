@@ -12,7 +12,7 @@ import {
 } from '@/lib/app-update';
 import { fetchUpdateGate } from '@/lib/update-gate';
 import { useEffect, useRef, useState } from 'react';
-import { AppState, Linking, Modal, Pressable, StyleSheet, View } from 'react-native';
+import { AppState, Linking, Modal, Platform, Pressable, StyleSheet, View } from 'react-native';
 
 // Minimum gap between config checks. Foreground events fire constantly during
 // normal use; one check per half hour keeps the prompt near-immediate once a
@@ -102,7 +102,7 @@ export function UpdateModal() {
             style={[styles.updateButton, { backgroundColor: colors.tint }]}
             onPress={openStore}
             accessibilityRole="button"
-            accessibilityLabel="Update on the App Store"
+            accessibilityLabel={Platform.OS === 'android' ? 'Update on Google Play' : 'Update on the App Store'}
           >
             <ThemedText style={styles.updateButtonText}>Update</ThemedText>
           </Pressable>

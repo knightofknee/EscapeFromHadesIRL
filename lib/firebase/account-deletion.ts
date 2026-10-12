@@ -10,6 +10,7 @@ import {
 } from './firestore';
 import { clearEarnedQuoteState } from '@/lib/earned-quotes';
 import { clearVocab } from '@/lib/word-suggestions';
+import { deleteAllMedia } from '@/lib/note-media';
 
 // Every top-level collection that stores this user's data keyed by a
 // `userId` field. KEEP IN SYNC with the app's write paths — a collection
@@ -100,7 +101,12 @@ export async function deleteAccountAndData(user: User): Promise<void> {
   // milestone-quote progress. signOut() deliberately keeps the quote
   // progress for returning users, so deletion must remove it here.
   // Best-effort: local cleanup must never fail the deletion.
-  await Promise.allSettled([clearVocab(user.uid), clearEarnedQuoteState(user.uid)]);
+  await Promise.allSettled([
+    clearVocab(user.uid),
+    clearEarnedQuoteState(user.uid),
+    // Note photos/videos live only on the phone.
+    Promise.resolve().then(() => deleteAllMedia(user.uid)),
+  ]);
 
   // Data is now gone. If closing the auth account fails for any reason OTHER
   // than needing recent login, the user would be left authenticated with an

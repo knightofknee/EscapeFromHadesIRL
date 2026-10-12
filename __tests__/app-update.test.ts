@@ -1,6 +1,7 @@
 import {
   DISMISS_SNOOZE_MS,
   isNewerVersion,
+  isOlderBuild,
   isSnoozed,
 } from '@/lib/app-update';
 
@@ -70,5 +71,24 @@ describe('isSnoozed', () => {
 
   it('prompts when nothing was dismissed', () => {
     expect(isSnoozed('1.0.18', null, now)).toBe(false);
+  });
+});
+
+describe('isOlderBuild (Android versionCode dials)', () => {
+  it('prompts only when the running build is below the target', () => {
+    expect(isOlderBuild(4, '3')).toBe(true);
+    expect(isOlderBuild(4, '4')).toBe(false);
+    expect(isOlderBuild(4, '5')).toBe(false);
+    expect(isOlderBuild(10, '9')).toBe(true);
+  });
+
+  it('bails to false on unset or garbage values', () => {
+    expect(isOlderBuild(undefined, '3')).toBe(false);
+    expect(isOlderBuild('4', '3')).toBe(false);
+    expect(isOlderBuild(0, '3')).toBe(false);
+    expect(isOlderBuild(4.5, '3')).toBe(false);
+    expect(isOlderBuild(4, null)).toBe(false);
+    expect(isOlderBuild(4, '')).toBe(false);
+    expect(isOlderBuild(4, 'abc')).toBe(false);
   });
 });
