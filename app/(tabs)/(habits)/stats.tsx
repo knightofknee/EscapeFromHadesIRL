@@ -1,7 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
-import { ActivityIndicator, Alert, StyleSheet, ScrollView, View, Pressable, useWindowDimensions } from 'react-native';
-import * as Print from 'expo-print';
-import * as Sharing from 'expo-sharing';
+import { ActivityIndicator, Alert, Modal, StyleSheet, ScrollView, View, Pressable, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS, Easing } from 'react-native-reanimated';
 import { ThemedText } from '@/components/themed-text';
@@ -30,6 +28,8 @@ import {
   STATS_DISPLAY_MONTHS,
 } from '@/lib/habit-stats';
 import { buildStatsHtml } from '@/lib/stats-pdf';
+import { nextFrame, renderPdf, sharePdf, type PdfDoc } from '@/lib/pdf-share';
+import { PdfPreview } from '@/components/ui/pdf-preview';
 import { computeStreak } from '@/lib/habit-streaks';
 import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
 
@@ -287,39 +287,46 @@ export default function StatsScreen() {
     return map;
   }, [records]);
 
-  // Confirm, then render every habit × success level into a PDF (same
-  // computations as the on-screen sections) and hand it to the share sheet.
-  const handleExportPdf = useCallback(() => {
-    Alert.alert('Export PDF?', 'Generate a PDF of all habit statistics?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Export',
-        onPress: async () => {
-          setExporting(true);
-          try {
-            // Yield a frame so the spinner actually paints before the
-            // synchronous HTML build blocks the JS thread.
-            await new Promise((resolve) => setTimeout(resolve, 50));
-            const html = buildStatsHtml({ habits, recordIndex, vacationSet, winOnlyWeekends });
-            // A4 landscape (points) — fits the 3 success-level columns.
-            const { uri } = await Print.printToFileAsync({ html, width: 842, height: 595 });
-            if (await Sharing.isAvailableAsync()) {
-              await Sharing.shareAsync(uri, {
-                mimeType: 'application/pdf',
-                UTI: 'com.adobe.pdf',
-                dialogTitle: 'Habit Statistics',
-              });
-            }
-          } catch (e) {
-            console.error('PDF export failed:', e);
-            Alert.alert('Export failed', 'Could not generate the PDF.');
-          } finally {
-            setExporting(false);
-          }
-        },
-      },
-    ]);
-  }, [habits, recordIndex, vacationSet, winOnlyWeekends]);
+  // Render every habit × success level into a PDF (same computations as
+  // the on-screen sections). PDF hands it straight to the share sheet;
+  // Preview shows it first, with Share from there.
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState<PdfDoc | null>(null);
+  const buildPdf = useCallback(async () => {
+    await nextFrame();
+    const html = buildStatsHtml({ habits, recordIndex, vacationSet, winOnlyWeekends, scheme: colorScheme });
+    return renderPdf(html, 'Habit Statistics');
+  }, [habits, recordIndex, vacationSet, winOnlyWeekends, colorScheme]);
+
+  const exportFailed = (e: unknown) => {
+    console.error('PDF export failed:', e);
+    Alert.alert('Export failed', 'Could not generate the PDF.');
+  };
+
+  const handleExportPdf = useCallback(
+    async (doc?: PdfDoc | null) => {
+      setExporting(true);
+      try {
+        await sharePdf(doc ?? (await buildPdf()));
+      } catch (e) {
+        exportFailed(e);
+      } finally {
+        setExporting(false);
+      }
+    },
+    [buildPdf],
+  );
+
+  const handlePreview = useCallback(async () => {
+    setPreviewDoc(null);
+    setPreviewOpen(true);
+    try {
+      setPreviewDoc(await buildPdf());
+    } catch (e) {
+      setPreviewOpen(false);
+      exportFailed(e);
+    }
+  }, [buildPdf]);
 
   // Hold until habits and the streak history arrive — otherwise every habit
   // section renders zeroed streaks and then pops to the real numbers. Offline
@@ -341,19 +348,30 @@ export default function StatsScreen() {
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.subtitleRow}>
           <ThemedText style={styles.subtitle}>18-month rolling view</ThemedText>
-          <Pressable
-            onPress={handleExportPdf}
-            disabled={exporting || habits.length === 0}
-            style={[styles.pdfButton, { borderColor: colors.tileBorder }]}
-            hitSlop={6}
-            accessibilityLabel="Export statistics as PDF"
-          >
-            {exporting ? (
-              <ActivityIndicator size="small" color={colors.icon} />
-            ) : (
-              <ThemedText style={[styles.pdfButtonText, { color: colors.icon }]}>PDF</ThemedText>
-            )}
-          </Pressable>
+          <View style={styles.pdfButtons}>
+            <Pressable
+              onPress={handlePreview}
+              disabled={exporting || habits.length === 0}
+              style={[styles.pdfButton, { borderColor: colors.tileBorder }]}
+              hitSlop={6}
+              accessibilityLabel="Preview statistics PDF"
+            >
+              <ThemedText style={[styles.pdfButtonText, { color: colors.icon }]}>Preview</ThemedText>
+            </Pressable>
+            <Pressable
+              onPress={() => handleExportPdf()}
+              disabled={exporting || habits.length === 0}
+              style={[styles.pdfButton, { borderColor: colors.tileBorder }]}
+              hitSlop={6}
+              accessibilityLabel="Share statistics as PDF"
+            >
+              {exporting && !previewOpen ? (
+                <ActivityIndicator size="small" color={colors.icon} />
+              ) : (
+                <ThemedText style={[styles.pdfButtonText, { color: colors.icon }]}>PDF</ThemedText>
+              )}
+            </Pressable>
+          </View>
         </View>
 
         {habits.length === 0 ? (
@@ -364,6 +382,15 @@ export default function StatsScreen() {
           ))
         )}
       </ScrollView>
+      <Modal visible={previewOpen} animationType="slide" onRequestClose={() => setPreviewOpen(false)}>
+        <PdfPreview
+          doc={previewDoc}
+          backLabel="Done"
+          onBack={() => setPreviewOpen(false)}
+          onShare={() => handleExportPdf(previewDoc)}
+          sharing={exporting}
+        />
+      </Modal>
     </ThemedView>
   );
 }
@@ -388,6 +415,10 @@ const styles = StyleSheet.create({
   },
   // Low-key by design: hairline border + gray text so it reads as a button
   // without competing with the stats content.
+  pdfButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
   pdfButton: {
     borderWidth: 1,
     borderRadius: 6,

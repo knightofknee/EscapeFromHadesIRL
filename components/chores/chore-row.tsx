@@ -15,8 +15,11 @@ import * as Haptics from 'expo-haptics';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { formatDue, formatFrequency, formatShortDate, formatSince, isTask, pastDueMarker, type ChoreStatus } from '@/lib/chores';
+import { formatDue, formatFrequency, formatShortDate, isTask, type ChoreStatus } from '@/lib/chores';
 import { CHORE_STATE_COLORS, choreInkColor } from './chore-colors';
+import { useAuth } from '@/contexts/auth-context';
+import { useFriends } from '@/contexts/friends-context';
+import { isSharedChore, sharedNames } from '@/lib/chore-reminders';
 import type { Chore } from '@/types/chore';
 
 const GREEN = CHORE_STATE_COLORS.fresh;
@@ -81,6 +84,8 @@ function Particle({ index, progress }: { index: number; progress: SharedValue<nu
 export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpen }: Props) {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
+  const { nameOf } = useFriends();
+  const uid = useAuth().user?.uid ?? '';
   const task = isTask(chore);
   // A task stays checked once done; a recurring chore only for today.
   const done = task ? status.state === 'done' : status.daysSince === 0;
@@ -182,25 +187,24 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
     transform: [{ scaleX: interpolate(sweep.value, [0, 0.35, 1], [0, 1, 1]) }],
   }));
 
-  const since = status.daysSince == null ? 'Never' : formatSince(status.daysSince);
-  const marker = pastDueMarker(status);
   const due = chore.dueDate ? formatShortDate(chore.dueDate, today) : '';
   const details = chore.description?.trim();
-  // Task: "Oct 12 · details", or "One time · Oct 12" when there are none.
+  // The pill carries the timing; this only says what kind of thing it is.
+  // Task: "Oct 12 · details", or "One time · Oct 12". Chore: its frequency
+  // (when it was last done lives in the detail sheet).
   const sub = task
     ? details
       ? `${due} · ${details}`
       : `One time · ${due}`
-    : status.daysSince == null
-      ? formatFrequency(chore.frequencyDays) // never logged: nothing to say about the past
-      : `${since} · ${formatFrequency(chore.frequencyDays)}`;
+    : formatFrequency(chore.frequencyDays);
+  const withWho = isSharedChore(chore) ? ` · with ${sharedNames(chore, uid, nameOf)}` : '';
 
   return (
     <Animated.View
       layout={CHORE_LAYOUT_TRANSITION}
       style={[
         styles.card,
-        { backgroundColor: colors.tileBackground, borderColor: `${stateColor}55` },
+        { backgroundColor: colors.tileBackground, borderColor: colors.tileBorder },
       ]}
     >
       <View style={[styles.stripe, { backgroundColor: stateColor }]} />
@@ -216,7 +220,8 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
         {!!chore.emoji && <ThemedText style={styles.emoji}>{chore.emoji}</ThemedText>}
         {/* The name gets the full width and wraps as far as it needs; the
             status pill rides under it with the details instead of squeezing
-            it. Nothing here truncates. */}
+            it. The details drop to their own line whole rather than wrapping
+            mid-phrase. Nothing here truncates. */}
         <View style={[styles.text, status.state === 'done' && styles.finished]}>
           <ThemedText style={styles.name}>
             {chore.name}
@@ -239,18 +244,8 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
                 </ThemedText>
               </View>
             )}
-            {!undoDate && marker && (
-              <View
-                style={[styles.marker, { borderColor: `${stateColor}88` }]}
-                accessibilityLabel={`${marker} past due`}
-              >
-                <ThemedText style={[styles.pillText, { color: choreInkColor(status.state, scheme) }]}>
-                  {marker}
-                </ThemedText>
-              </View>
-            )}
             <ThemedText style={styles.sub}>
-              {sub}
+              {sub + withWho}
             </ThemedText>
           </View>
         </View>
@@ -287,8 +282,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderRadius: 14,
-    minHeight: 68,
-    paddingRight: 12,
+    minHeight: 76,
+    paddingRight: 14,
   },
   stripe: {
     alignSelf: 'stretch',
@@ -302,21 +297,21 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
+    paddingVertical: 14,
     paddingLeft: 12,
-    paddingRight: 10,
+    paddingRight: 12,
     gap: 12,
   },
-  emoji: { fontSize: 28, lineHeight: 34 },
+  // Fixed box so names line up down the list whatever the emoji's width.
+  emoji: { width: 36, fontSize: 30, lineHeight: 36, textAlign: 'center' },
   text: { flex: 1, minWidth: 0 },
   finished: { opacity: 0.6 },
-  name: { fontSize: 16, fontWeight: '600', lineHeight: 21 },
-  meta: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 3 },
-  sub: { flexShrink: 1, fontSize: 13, opacity: 0.55, lineHeight: 18 },
-  pill: { borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1, marginTop: 1 },
+  name: { fontSize: 18, fontWeight: '700', lineHeight: 23 },
+  meta: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 8, rowGap: 4, marginTop: 5 },
+  sub: { fontSize: 14, opacity: 0.55, lineHeight: 19 },
+  pill: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
   undoPill: { borderWidth: 1 },
-  marker: { borderRadius: 999, borderWidth: 1, paddingHorizontal: 6, marginTop: 1 },
-  pillText: { fontSize: 11, fontWeight: '700', lineHeight: 15 },
+  pillText: { fontSize: 12, fontWeight: '700', lineHeight: 16 },
   checkWrap: { width: CHECK, height: CHECK, alignItems: 'center', justifyContent: 'center' },
   check: {
     width: CHECK,

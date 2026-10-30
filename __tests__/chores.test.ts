@@ -1,6 +1,7 @@
 import {
   addCompletion,
   choreStatus,
+  countDue,
   formatDue,
   formatDuePreset,
   formatFrequency,
@@ -8,7 +9,6 @@ import {
   removeCompletion,
   soonWindow,
   sortChores,
-  pastDueMarker,
   CHORE_HISTORY_CAP,
 } from '../lib/chores';
 import type { Chore } from '../types/chore';
@@ -60,15 +60,44 @@ describe('choreStatus', () => {
     expect(choreStatus(task('t', '2026-09-24', '2026-09-10'), TODAY).state).toBe('due');
   });
 
-  test('marker shows how long only from 3 days past due', () => {
-    expect(pastDueMarker(choreStatus(chore('a', 7, ['2026-09-21']), TODAY))).toBeNull(); // 2 days
-    expect(pastDueMarker(choreStatus(chore('a', 7, ['2026-09-20']), TODAY))).toBe('3 days');
-    expect(pastDueMarker(choreStatus(chore('a', 7, ['2026-09-02']), TODAY))).toBe('3 weeks');
-    expect(pastDueMarker(choreStatus(chore('a', 7, ['2026-09-29']), TODAY))).toBeNull();
+  test('pill says how long only from 3 days past due', () => {
+    expect(formatDue(choreStatus(chore('a', 7, ['2026-09-21']), TODAY))).toBe('Due'); // 2 days
+    expect(formatDue(choreStatus(chore('a', 7, ['2026-09-20']), TODAY))).toBe('Due 3 days ago');
+    expect(formatDue(choreStatus(chore('a', 7, ['2026-09-16']), TODAY))).toBe('Overdue by 7 days');
+    expect(formatDue(choreStatus(chore('a', 7, ['2026-09-02']), TODAY))).toBe('Overdue by 3 weeks');
   });
 
   test('blue window: at least 2 days, always leaving a green day', () => {
     expect([1, 2, 3, 7, 14, 30, 365].map(soonWindow)).toEqual([0, 1, 2, 2, 3, 7, 91]);
+  });
+});
+
+describe('whenever (unscheduled) chores', () => {
+  test('always green, says how long it has been', () => {
+    const s = choreStatus(chore('a', 0, ['2026-09-25']), TODAY);
+    expect(s).toMatchObject({ state: 'fresh', unscheduled: true, daysSince: 5, dueIn: null });
+    expect(formatDue(s)).toBe('5 days ago');
+    expect(choreStatus(chore('a', 0, ['2025-01-01']), TODAY).state).toBe('fresh');
+    expect(formatDue(choreStatus(chore('a', 0, ['2026-08-30']), TODAY))).toBe('4 weeks ago');
+    expect(formatDue(choreStatus(chore('a', 0, ['2026-07-01']), TODAY))).toBe('3 months ago');
+    expect(formatDue(choreStatus(chore('a', 0, ['2026-09-29']), TODAY))).toBe('Yesterday');
+    expect(formatDue(choreStatus(chore('a', 0, [TODAY]), TODAY))).toBe('Done today');
+    expect(formatDue(choreStatus(chore('a', 0), TODAY))).toBe('Not done yet');
+    expect(formatFrequency(0)).toBe('Whenever');
+  });
+
+  test('sit after scheduled chores, longest since first, never done last', () => {
+    const sorted = sortChores(
+      [
+        chore('never', 0),
+        chore('recent', 0, ['2026-09-28']),
+        chore('scheduled', 30, ['2026-09-29']),
+        chore('long ago', 0, ['2026-06-01']),
+      ],
+      TODAY,
+    );
+    expect(sorted.map((x) => x.chore.name)).toEqual(['scheduled', 'long ago', 'recent', 'never']);
+    expect(sorted.every((x) => x.section === 'chores')).toBe(true);
   });
 });
 
@@ -114,7 +143,7 @@ describe('formatting', () => {
     expect(formatSince(1)).toBe('Yesterday');
     expect(formatSince(20)).toBe('2 weeks ago');
     expect(formatDue(choreStatus(chore('a', 7, ['2026-09-21']), TODAY))).toBe('Due');
-    expect(formatDue(choreStatus(chore('a', 7, ['2026-09-10']), TODAY))).toBe('Overdue');
+    expect(formatDue(choreStatus(chore('a', 7, ['2026-09-10']), TODAY))).toBe('Overdue by 13 days');
     expect(formatDue(choreStatus(chore('a', 7, ['2026-09-23']), TODAY))).toBe('Due today');
     expect(formatDue(choreStatus(chore('a', 7, ['2026-09-30']), TODAY))).toBe('Done today');
     expect(formatDue(choreStatus(chore('a', 30, ['2026-09-20']), TODAY))).toBe('Due in 2 weeks');
@@ -198,5 +227,24 @@ describe('one-time tasks', () => {
       'In 2 weeks',
       'In a month',
     ]);
+  });
+});
+
+describe('countDue (tab bubbles)', () => {
+  test('splits gold due from red overdue; fresh, soon, whenever and done never count', () => {
+    const list: Chore[] = [
+      chore('dueToday', 7, ['2026-09-23']),
+      chore('lateFew', 7, ['2026-09-20']),
+      chore('overdue', 7, ['2026-09-09']),
+      chore('fresh', 7, ['2026-09-29']),
+      chore('whenever', 0, ['2026-01-01']),
+      { ...chore('doneTask', 0), kind: 'once', dueDate: '2026-09-01', completions: ['2026-09-02'] },
+      { ...chore('lateTask', 0), kind: 'once', dueDate: '2026-09-29' },
+    ];
+    expect(countDue(list, TODAY)).toEqual({ due: 3, overdue: 1 });
+  });
+
+  test('nothing to do is zero', () => {
+    expect(countDue([], TODAY)).toEqual({ due: 0, overdue: 0 });
   });
 });

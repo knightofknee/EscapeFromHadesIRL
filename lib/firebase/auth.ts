@@ -17,6 +17,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { app } from './app';
 import { clearLocalUserState } from '@/lib/local-user-state';
 import { signOutGoogleNative } from '@/lib/google-native-signin';
+import { unregisterPushToken } from '@/lib/push-tokens';
 
 // Metro resolves @firebase/auth with the "react-native" condition, which exports
 // getReactNativePersistence. TypeScript can't see it because TSC uses the default
@@ -43,7 +44,13 @@ export async function signOut() {
   // AsyncStorage) before dropping auth — best-effort, never blocks sign-out.
   // Android also forgets the native Google account, so the next Google
   // sign-in shows the account picker instead of silently reusing it.
-  await Promise.allSettled([clearLocalUserState(), signOutGoogleNative()]);
+  // Also stop shared-chore pushes to this phone for the account leaving.
+  const uid = auth.currentUser?.uid;
+  await Promise.allSettled([
+    clearLocalUserState(),
+    signOutGoogleNative(),
+    uid ? unregisterPushToken(uid) : Promise.resolve(),
+  ]);
   return firebaseSignOut(auth);
 }
 

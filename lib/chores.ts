@@ -22,7 +22,7 @@ export type ChoreState = 'overdue' | 'due' | 'soon' | 'fresh' | 'done';
 
 /** Days past due when due (gold) turns overdue (red). */
 export const OVERDUE_DAYS = 7;
-/** Days past due before the tile shows how long it's been. */
+/** Days past due before a gold pill says how long it's been. */
 export const PAST_DUE_MARKER_DAYS = 3;
 
 /** On the docket: due today or past due (gold or red). */
@@ -36,6 +36,8 @@ function dueState(dueIn: number): ChoreState {
 
 export type ChoreStatus = {
   state: ChoreState;
+  /** A "Whenever" chore: no due date, just how long it's been. */
+  unscheduled?: boolean;
   /** Days since the last logged completion; null when never logged. */
   daysSince: number | null;
   /** Days until due (negative = late); null for a task that's done. */
@@ -67,6 +69,14 @@ export function isTask(chore: Pick<Chore, 'kind'>): boolean {
   return chore.kind === 'once';
 }
 
+/** frequencyDays for a "Whenever" chore: tracked by time since, never due. */
+export const UNSCHEDULED = 0;
+
+/** A recurring chore with no frequency: always green, shows how long it's been. */
+export function isUnscheduled(chore: Pick<Chore, 'kind' | 'frequencyDays'>): boolean {
+  return !isTask(chore) && chore.frequencyDays <= UNSCHEDULED;
+}
+
 type StatusInput = Pick<Chore, 'completions' | 'frequencyDays'> &
   Partial<Pick<Chore, 'kind' | 'dueDate' | 'createdAt'>>;
 
@@ -90,6 +100,10 @@ function taskStatus(chore: StatusInput, today: string): ChoreStatus {
 export function choreStatus(chore: StatusInput, today: string): ChoreStatus {
   if (isTask(chore)) return taskStatus(chore, today);
   const last = chore.completions[0];
+  if (isUnscheduled(chore)) {
+    const daysSince = last ? Math.max(0, daysBetween(last, today)) : null;
+    return { state: 'fresh', unscheduled: true, daysSince, dueIn: null, ratio: 0 };
+  }
   const freq = Math.max(1, chore.frequencyDays);
   // Never logged: the clock starts the day it was created.
   const base = last ?? (chore.createdAt ? formatDate(new Date(chore.createdAt)) : today);
@@ -98,6 +112,22 @@ export function choreStatus(chore: StatusInput, today: string): ChoreStatus {
   const dueIn = freq - elapsed;
   const state: ChoreState = dueIn <= 0 ? dueState(dueIn) : dueIn <= soonWindow(freq) ? 'soon' : 'fresh';
   return { state, daysSince: last ? elapsed : null, dueIn, ratio: elapsed / freq };
+}
+
+/**
+ * How many chores and tasks need attention today, split the way the tab
+ * bubbles show them: gold `due` (on the docket) and red `overdue` (a week
+ * or more late). Done tasks and "Whenever" chores never count.
+ */
+export function countDue(chores: StatusInput[], today: string): { due: number; overdue: number } {
+  let due = 0;
+  let overdue = 0;
+  for (const chore of chores) {
+    const { state } = choreStatus(chore, today);
+    if (state === 'due') due++;
+    else if (state === 'overdue') overdue++;
+  }
+  return { due, overdue };
 }
 
 /**
@@ -121,8 +151,9 @@ export type SortedChore = { chore: Chore; status: ChoreStatus; section: ChoreSec
 /**
  * Section order (above), then inside each section: most overdue first
  * (tasks by days late, chores relative to their frequency), soonest due
- * first, finished tasks most recently done first. Ties break by name so the
- * list is stable.
+ * first, finished tasks most recently done first. "Whenever" chores go after
+ * the scheduled ones, longest since first (never done last). Ties break by
+ * name so the list is stable.
  */
 export function sortChores(chores: Chore[], today: string): SortedChore[] {
   const rank = (s: ChoreSection) => CHORE_SECTION_ORDER.indexOf(s);
@@ -135,7 +166,11 @@ export function sortChores(chores: Chore[], today: string): SortedChore[] {
       const r = rank(a.section) - rank(b.section);
       if (r !== 0) return r;
       let d = 0;
-      if (a.section === 'dueChores') d = b.status.ratio - a.status.ratio;
+      const ua = !!a.status.unscheduled;
+      const ub = !!b.status.unscheduled;
+      if (ua !== ub) d = ua ? 1 : -1;
+      else if (ua) d = (b.status.daysSince ?? -1) - (a.status.daysSince ?? -1);
+      else if (a.section === 'dueChores') d = b.status.ratio - a.status.ratio;
       else if (a.section === 'done') d = (a.status.daysSince ?? 0) - (b.status.daysSince ?? 0);
       else d = (a.status.dueIn ?? 0) - (b.status.dueIn ?? 0);
       return d !== 0 ? d : a.chore.name.localeCompare(b.chore.name);
@@ -155,8 +190,9 @@ export function removeCompletion(completions: string[], date: string): string[] 
 
 const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`;
 
-/** "Daily", "Weekly", "Every 2 weeks", "Monthly", "Every 10 days"... */
+/** "Daily", "Weekly", "Every 2 weeks", "Monthly", "Every 10 days", "Whenever"... */
 export function formatFrequency(days: number): string {
+  if (days <= UNSCHEDULED) return 'Whenever';
   const named: Record<number, string> = {
     1: 'Daily',
     7: 'Weekly',
@@ -194,27 +230,26 @@ export function formatSince(daysSince: number): string {
   return `${span(daysSince)} ago`;
 }
 
-/** The status pill: "3 days late", "Due today", "Due in 2 weeks", "Done today". */
+/**
+ * The status pill, the one place the timing lives: "Due in 3 days",
+ * "Due tomorrow", "Due today", "Due" (1-2 days past), "Due 4 days ago"
+ * (gold, from PAST_DUE_MARKER_DAYS), "Overdue by 11 days" (red), "Done today".
+ * A "Whenever" chore just says how long it's been: "Yesterday", "5 days ago".
+ */
 export function formatDue(status: ChoreStatus): string {
   if (status.state === 'done') return `Done ${formatSince(status.daysSince ?? 0).toLowerCase()}`;
+  if (status.unscheduled) {
+    if (status.daysSince == null) return 'Not done yet';
+    return status.daysSince === 0 ? 'Done today' : formatSince(status.daysSince);
+  }
   if (status.dueIn == null) return '';
   if (status.daysSince === 0) return 'Done today';
-  if (status.state === 'overdue') return 'Overdue';
+  const over = -status.dueIn;
+  if (status.state === 'overdue') return `Overdue by ${span(over)}`;
   if (status.dueIn === 0) return 'Due today';
-  if (status.dueIn < 0) return 'Due';
+  if (over > 0) return over >= PAST_DUE_MARKER_DAYS ? `Due ${span(over)} ago` : 'Due';
   if (status.dueIn === 1) return 'Due tomorrow';
   return `Due in ${span(status.dueIn)}`;
-}
-
-/**
- * The small "how long" marker inside a tile, once it's PAST_DUE_MARKER_DAYS
- * or more past due ("3 days", "2 weeks"); null otherwise. The pill itself
- * just says "Due", so lateness isn't shouted.
- */
-export function pastDueMarker(status: ChoreStatus): string | null {
-  if (status.state === 'done' || status.dueIn == null) return null;
-  const over = -status.dueIn;
-  return over >= PAST_DUE_MARKER_DAYS ? span(over) : null;
 }
 
 /** Frequency choices offered in the editor. */

@@ -19,15 +19,20 @@ import {
   doc,
   setDoc,
   deleteDoc,
+  updateDoc,
   writeBatch,
 } from '@/lib/firebase/firestore';
+import { arrayRemove } from 'firebase/firestore';
 import { subscribeWithOfflineState } from '@/lib/firebase/subscribe';
 import { emitError } from '@/lib/error-bus';
 import { CHORES_COLLECTION, addCompletion, removeCompletion } from '@/lib/chores';
-import type { Chore } from '@/types/chore';
+import type { Chore, ChoreReminder } from '@/types/chore';
 import { syncChoreReminders } from '@/lib/chore-reminders';
 
-export type ChoreDraft = Pick<Chore, 'kind' | 'name' | 'emoji' | 'frequencyDays' | 'description' | 'dueDate' | 'reminderTime'>;
+const NO_CHORES: Chore[] = [];
+
+export type ChoreDraft = Pick<Chore, 'kind' | 'name' | 'emoji' | 'frequencyDays' | 'description' | 'dueDate' | 'reminderTime'> &
+  Partial<Pick<Chore, 'reminders' | 'memberIds'>>;
 
 type ChoresContextValue = {
   chores: Chore[];
@@ -43,6 +48,12 @@ type ChoresContextValue = {
   deleteChores: (ids: string[]) => Promise<boolean>;
   markDone: (id: string, date: string) => Promise<boolean>;
   unmarkDone: (id: string, date: string) => Promise<boolean>;
+  /** Replace MY reminders on a chore (others' are untouched). */
+  setReminders: (id: string, reminders: ChoreReminder[]) => Promise<boolean>;
+  /** Owner only: who the chore is shared with (friend uids; the owner is added). */
+  setSharedWith: (id: string, friendUids: string[]) => Promise<boolean>;
+  /** A member drops a chore someone shared with them. */
+  leaveChore: (id: string) => Promise<boolean>;
 };
 
 const ChoresContext = createContext<ChoresContextValue>({
@@ -56,6 +67,9 @@ const ChoresContext = createContext<ChoresContextValue>({
   deleteChores: async () => false,
   markDone: async () => false,
   unmarkDone: async () => false,
+  setReminders: async () => false,
+  setSharedWith: async () => false,
+  leaveChore: async () => false,
 });
 
 /**
@@ -67,9 +81,66 @@ const ChoresContext = createContext<ChoresContextValue>({
 export function ChoresProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const { requireOnline } = useOfflineGuard();
-  const [chores, setChores] = useState<Chore[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [isOffline, setIsOffline] = useState(false);
+
+  // Two listeners: chores I own, and chores friends shared with me (rules
+  // let each through on its own branch). The shared list drops my own, so
+  // the two never overlap.
+  const [own, setOwn] = useState<Chore[] | null>(null);
+  const [shared, setShared] = useState<Chore[] | null>(null);
+  useEffect(() => {
+    if (!user) {
+      setOwn(null);
+      setShared(null);
+      setIsOffline(false);
+      return;
+    }
+    setOwn(null);
+    setShared(null);
+    const toChores = (snapshot: { docs: { id: string; data: () => unknown }[] }) =>
+      snapshot.docs.map((d) => {
+        const data = d.data() as Omit<Chore, 'id'>;
+        return { ...data, id: d.id, completions: data.completions ?? [] };
+      });
+    const unsubOwn = subscribeWithOfflineState(
+      query(collection(db, CHORES_COLLECTION), where('userId', '==', user.uid)),
+      (snapshot: { docs: { id: string; data: () => unknown }[] }) => setOwn(toChores(snapshot)),
+      {
+        onError: (error) => {
+          console.error('[chores] snapshot error:', error);
+          setOwn((prev) => prev ?? []);
+        },
+        setOffline: (offline) => {
+          setIsOffline(offline);
+          if (offline) setOwn((prev) => prev ?? []);
+        },
+      },
+    );
+    const unsubShared = subscribeWithOfflineState(
+      query(collection(db, CHORES_COLLECTION), where('memberIds', 'array-contains', user.uid)),
+      (snapshot: { docs: { id: string; data: () => unknown }[] }) =>
+        setShared(toChores(snapshot).filter((c) => c.userId !== user.uid)),
+      {
+        onError: (error) => {
+          console.error('[chores] shared snapshot error:', error);
+          setShared((prev) => prev ?? []);
+        },
+        setOffline: (offline) => {
+          if (offline) setShared((prev) => prev ?? []);
+        },
+      },
+    );
+    return () => {
+      unsubOwn();
+      unsubShared();
+    };
+  }, [user]);
+
+  // Stay "loading" while signed out / auth restoring (see HabitsProvider),
+  // and until both listeners have delivered.
+  const isLoading = !user || own === null || shared === null;
+  const chores = useMemo(() => (own && shared ? [...own, ...shared] : NO_CHORES), [own, shared]);
+
   // Completion writes read-modify-write the history array; read the latest
   // snapshot through a ref so back-to-back taps don't build on a stale copy.
   const choresRef = useRef(chores);
@@ -77,48 +148,16 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
     choresRef.current = chores;
   }, [chores]);
 
-  useEffect(() => {
-    if (!user) {
-      setChores([]);
-      // Stay "loading" while signed out / auth restoring — see HabitsProvider.
-      setIsLoading(true);
-      setIsOffline(false);
-      return;
-    }
-    setIsLoading(true);
-    const q = query(collection(db, CHORES_COLLECTION), where('userId', '==', user.uid));
-    return subscribeWithOfflineState(
-      q,
-      (snapshot: { docs: { id: string; data: () => unknown }[] }) => {
-        setChores(
-          snapshot.docs.map((d) => {
-            const data = d.data() as Omit<Chore, 'id'>;
-            return { ...data, id: d.id, completions: data.completions ?? [] };
-          }),
-        );
-        setIsLoading(false);
-      },
-      {
-        onError: (error) => {
-          console.error('[chores] snapshot error:', error);
-          setIsLoading(false);
-        },
-        setOffline: (offline) => {
-          setIsOffline(offline);
-          if (offline) setIsLoading(false);
-        },
-      },
-    );
-  }, [user]);
-
-  // Keep this phone's task reminders in step with the synced list (set,
-  // moved, done, deleted, or set on another phone). Signed out → none.
-  // Serialized so overlapping snapshots can't schedule duplicates.
+  // Keep this phone's reminders in step with the synced list (set, moved,
+  // done, deleted, or set on another phone). Personal chores only: a shared
+  // chore's reminders come from the server, which knows whether a friend
+  // already did it. Signed out → none. Serialized so overlapping snapshots
+  // can't schedule duplicates.
   const reminderSync = useRef<Promise<void>>(Promise.resolve());
   useEffect(() => {
     if (user && isLoading) return;
     const list = user ? chores : [];
-    reminderSync.current = reminderSync.current.then(() => syncChoreReminders(list));
+    reminderSync.current = reminderSync.current.then(() => syncChoreReminders(list, user?.uid ?? ''));
   }, [chores, isLoading, user]);
 
   const write = useCallback(
@@ -212,11 +251,17 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
       const completions = change(current.completions);
       // Reflect immediately so a second tap reads this result.
       choresRef.current = choresRef.current.map((c) => (c.id === id ? { ...c, completions } : c));
+      // Who logged the newest day, so friends see who did it.
+      const doneBy = completions[0] && completions[0] !== current.completions[0] ? { lastDoneBy: user?.uid } : {};
       return write(label, () =>
-        setDoc(doc(db, CHORES_COLLECTION, id), { completions, updatedAt: Date.now() }, { merge: true }),
+        setDoc(
+          doc(db, CHORES_COLLECTION, id),
+          stripUndefined({ completions, ...doneBy, updatedAt: Date.now() }),
+          { merge: true },
+        ),
       );
     },
-    [write],
+    [write, user],
   );
 
   const markDone = useCallback(
@@ -227,6 +272,35 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
   const unmarkDone = useCallback(
     (id: string, date: string) => setCompletions(id, (c) => removeCompletion(c, date), 'undo'),
     [setCompletions],
+  );
+
+  const setReminders = useCallback(
+    (id: string, reminders: ChoreReminder[]) =>
+      write('reminders', () =>
+        // A field path, so a friend's reminders on the same chore are untouched.
+        // An empty list (not a delete) also retires the legacy reminderTime.
+        updateDoc(doc(db, CHORES_COLLECTION, id), { [`reminders.${user!.uid}`]: reminders, updatedAt: Date.now() }),
+      ),
+    [write, user],
+  );
+
+  const setSharedWith = useCallback(
+    (id: string, friendUids: string[]) =>
+      write('share', () =>
+        updateDoc(doc(db, CHORES_COLLECTION, id), {
+          memberIds: friendUids.length ? [user!.uid, ...friendUids.filter((f) => f !== user!.uid)] : [],
+          updatedAt: Date.now(),
+        }),
+      ),
+    [write, user],
+  );
+
+  const leaveChore = useCallback(
+    (id: string) =>
+      write('leave', () =>
+        updateDoc(doc(db, CHORES_COLLECTION, id), { memberIds: arrayRemove(user!.uid), updatedAt: Date.now() }),
+      ),
+    [write, user],
   );
 
   const value = useMemo(
@@ -241,8 +315,25 @@ export function ChoresProvider({ children }: { children: ReactNode }) {
       deleteChores,
       markDone,
       unmarkDone,
+      setReminders,
+      setSharedWith,
+      leaveChore,
     }),
-    [chores, isLoading, isOffline, createChore, createChores, updateChore, deleteChore, deleteChores, markDone, unmarkDone],
+    [
+      chores,
+      isLoading,
+      isOffline,
+      createChore,
+      createChores,
+      updateChore,
+      deleteChore,
+      deleteChores,
+      markDone,
+      unmarkDone,
+      setReminders,
+      setSharedWith,
+      leaveChore,
+    ],
   );
 
   return <ChoresContext.Provider value={value}>{children}</ChoresContext.Provider>;

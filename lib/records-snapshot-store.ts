@@ -123,6 +123,29 @@ export function fetchRecordsSnapshot(uid: string, start: string, end: string): P
 }
 
 /**
+ * One-off read of [start, end] for an export (the Month PDF). Uses the
+ * snapshot when it already covers the span (no network, works offline);
+ * otherwise a plain fetch that never replaces the shared snapshot. Callers
+ * overlay the live window with mergeWithLive.
+ */
+export async function loadRecordsRange(uid: string, start: string, end: string): Promise<HabitRecord[]> {
+  await hydrateRecordsSnapshot(uid);
+  const snap = getRecordsSnapshot(uid);
+  if (snap && snap.start <= start && snap.end >= end) {
+    return snap.records.filter((r) => r.date >= start && r.date <= end);
+  }
+  const res = await getDocs(
+    query(
+      collection(db, 'records'),
+      where('userId', '==', uid),
+      where('date', '>=', start),
+      where('date', '<=', end),
+    ),
+  );
+  return res.docs.map((d) => ({ id: d.id, ...d.data() }) as HabitRecord);
+}
+
+/**
  * Background warm-up: load the saved copy, then refetch if it's missing or
  * stale. Never throws.
  */

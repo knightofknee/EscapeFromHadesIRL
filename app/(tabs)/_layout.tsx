@@ -5,6 +5,7 @@ import { Text, View } from 'react-native';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { ChoresTabIcon } from '@/components/chores/chores-tab-icon';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTourTarget } from '@/contexts/tour-context';
@@ -50,7 +51,7 @@ export default function TabLayout() {
         name="(chores)"
         options={{
           title: 'Chores',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          tabBarIcon: ({ color }) => <ChoresTabIcon color={color} />,
         }}
       />
       <Tabs.Screen

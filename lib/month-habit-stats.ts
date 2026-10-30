@@ -1,5 +1,6 @@
-import { isRecordCompleted, recordLevel } from '@/lib/habit-scoring';
-import { recordNumericValue } from '@/lib/habit-stats';
+import { formatDate } from '@/lib/date-utils';
+import { isRecordCompleted, recordLevel, shouldSkipWeekend } from '@/lib/habit-scoring';
+import { formatStatValue, recordNumericValue } from '@/lib/habit-stats';
 import type { Habit, HabitRecord } from '@/types/habit';
 
 /**
@@ -148,4 +149,68 @@ export function formatSteps(n: number): string {
   if (r < 100_000) return `${(Math.round(r / 100) / 10).toString()}k`;
   if (r < 1_000_000) return `${Math.round(r / 1000)}k`;
   return `${(Math.round(r / 100_000) / 10).toString()}M`;
+}
+
+export function formatMonthAmount(amount: MonthAmount, n: number | null): string {
+  if (n == null) return '—';
+  if (amount.kind === 'minutes') return formatMinutes(n);
+  if (amount.kind === 'steps') return formatSteps(n);
+  return formatStatValue(n);
+}
+
+/** Monday-first calendar grid: one array per week, null where the month hasn't started or has ended. */
+export function monthCalendarWeeks(year: number, month: number): (number | null)[][] {
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDayOfWeek = (new Date(year, month, 1).getDay() + 6) % 7; // Monday=0
+  const weeks: (number | null)[][] = [];
+  let currentWeek: (number | null)[] = new Array(firstDayOfWeek).fill(null);
+  for (let d = 1; d <= daysInMonth; d++) {
+    currentWeek.push(d);
+    if (currentWeek.length === 7) {
+      weeks.push(currentWeek);
+      currentWeek = [];
+    }
+  }
+  if (currentWeek.length > 0) {
+    while (currentWeek.length < 7) currentWeek.push(null);
+    weeks.push(currentWeek);
+  }
+  return weeks;
+}
+
+/**
+ * How many days of the month count. The current month only counts up to
+ * yesterday (today is still in progress); on the 1st that's 0, which shows
+ * as "—" rather than a false 0%.
+ */
+export function monthCountDays(year: number, month: number, today: Date): number {
+  if (year === today.getFullYear() && month === today.getMonth()) return today.getDate() - 1;
+  return new Date(year, month + 1, 0).getDate();
+}
+
+/**
+ * Every habit's stats for one month. Vacation days and weekend
+ * non-completions leave the month entirely; with the per-habit weekend-skip
+ * rule each habit can have its own denominator.
+ */
+export function computeMonthRows(
+  habits: Habit[],
+  recordIndex: Map<string, HabitRecord>,
+  year: number,
+  month: number,
+  countDays: number,
+  vacationSet: Set<string>,
+  winOnlyWeekends: boolean,
+): ({ habit: Habit } & MonthHabitStats)[] {
+  return habits.map((habit) => {
+    const days: MonthDayInput[] = [];
+    for (let d = 1; d <= countDays; d++) {
+      const dateStr = formatDate(new Date(year, month, d));
+      const record = recordIndex.get(`${habit.id}_${dateStr}`);
+      const excluded =
+        vacationSet.has(dateStr) || shouldSkipWeekend(habit, record, dateStr, winOnlyWeekends);
+      days.push({ day: d, record, excluded });
+    }
+    return { habit, ...computeMonthHabitStats(habit, days) };
+  });
 }

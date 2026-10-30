@@ -17,6 +17,7 @@ import { subscribeWithOfflineState } from '@/lib/firebase/subscribe';
 // palettes live in hooks/use-success-colors.ts because external components
 // import the type from there.
 import type { SuccessColors } from '@/hooks/use-success-colors';
+import { parseBirthday } from '@/lib/win-only';
 
 type UserSettingsContextValue = {
   /** Raw stored success-color overrides, or null when using the defaults. */
@@ -25,19 +26,29 @@ type UserSettingsContextValue = {
   /** One global switch: show every habit's name on its tile (overrides the
    * per-habit showName when on). */
   showAllTileNames: boolean;
+  /** Show 60-day badges and their status marks on habit tiles (default on). */
+  showTileBadges: boolean;
+  /** "MM-DD" or null. Its week is win-only for 60-day quests (lib/win-only). */
+  birthday: string | null;
   /** Persist (or clear, with null) the success-color overrides. */
   setSuccessColors: (next: SuccessColors | null) => void;
   setWinOnlyWeekends: (value: boolean) => void;
   setShowAllTileNames: (value: boolean) => void;
+  setShowTileBadges: (value: boolean) => void;
+  setBirthday: (value: string | null) => void;
 };
 
 const UserSettingsContext = createContext<UserSettingsContextValue>({
   successColors: null,
   winOnlyWeekends: false,
   showAllTileNames: false,
+  showTileBadges: true,
+  birthday: null,
   setSuccessColors: () => {},
   setWinOnlyWeekends: () => {},
   setShowAllTileNames: () => {},
+  setShowTileBadges: () => {},
+  setBirthday: () => {},
 });
 
 /**
@@ -55,12 +66,16 @@ export function UserSettingsProvider({ children }: { children: ReactNode }) {
   const [successColors, setSuccessColorsState] = useState<SuccessColors | null>(null);
   const [winOnlyWeekends, setWinOnlyWeekendsState] = useState(false);
   const [showAllTileNames, setShowAllTileNamesState] = useState(false);
+  const [showTileBadges, setShowTileBadgesState] = useState(true);
+  const [birthday, setBirthdayState] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) {
       setSuccessColorsState(null);
       setWinOnlyWeekendsState(false);
       setShowAllTileNamesState(false);
+      setShowTileBadgesState(true);
+      setBirthdayState(null);
       return;
     }
     return subscribeWithOfflineState(
@@ -70,6 +85,9 @@ export function UserSettingsProvider({ children }: { children: ReactNode }) {
         setSuccessColorsState(data?.successColors ? (data.successColors as SuccessColors) : null);
         setWinOnlyWeekendsState(data?.winOnlyWeekends === true);
         setShowAllTileNamesState(data?.showAllTileNames === true);
+        // Stored as an opt-out so a missing field means on.
+        setShowTileBadgesState(data?.hideTileBadges !== true);
+        setBirthdayState(parseBirthday(data?.birthday));
       },
       // Offline state is owned by OfflineProvider's own heartbeat on this doc.
       { setOffline: () => {} },
@@ -135,16 +153,50 @@ export function UserSettingsProvider({ children }: { children: ReactNode }) {
     [user, requireOnline, queueSettingWrite],
   );
 
+  const setShowTileBadges = useCallback(
+    (value: boolean) => {
+      if (!user || !requireOnline()) return;
+      setShowTileBadgesState(value);
+      queueSettingWrite({ hideTileBadges: !value });
+    },
+    [user, requireOnline, queueSettingWrite],
+  );
+
+  const setBirthday = useCallback(
+    (value: string | null) => {
+      if (!user || !requireOnline()) return;
+      const next = value ? parseBirthday(value) : null;
+      setBirthdayState(next);
+      queueSettingWrite({ birthday: next });
+    },
+    [user, requireOnline, queueSettingWrite],
+  );
+
   const value = useMemo(
     () => ({
       successColors,
       winOnlyWeekends,
       showAllTileNames,
+      showTileBadges,
+      birthday,
       setSuccessColors,
       setWinOnlyWeekends,
       setShowAllTileNames,
+      setShowTileBadges,
+      setBirthday,
     }),
-    [successColors, winOnlyWeekends, showAllTileNames, setSuccessColors, setWinOnlyWeekends, setShowAllTileNames],
+    [
+      successColors,
+      winOnlyWeekends,
+      showAllTileNames,
+      showTileBadges,
+      birthday,
+      setSuccessColors,
+      setWinOnlyWeekends,
+      setShowAllTileNames,
+      setShowTileBadges,
+      setBirthday,
+    ],
   );
 
   return <UserSettingsContext.Provider value={value}>{children}</UserSettingsContext.Provider>;

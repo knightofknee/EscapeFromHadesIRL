@@ -15,6 +15,8 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAppearance } from '@/hooks/use-appearance';
 import { useHomeScreen } from '@/hooks/use-home-screen';
 import { useFreshNoteReset, FRESH_NOTE_RESET_OPTIONS } from '@/hooks/use-fresh-note-reset';
+import { useUserSettingsContext } from '@/contexts/user-settings-context';
+import { BirthdayModal, formatBirthday } from '@/components/settings/birthday-modal';
 
 /** The app's page on waldgrave.com, with the store buttons. */
 const APP_PAGE = 'https://www.waldgrave.com/escapefromhadesirl';
@@ -33,6 +35,8 @@ export default function SettingsScreen() {
   const { homeScreen, setHomeScreen } = useHomeScreen();
   const { resetMinutes, setResetMinutes } = useFreshNoteReset();
   const { tags, setTagOrder } = useTags();
+  const { birthday, setBirthday } = useUserSettingsContext();
+  const [birthdayOpen, setBirthdayOpen] = useState(false);
 
   // Keyword Order: reorder the tag chips shown on the notes list (one
   // scrollable line — the first few are the always-visible ones). Local
@@ -240,6 +244,31 @@ export default function SettingsScreen() {
             {appearance === 'dark' && <ThemedText style={{ color: colors.tint }}>✓</ThemedText>}
           </Pressable>
         </View>
+
+        {/* 60-day quest: birthday week is win-only. Never prompted; it's
+            just here to be found. */}
+        <ThemedText type="defaultSemiBold" style={styles.sectionHeader}>
+          60-Day Quest
+        </ThemedText>
+        <View style={[styles.card, { backgroundColor: colors.tileBackground, borderColor: colors.tileBorder }]}>
+          <Pressable style={[styles.row, { flexDirection: 'column', alignItems: 'stretch' }]} onPress={() => setBirthdayOpen(true)} accessibilityRole="button">
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <ThemedText style={[styles.label, { flex: 1 }]}>Birthday</ThemedText>
+              <ThemedText style={styles.value}>{birthday ? formatBirthday(birthday) : 'Not set'}</ThemedText>
+              <ThemedText style={[styles.chevron, { marginLeft: 8 }]}>›</ThemedText>
+            </View>
+            <ThemedText style={[styles.value, { opacity: 0.5, fontSize: 12, lineHeight: 16, marginTop: 4 }]}>
+              Your birthday week is win-only for 60-day quests: a recorded day counts, a missed day is
+              ignored.
+            </ThemedText>
+          </Pressable>
+        </View>
+        <BirthdayModal
+          visible={birthdayOpen}
+          value={birthday}
+          onSave={setBirthday}
+          onClose={() => setBirthdayOpen(false)}
+        />
 
         {/* Data */}
         <ThemedText type="defaultSemiBold" style={styles.sectionHeader}>

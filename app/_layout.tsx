@@ -219,6 +219,21 @@ function RootNavigator() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- router is stable
   }, []);
 
+  // Tapping a chore notification (a local reminder, or a shared-chore push
+  // from the server) opens the Chores tab, once boot routing has landed.
+  const lastResponse = Notifications.useLastNotificationResponse();
+  const handledResponseRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!lastResponse || !user || bootRouting) return;
+    const kind = lastResponse.notification.request.content.data?.kind;
+    if (kind !== 'chore' && kind !== 'chore-reminder') return;
+    const id = lastResponse.notification.request.identifier;
+    if (handledResponseRef.current === id) return;
+    handledResponseRef.current = id;
+    router.navigate('/(tabs)/(chores)');
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- router is stable
+  }, [lastResponse, user, bootRouting]);
+
   if (isLoading) {
     return (
       <View style={loadingStyles.container}>
@@ -242,6 +257,8 @@ function RootNavigator() {
         <Stack.Screen name="tile-settings" options={{ presentation: 'modal', headerShown: false }} />
         <Stack.Screen name="chore-edit" options={{ presentation: 'modal', headerShown: false }} />
         <Stack.Screen name="chore-starter" options={{ presentation: 'modal', headerShown: false }} />
+        <Stack.Screen name="chore-friends" options={{ presentation: 'modal', headerShown: false }} />
+        <Stack.Screen name="friend/[code]" options={{ presentation: 'modal', headerShown: false }} />
         {/* Draws its own back-row header (same iOS 26 capsule reason as
             tile-settings) — without this entry it gets a default native bar
             titled "revive-habit" stacked above its own. */}

@@ -8,10 +8,15 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { addDays, parseDate } from '@/lib/date-utils';
 import { choreStatus, formatDue, formatFrequency, formatShortDate, formatSince, isTask } from '@/lib/chores';
 import { CHORE_STATE_COLORS, choreInkColor } from './chore-colors';
+import { useAuth } from '@/contexts/auth-context';
+import { useFriends } from '@/contexts/friends-context';
+import { isSharedChore, sharedNames } from '@/lib/chore-reminders';
 import type { Chore } from '@/types/chore';
 
-/** Days offered as tappable chips for logging (today and back). */
+/** Days offered for logging (today and back): today and yesterday as big buttons, the rest as chips. */
 const CHIP_DAYS = 60;
+/** Today and yesterday get their own buttons; the strip starts the day before. */
+const QUICK_DAYS = 2;
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 type Props = {
@@ -27,24 +32,32 @@ function shortDate(date: string): string {
   return parseDate(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+function weekdayDate(date: string): string {
+  return parseDate(date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
 /**
- * Detail sheet for one chore: a strip of recent days to log when it was
- * done (default today, any of the last 60 days) and tap again to remove,
- * so logging and undoing live on the same control. A one-time task shows its
- * details and one done / not done toggle instead.
+ * Detail sheet for one chore: log when it was done, and tap again to remove,
+ * so logging and undoing live on the same control. Today and yesterday are
+ * nearly every log, so they lead as big buttons (Today biggest, first), then
+ * older days (back to 60) as a chip strip in calendar order. A one-time task
+ * shows its details and one done / not done toggle instead.
  */
 export function ChoreSheet({ chore, today, onClose, onToggleDate, onEdit }: Props) {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
   const insets = useSafeAreaInsets();
+  const { nameOf } = useFriends();
+  const uid = useAuth().user?.uid ?? '';
 
-  // Oldest on the left, today on the right (calendar reading order); the
-  // strip opens scrolled to the end so today is in view.
+  // Calendar order: oldest on the left, 2 days ago on the right. The strip
+  // opens scrolled to the end so the most recent days are in view.
   const days = useMemo(
-    () => Array.from({ length: CHIP_DAYS }, (_, i) => addDays(today, i - (CHIP_DAYS - 1))),
+    () => Array.from({ length: CHIP_DAYS - QUICK_DAYS }, (_, i) => addDays(today, i - (CHIP_DAYS - 1))),
     [today],
   );
   const stripRef = useRef<ScrollView>(null);
+  const yesterday = addDays(today, -1);
   const doneSet = useMemo(() => new Set(chore?.completions ?? []), [chore]);
   const oldest = days[0];
   const older = (chore?.completions ?? []).filter((d) => d < oldest);
@@ -80,10 +93,19 @@ export function ChoreSheet({ chore, today, onClose, onToggleDate, onEdit }: Prop
             <ThemedText style={styles.sub}>
               {task
                 ? `One time · Due ${chore.dueDate ? formatShortDate(chore.dueDate, today) : 'anytime'}`
-                : `${formatFrequency(chore.frequencyDays)} · Last: ${
-                    status.daysSince == null ? 'never' : formatSince(status.daysSince).toLowerCase()
-                  }`}
+                : status.unscheduled
+                  ? formatFrequency(chore.frequencyDays) // the pill already says how long it's been
+                  : `${formatFrequency(chore.frequencyDays)} · Last: ${
+                      status.daysSince == null ? 'never' : formatSince(status.daysSince).toLowerCase()
+                    }`}
             </ThemedText>
+            {isSharedChore(chore) && (
+              <ThemedText style={styles.sub}>
+                {`Shared with ${sharedNames(chore, uid, nameOf)}${
+                  doneOn && chore.lastDoneBy ? ` · last done by ${chore.lastDoneBy === uid ? 'you' : nameOf(chore.lastDoneBy)}` : ''
+                }`}
+              </ThemedText>
+            )}
             {/* Under the details, not beside the name: the name gets the width. */}
             <View style={[styles.pill, { backgroundColor: `${stateColor}26` }]}>
               <ThemedText style={[styles.pillText, { color: choreInkColor(status.state, scheme) }]}>
@@ -115,6 +137,20 @@ export function ChoreSheet({ chore, today, onClose, onToggleDate, onEdit }: Prop
           <>
             <ThemedText style={styles.label}>When was it done?</ThemedText>
             <ThemedText style={styles.hint}>Tap a day to log it. Tap again to remove it.</ThemedText>
+            <QuickDay
+              label="Today"
+              date={today}
+              done={doneSet.has(today)}
+              size="large"
+              onPress={() => toggle(today)}
+            />
+            <QuickDay
+              label="Yesterday"
+              date={yesterday}
+              done={doneSet.has(yesterday)}
+              size="medium"
+              onPress={() => toggle(yesterday)}
+            />
             <ScrollView
               ref={stripRef}
               horizontal
@@ -122,11 +158,9 @@ export function ChoreSheet({ chore, today, onClose, onToggleDate, onEdit }: Prop
               contentContainerStyle={styles.chips}
               onContentSizeChange={() => stripRef.current?.scrollToEnd({ animated: false })}
             >
-              {days.map((date, i) => {
+              {days.map((date) => {
                 const done = doneSet.has(date);
                 const d = parseDate(date);
-                const back = CHIP_DAYS - 1 - i;
-                const top = back === 0 ? 'Today' : back === 1 ? 'Yest.' : WEEKDAYS[d.getDay()];
                 return (
                   <Pressable
                     key={date}
@@ -140,7 +174,7 @@ export function ChoreSheet({ chore, today, onClose, onToggleDate, onEdit }: Prop
                       done && { backgroundColor: CHORE_STATE_COLORS.fresh },
                     ]}
                   >
-                    <ThemedText style={[styles.chipTop, done && styles.chipTextDone]}>{top}</ThemedText>
+                    <ThemedText style={[styles.chipTop, done && styles.chipTextDone]}>{WEEKDAYS[d.getDay()]}</ThemedText>
                     <ThemedText style={[styles.chipDay, done && styles.chipTextDone]}>{d.getDate()}</ThemedText>
                     <ThemedText style={[styles.chipTop, done && styles.chipTextDone]}>
                       {done ? '✓' : d.toLocaleDateString(undefined, { month: 'short' })}
@@ -165,6 +199,7 @@ export function ChoreSheet({ chore, today, onClose, onToggleDate, onEdit }: Prop
                 ))}
               </View>
             )}
+
           </>
         )}
 
@@ -186,6 +221,51 @@ export function ChoreSheet({ chore, today, onClose, onToggleDate, onEdit }: Prop
         </View>
       </View>
     </Modal>
+  );
+}
+
+/**
+ * A full-width day button: outlined until logged, then filled green with a
+ * check (same language as the chips). Tapping a logged day removes it.
+ */
+function QuickDay({
+  label,
+  date,
+  done,
+  size,
+  onPress,
+}: {
+  label: string;
+  date: string;
+  done: boolean;
+  size: 'large' | 'medium';
+  onPress: () => void;
+}) {
+  const scheme = useColorScheme() ?? 'light';
+  const large = size === 'large';
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: done }}
+      accessibilityLabel={`${label}, ${shortDate(date)}${done ? ', done. Tap to remove' : ''}`}
+      style={({ pressed }) => [
+        styles.quick,
+        large ? styles.quickLarge : styles.quickMedium,
+        { borderColor: done ? CHORE_STATE_COLORS.fresh : Colors[scheme].tileBorder },
+        done && { backgroundColor: CHORE_STATE_COLORS.fresh },
+        pressed && styles.quickPressed,
+      ]}
+    >
+      <ThemedText
+        style={[large ? styles.quickLabelLarge : styles.quickLabelMedium, done && styles.chipTextDone]}
+      >
+        {done ? `✓ ${label}` : label}
+      </ThemedText>
+      <ThemedText style={[styles.quickSub, done && styles.chipTextDone]}>
+        {done ? 'Done · tap to remove' : weekdayDate(date)}
+      </ThemedText>
+    </Pressable>
   );
 }
 
@@ -223,6 +303,13 @@ const styles = StyleSheet.create({
   olderRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
   olderChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
   olderText: { fontSize: 12 },
+  quick: { borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  quickLarge: { minHeight: 76, borderWidth: 1.5, marginTop: 14 },
+  quickMedium: { minHeight: 56, borderWidth: 1.5, marginTop: 10 },
+  quickPressed: { opacity: 0.7 },
+  quickLabelMedium: { fontSize: 17, fontWeight: '700', lineHeight: 22 },
+  quickLabelLarge: { fontSize: 22, fontWeight: '800', lineHeight: 28 },
+  quickSub: { fontSize: 12, opacity: 0.6, lineHeight: 16 },
   actions: { flexDirection: 'row', gap: 12, marginTop: 16 },
   secondary: {
     flex: 1,

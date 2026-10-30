@@ -1,20 +1,21 @@
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import { parseDate } from '@/lib/date-utils';
-import { isTask } from '@/lib/chores';
+import { formatDate, parseDate } from '@/lib/date-utils';
+import { DEFAULT_REMINDER_TIME, reminderSlots, reminderTitle } from '@/functions/src/chore-schedule';
 import type { Chore } from '@/types/chore';
 
 /**
- * Due-date reminders for one-time tasks. Local notifications only (no
- * server): every phone schedules its own from the synced chore list, so a
- * reminder set on one phone also rings on the other once it opens the app.
- * `syncChoreReminders` is the single place that schedules or cancels them;
- * it diffs what should be scheduled against what is.
+ * Reminders for PERSONAL chores and tasks: local notifications, scheduled
+ * by each phone from the synced list, so a reminder set on one phone also
+ * rings on the other once it opens the app. A SHARED chore's reminders are
+ * sent by the server instead (functions/src), because only it knows at send
+ * time whether a friend already did it. `syncChoreReminders` is the single
+ * place that schedules or cancels local ones; it diffs what should be
+ * scheduled against what is.
  */
 
 export const CHORE_REMINDER_KIND = 'chore-reminder';
-/** Preset when a reminder is first switched on. */
-export const DEFAULT_REMINDER_TIME = '15:00';
+export { DEFAULT_REMINDER_TIME };
 const ANDROID_CHANNEL_ID = 'chore-reminders';
 let channelEnsured = false;
 
@@ -22,7 +23,7 @@ async function ensureChannel(): Promise<void> {
   if (Platform.OS !== 'android' || channelEnsured) return;
   try {
     await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
-      name: 'Task reminders',
+      name: 'Chore reminders',
       importance: Notifications.AndroidImportance.HIGH,
     });
     channelEnsured = true;
@@ -54,39 +55,66 @@ export function toReminderTime(date: Date): string {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
-/** When this task's reminder should fire, or null if it has none / is done. */
-export function reminderAt(chore: Chore): Date | null {
-  if (!isTask(chore) || chore.completions.length > 0 || !chore.dueDate) return null;
-  const t = parseReminderTime(chore.reminderTime);
-  if (!t) return null;
-  const at = parseDate(chore.dueDate);
-  at.setHours(t.hours, t.minutes, 0, 0);
-  return at;
+/** A chore other people can see and mark. */
+export function isSharedChore(chore: Pick<Chore, 'userId' | 'memberIds'>): boolean {
+  return (chore.memberIds ?? []).some((uid) => uid !== chore.userId);
 }
 
-const identifier = (choreId: string) => `${CHORE_REMINDER_KIND}-${choreId}`;
+/** Everyone on a shared chore except `uid`, by name: "Sam, Alex". */
+export function sharedNames(
+  chore: Pick<Chore, 'userId' | 'memberIds'>,
+  uid: string,
+  nameOf: (uid: string) => string,
+): string {
+  return Array.from(new Set([chore.userId, ...(chore.memberIds ?? [])]))
+    .filter((m) => m !== uid)
+    .map(nameOf)
+    .join(', ');
+}
+
+/** The local instants this person's reminders ring for a chore's current due date. */
+export function localReminders(chore: Chore, uid: string): { index: number; daysBefore: number; at: number }[] {
+  const createdDate = formatDate(new Date(chore.createdAt || Date.now()));
+  return reminderSlots(chore, uid, createdDate).flatMap((slot) => {
+    const t = parseReminderTime(slot.time);
+    if (!t) return [];
+    const at = parseDate(slot.date);
+    at.setHours(t.hours, t.minutes, 0, 0);
+    return [{ index: slot.index, daysBefore: slot.daysBefore, at: at.getTime() }];
+  });
+}
+
+const identifier = (choreId: string, index: number) => `${CHORE_REMINDER_KIND}-${choreId}-${index}`;
 
 /**
- * Make the scheduled reminders match `chores`: schedule missing or changed
- * ones, cancel ones for tasks that are done, deleted, or no longer have a
- * reminder. Never prompts for permission (the editor does that when the
- * user switches a reminder on); without permission it does nothing.
+ * Make the scheduled local reminders match `chores` for this user: schedule
+ * missing or changed ones, cancel ones for chores that are done, deleted,
+ * shared (the server takes over), or no longer have a reminder. Never
+ * prompts for permission (the editor does that when the user turns a
+ * reminder on); without permission it does nothing.
  */
-export async function syncChoreReminders(chores: Chore[], now = Date.now()): Promise<void> {
+export async function syncChoreReminders(chores: Chore[], uid: string, now = Date.now()): Promise<void> {
   try {
     const perm = await Notifications.getPermissionsAsync();
     const scheduled = await Notifications.getAllScheduledNotificationsAsync();
     const ours = scheduled.filter((n) => n.content.data?.kind === CHORE_REMINDER_KIND);
-    const wanted = new Map<string, { chore: Chore; at: number }>();
-    if (perm.status === 'granted') {
+    const wanted = new Map<string, { chore: Chore; at: number; title: string }>();
+    if (perm.status === 'granted' && uid) {
       for (const chore of chores) {
-        const at = reminderAt(chore);
-        if (at && at.getTime() > now) wanted.set(identifier(chore.id), { chore, at: at.getTime() });
+        if (isSharedChore(chore)) continue;
+        for (const r of localReminders(chore, uid)) {
+          if (r.at > now) wanted.set(identifier(chore.id, r.index), { chore, at: r.at, title: reminderTitle(r.daysBefore) });
+        }
       }
     }
     for (const n of ours) {
       const want = wanted.get(n.identifier);
-      if (want && n.content.data?.at === want.at && n.content.body === want.chore.name) {
+      if (
+        want &&
+        n.content.data?.at === want.at &&
+        n.content.body === choreBody(want.chore) &&
+        n.content.title === want.title
+      ) {
         wanted.delete(n.identifier); // already scheduled as wanted
       } else {
         await Notifications.cancelScheduledNotificationAsync(n.identifier);
@@ -94,12 +122,12 @@ export async function syncChoreReminders(chores: Chore[], now = Date.now()): Pro
     }
     if (wanted.size === 0) return;
     await ensureChannel();
-    for (const [id, { chore, at }] of wanted) {
+    for (const [id, { chore, at, title }] of wanted) {
       await Notifications.scheduleNotificationAsync({
         identifier: id,
         content: {
-          title: 'Task due today',
-          body: chore.name,
+          title,
+          body: choreBody(chore),
           sound: 'default',
           data: { kind: CHORE_REMINDER_KIND, choreId: chore.id, at },
         },
@@ -113,4 +141,8 @@ export async function syncChoreReminders(chores: Chore[], now = Date.now()): Pro
   } catch (e) {
     console.warn('[chore-reminders] sync failed', e);
   }
+}
+
+function choreBody(chore: Chore): string {
+  return `${chore.emoji ? `${chore.emoji} ` : ''}${chore.name}`;
 }

@@ -8,6 +8,7 @@ import {
   writeBatch,
   doc,
 } from './firestore';
+import { arrayRemove } from 'firebase/firestore';
 import { clearEarnedQuoteState } from '@/lib/earned-quotes';
 import { clearVocab } from '@/lib/word-suggestions';
 import { deleteAllMedia } from '@/lib/note-media';
@@ -16,8 +17,10 @@ import { deleteAllMedia } from '@/lib/note-media';
 // `userId` field. KEEP IN SYNC with the app's write paths — a collection
 // missing here is data orphaned forever after account deletion (a GDPR /
 // CCPA "right to erasure" problem, made worse by this being a Firebase
-// project shared with other apps). userSettings is handled separately
-// below because its doc id IS the uid (no `userId` field to query on).
+// project shared with other apps). userSettings, userProfiles and
+// pushTokens are handled separately below because their doc id IS the uid;
+// friendships (memberIds) and chores shared with the user have their own
+// sweep too.
 const USER_DATA_COLLECTIONS = [
   'habits',
   'records',
@@ -26,6 +29,8 @@ const USER_DATA_COLLECTIONS = [
   'quests',
   'vacationDays',
   'chores',
+  'habitQuests',
+  'friendInvites',
 ] as const;
 
 /**
@@ -91,9 +96,27 @@ export async function deleteAccountAndData(user: User): Promise<void> {
     }
   }
 
-  // userSettings doc id == the uid.
-  batch.delete(doc(db, 'userSettings', user.uid));
-  batchCount++;
+  // Chore friends: every friendship pair this user is in goes. Chores
+  // friends shared WITH this user stay theirs; this user just leaves them
+  // (the rules allow a member to remove only themself). Their own shared
+  // chores were deleted above with the rest of their chores.
+  const [friendships, sharedWithMe] = await Promise.all([
+    getDocs(query(collection(db, 'friendships'), where('memberIds', 'array-contains', user.uid))),
+    getDocs(query(collection(db, 'chores'), where('memberIds', 'array-contains', user.uid))),
+  ]);
+  for (const f of friendships.docs) await enqueueDelete(f.ref);
+  for (const c of sharedWithMe.docs) {
+    if (c.data().userId === user.uid) continue;
+    batch.update(c.ref, { memberIds: arrayRemove(user.uid) });
+    batchCount++;
+    if (batchCount === 500) await flush();
+  }
+
+  // Doc id == the uid: settings, the name friends saw, push tokens.
+  for (const col of ['userSettings', 'userProfiles', 'pushTokens']) {
+    batch.delete(doc(db, col, user.uid));
+    batchCount++;
+  }
   await flush();
 
   // Device-local per-uid stores that hold user-derived content: the notes

@@ -81,3 +81,10 @@ export function computeDayBreakdown(
   const denominator = active * MAX_TIER_WEIGHT;
   return { rows, ratio: denominator > 0 ? score / denominator : 0, active, done };
 }
+
+/** A heatmap cell's color: unrecorded at 0, else the recorded color with alpha 0x30 (barely) to 0xFF (perfect). */
+export function heatmapShade(ratio: number, recorded: string, unrecorded: string): string {
+  if (ratio === 0) return unrecorded;
+  const opacity = Math.round(0x30 + (0xff - 0x30) * Math.min(ratio, 1));
+  return `${recorded}${opacity.toString(16).padStart(2, '0').toUpperCase()}`;
+}

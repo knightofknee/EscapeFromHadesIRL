@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useCallback } from 'react';
-import { StyleSheet, ScrollView, Pressable, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, StyleSheet, ScrollView, Pressable, Switch, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
@@ -10,18 +10,22 @@ import { useHabitRecords, formatDate } from '@/hooks/use-habit-records';
 import { useTodayDate } from '@/hooks/use-today-date';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
-import { shouldSkipWeekend } from '@/lib/habit-scoring';
-import { computeDayBreakdown } from '@/lib/day-breakdown';
+import { useSuccessColors } from '@/hooks/use-success-colors';
+import { useAuth } from '@/contexts/auth-context';
+import { useRecordsContext } from '@/contexts/records-context';
+import { computeDayBreakdown, heatmapShade } from '@/lib/day-breakdown';
 import { DayBreakdownPopover, type PopoverAnchor } from '@/components/habits/day-breakdown-popover';
-import { formatStatValue } from '@/lib/habit-stats';
 import {
-  computeMonthHabitStats,
-  formatMinutes,
-  formatSteps,
-  type MonthAmount,
-  type MonthDayInput,
+  computeMonthRows,
+  formatMonthAmount,
+  monthCalendarWeeks,
+  monthCountDays,
 } from '@/lib/month-habit-stats';
+import { buildMonthReportHtml, monthReportLabel, monthReportRange, REPORT_WEEKS } from '@/lib/month-pdf';
+import { loadRecordsRange, mergeWithLive } from '@/lib/records-snapshot-store';
+import { nextFrame, renderPdf, sharePdf, type PdfDoc } from '@/lib/pdf-share';
 import { MonthSparkline } from '@/components/habits/month-sparkline';
+import { PdfPreview } from '@/components/ui/pdf-preview';
 import { readableTextOn } from '@/lib/contrast';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -43,7 +47,7 @@ export default function MonthViewScreen() {
 
   // todayDate keeps "this month" / "yesterday" live across midnight and
   // foreground returns — a bare new Date() here would freeze at mount.
-  const { todayDate } = useTodayDate();
+  const { todayDate, todayStr } = useTodayDate();
 
   const { year, month, daysInMonth, startDate, endDate, monthLabel } = useMemo(() => {
     const now = todayDate;
@@ -73,54 +77,20 @@ export default function MonthViewScreen() {
   }, [records]);
 
   // Build calendar grid
-  const calendarWeeks = useMemo(() => {
-    const firstDayOfWeek = (new Date(year, month, 1).getDay() + 6) % 7; // Monday=0
-    const weeks: (number | null)[][] = [];
-    let currentWeek: (number | null)[] = new Array(firstDayOfWeek).fill(null);
-
-    for (let d = 1; d <= daysInMonth; d++) {
-      currentWeek.push(d);
-      if (currentWeek.length === 7) {
-        weeks.push(currentWeek);
-        currentWeek = [];
-      }
-    }
-    if (currentWeek.length > 0) {
-      while (currentWeek.length < 7) currentWeek.push(null);
-      weeks.push(currentWeek);
-    }
-    return weeks;
-  }, [year, month, daysInMonth]);
+  const calendarWeeks = useMemo(() => monthCalendarWeeks(year, month), [year, month]);
 
   // For current month, only count up to yesterday (today still in progress).
-  // On the 1st this is 0 — no countable days yet, rendered as "—" rather
-  // than a false 0%.
-  const countDays = useMemo(() => {
-    const now = todayDate;
-    if (year === now.getFullYear() && month === now.getMonth()) {
-      return now.getDate() - 1;
-    }
-    return daysInMonth;
-  }, [year, month, daysInMonth, todayDate]);
+  const countDays = useMemo(() => monthCountDays(year, month, todayDate), [year, month, todayDate]);
 
   // Per-habit month stats (lib/month-habit-stats): completion rate, the
   // total/average/median trio for amount habits (value, steps, meditation
   // minutes), and the sparkline series. Vacation days and weekend
   // non-completions leave the month entirely; with the per-habit
   // weekend-skip rule each habit can have its own denominator.
-  const habitRates = useMemo(() => {
-    return habits.map((habit) => {
-      const days: MonthDayInput[] = [];
-      for (let d = 1; d <= countDays; d++) {
-        const dateStr = formatDate(new Date(year, month, d));
-        const record = recordIndex.get(`${habit.id}_${dateStr}`);
-        const excluded =
-          vacationSet.has(dateStr) || shouldSkipWeekend(habit, record, dateStr, winOnlyWeekends);
-        days.push({ day: d, record, excluded });
-      }
-      return { habit, ...computeMonthHabitStats(habit, days) };
-    });
-  }, [habits, recordIndex, year, month, countDays, vacationSet, winOnlyWeekends]);
+  const habitRates = useMemo(
+    () => computeMonthRows(habits, recordIndex, year, month, countDays, vacationSet, winOnlyWeekends),
+    [habits, recordIndex, year, month, countDays, vacationSet, winOnlyWeekends],
+  );
 
   // Heatmap data: each day's weighted habit score (see lib/day-breakdown
   // for the weights). Vacation days are skipped — they render as the
@@ -183,11 +153,76 @@ export default function MonthViewScreen() {
     : '';
 
   function heatmapColor(ratio: number): string {
-    if (ratio === 0) return colors.tileUnrecorded;
-    // Map ratio to hex opacity: 0.01 → 30, 1.0 → FF
-    const opacity = Math.round(0x30 + (0xFF - 0x30) * Math.min(ratio, 1));
-    return `${colors.tileRecorded}${opacity.toString(16).padStart(2, '0').toUpperCase()}`;
+    return heatmapShade(ratio, colors.tileRecorded, colors.tileUnrecorded);
   }
+
+  // --- Share as PDF (the export section at the bottom) ---
+  // The report can reach past this month (older months, the last 4 weeks),
+  // so it reads its own span instead of this screen's month of records.
+  const { user } = useAuth();
+  const { recordsMap, loadedRange } = useRecordsContext();
+  // The PDF wears the app's theme, so it looks like this screen.
+  const { colors: successColors } = useSuccessColors(colorScheme);
+  const [shareMonths, setShareMonths] = useState(1);
+  const [shareWeeks, setShareWeeks] = useState(true);
+  const [sharing, setSharing] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState<PdfDoc | null>(null);
+  const shareOpts = { year, month, monthCount: shareMonths, includeWeeks: shareWeeks };
+  const shareLabel = monthReportLabel(shareOpts);
+
+  const buildReport = async (): Promise<PdfDoc> => {
+    if (!user) throw new Error('signed out');
+    await nextFrame();
+    const range = monthReportRange(shareOpts, todayDate);
+    // No records exist past today; clamping lets the saved snapshot cover it.
+    const end = range.endDate > todayStr ? todayStr : range.endDate;
+    const fetched = await loadRecordsRange(user.uid, range.startDate, end);
+    const index = new Map<string, HabitRecord>();
+    for (const r of mergeWithLive(fetched, recordsMap.values(), loadedRange, range.startDate, end)) {
+      index.set(`${r.habitId}_${r.date}`, r);
+    }
+    const html = buildMonthReportHtml(
+      {
+        habits,
+        recordIndex: index,
+        vacationDays,
+        winOnlyWeekends,
+        successColors,
+        today: todayDate,
+        scheme: colorScheme,
+      },
+      shareOpts,
+    );
+    return renderPdf(html, `${shareLabel} Habits`);
+  };
+
+  const reportFailed = (e: unknown) => {
+    console.error('Month PDF failed:', e);
+    Alert.alert('Export failed', 'Could not make the PDF. Check your connection and try again.');
+  };
+
+  const handlePreview = async () => {
+    setPreviewDoc(null);
+    setPreviewOpen(true);
+    try {
+      setPreviewDoc(await buildReport());
+    } catch (e) {
+      setPreviewOpen(false);
+      reportFailed(e);
+    }
+  };
+
+  const handleShare = async (doc?: PdfDoc | null) => {
+    setSharing(true);
+    try {
+      await sharePdf(doc ?? (await buildReport()));
+    } catch (e) {
+      reportFailed(e);
+    } finally {
+      setSharing(false);
+    }
+  };
 
   // Hold until habits and this month's records arrive — otherwise the
   // heatmap renders all-empty and then pops to the real data. Offline before
@@ -314,11 +349,11 @@ export default function MonthViewScreen() {
                 </View>
                 {amount && (
                   <View style={styles.amountTrio}>
-                    <AmountStat label="avg/day" value={formatAmount(amount, amount.average)} />
+                    <AmountStat label="avg/day" value={formatMonthAmount(amount, amount.average)} />
                     {amount.showMedian && (
-                      <AmountStat label="median" value={formatAmount(amount, amount.median)} />
+                      <AmountStat label="median" value={formatMonthAmount(amount, amount.median)} />
                     )}
-                    <AmountStat label="total" value={formatAmount(amount, amount.total)} />
+                    <AmountStat label="total" value={formatMonthAmount(amount, amount.total)} />
                   </View>
                 )}
               </View>
@@ -332,6 +367,73 @@ export default function MonthViewScreen() {
               />
             </View>
           ))}
+
+          {/* Share: below everything else on the screen. */}
+          <ThemedText type="defaultSemiBold" style={styles.sectionTitle}>
+            Share
+          </ThemedText>
+          <View style={[styles.habitRow, styles.shareCard, { borderColor: colors.tileBorder }]}>
+            <View style={styles.shareRow}>
+              <ThemedText style={styles.shareLabel}>Months</ThemedText>
+              <View style={styles.chips}>
+                {SHARE_MONTH_CHOICES.map((n) => {
+                  const on = n === shareMonths;
+                  return (
+                    <Pressable
+                      key={n}
+                      onPress={() => setShareMonths(n)}
+                      style={[
+                        styles.chip,
+                        { borderColor: on ? colors.tint : colors.tileBorder },
+                        on && { backgroundColor: colors.tint },
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: on }}
+                      accessibilityLabel={`${n} ${n === 1 ? 'month' : 'months'}`}
+                    >
+                      <ThemedText style={[styles.chipText, on && styles.chipTextOn]}>{n}</ThemedText>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+            <View style={styles.shareRow}>
+              <View style={{ flex: 1 }}>
+                <ThemedText style={styles.shareLabel}>Last {REPORT_WEEKS} weeks</ThemedText>
+                <ThemedText style={styles.shareSub}>Adds the week view for those weeks</ThemedText>
+              </View>
+              <Switch
+                value={shareWeeks}
+                onValueChange={setShareWeeks}
+                trackColor={{ false: colorScheme === 'dark' ? '#5A5E66' : '#D8DBE0', true: colors.tint }}
+                ios_backgroundColor={colorScheme === 'dark' ? '#5A5E66' : '#D8DBE0'}
+                thumbColor="#fff"
+              />
+            </View>
+            <ThemedText style={styles.shareSub}>{shareLabel}</ThemedText>
+            <View style={styles.shareButtons}>
+              <Pressable
+                onPress={handlePreview}
+                disabled={sharing}
+                style={[styles.shareButton, { borderColor: colors.tileBorder }]}
+                accessibilityRole="button"
+              >
+                <ThemedText style={styles.shareButtonText}>Preview</ThemedText>
+              </Pressable>
+              <Pressable
+                onPress={() => handleShare()}
+                disabled={sharing}
+                style={[styles.shareButton, { borderColor: colors.tint, backgroundColor: colors.tint }]}
+                accessibilityRole="button"
+              >
+                {sharing && !previewOpen ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <ThemedText style={[styles.shareButtonText, styles.chipTextOn]}>Share PDF</ThemedText>
+                )}
+              </Pressable>
+            </View>
+          </View>
         </ScrollView>
         )}
         <DayBreakdownPopover
@@ -342,16 +444,20 @@ export default function MonthViewScreen() {
         />
       </View>
       </ThemedView>
+      <Modal visible={previewOpen} animationType="slide" onRequestClose={() => setPreviewOpen(false)}>
+        <PdfPreview
+          doc={previewDoc}
+          backLabel="Done"
+          onBack={() => setPreviewOpen(false)}
+          onShare={() => handleShare(previewDoc)}
+          sharing={sharing}
+        />
+      </Modal>
     </SafeAreaView>
   );
 }
 
-function formatAmount(amount: MonthAmount, n: number | null): string {
-  if (n == null) return '—';
-  if (amount.kind === 'minutes') return formatMinutes(n);
-  if (amount.kind === 'steps') return formatSteps(n);
-  return formatStatValue(n);
-}
+const SHARE_MONTH_CHOICES = [1, 3, 6, 12];
 
 function AmountStat({ label, value }: { label: string; value: string }) {
   return (
@@ -407,4 +513,15 @@ const styles = StyleSheet.create({
   amountStat: { alignItems: 'flex-end' },
   amountValue: { fontSize: 17, fontWeight: '700' },
   amountLabel: { fontSize: 11, opacity: 0.5, lineHeight: 14 },
+  shareCard: { gap: 12 },
+  shareRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  shareLabel: { fontSize: 14, fontWeight: '600' },
+  shareSub: { fontSize: 12, opacity: 0.5, lineHeight: 16 },
+  chips: { flexDirection: 'row', gap: 6 },
+  chip: { minWidth: 36, borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, alignItems: 'center' },
+  chipText: { fontSize: 13, fontWeight: '600' },
+  chipTextOn: { color: '#fff' },
+  shareButtons: { flexDirection: 'row', gap: 10 },
+  shareButton: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 10, alignItems: 'center' },
+  shareButtonText: { fontSize: 14, fontWeight: '600' },
 });

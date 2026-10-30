@@ -6,6 +6,8 @@ import { QuestsProvider } from '@/contexts/quests-context';
 import { RecordsProvider } from '@/contexts/records-context';
 import { NotesProvider } from '@/contexts/notes-context';
 import { ChoresProvider } from '@/contexts/chores-context';
+import { HabitQuestProvider } from '@/contexts/habit-quest-context';
+import { FriendsProvider } from '@/contexts/friends-context';
 
 /**
  * Mounts every shared per-user data listener exactly once, under the auth gate
@@ -26,7 +28,11 @@ export function AppDataProviders({ children }: { children: ReactNode }) {
           <QuestsProvider>
             <RecordsProvider>
               <NotesProvider>
-                <ChoresProvider>{children}</ChoresProvider>
+                <ChoresProvider>
+                  <HabitQuestProvider>
+                    <FriendsProvider>{children}</FriendsProvider>
+                  </HabitQuestProvider>
+                </ChoresProvider>
               </NotesProvider>
             </RecordsProvider>
           </QuestsProvider>

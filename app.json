@@ -2,7 +2,7 @@
   "expo": {
     "name": "Escape from Hades IRL",
     "slug": "EscapeFromHadesIRL",
-    "version": "1.0.22",
+    "version": "1.0.23",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "escapefromhadesirl",
@@ -12,6 +12,9 @@
       "bundleIdentifier": "com.briancarlisle.escapefromhadesirl",
       "appleTeamId": "R3H7M2M4F5",
       "usesAppleSignIn": true,
+      "associatedDomains": [
+        "applinks:www.waldgrave.com"
+      ],
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSHealthShareUsageDescription": "We read your step count from Apple Health to auto-record your Steps Counter habit. You can disable this any time in Settings → Health.",
@@ -30,7 +33,8 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "package": "com.briancarlisle.escapefromhadesirl",
-      "versionCode": 3,
+      "googleServicesFile": "./google-services.json",
+      "versionCode": 4,
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.health.READ_STEPS"

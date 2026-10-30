@@ -24,6 +24,7 @@ import { VacationRangeModal } from '@/components/habits/vacation-range-modal';
 import { VacationTile } from '@/components/habits/vacation-tile';
 import { VacationEditModal } from '@/components/habits/vacation-edit-modal';
 import { useAuth } from '@/contexts/auth-context';
+import { useUserSettingsContext } from '@/contexts/user-settings-context';
 import { useOfflineGuard } from '@/contexts/offline-context';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import { useStepsBackfill } from '@/hooks/use-steps-backfill';
@@ -34,6 +35,10 @@ import {
   deleteVacationDaysBulk,
 } from '@/lib/vacation-days';
 import { EarnedQuoteModal } from '@/components/habits/earned-quote-modal';
+import { QuestCelebration, type QuestBurst } from '@/components/habit-quest/quest-celebration';
+import { useHabitQuestProgress } from '@/hooks/use-habit-quest-progress';
+import { useHabitBadges } from '@/hooks/use-habit-badges';
+import { didParticipate } from '@/lib/habit-quest';
 import { useEarnedQuote } from '@/hooks/use-earned-quote';
 import { useHabits } from '@/hooks/use-habits';
 import { useTour, useTourTarget } from '@/contexts/tour-context';
@@ -281,6 +286,49 @@ export default function HabitsDayScreen() {
     [valueInputHabit, setValue],
   );
 
+  // --- 60-day quest: holo tile + a celebration each time the quest habit
+  // gets its day recorded. Fires on the not-recorded → recorded flip for the
+  // viewed day (a tap, a modal save, or a steps sync while you watch), never
+  // on load or a day swipe. A flip while a tile modal is open waits for it to
+  // close so the burst isn't hidden behind the sheet.
+  const { activeQuest, habit: questHabit, progress: questProgress } = useHabitQuestProgress();
+  const [questBurst, setQuestBurst] = useState<QuestBurst | null>(null);
+  const questDayDone =
+    questHabit != null && !isVacationDay && didParticipate(questHabit, records.get(questHabit.id));
+  const questDayInRange =
+    questProgress != null && !questProgress.isOver && activeQuest != null &&
+    viewedDate >= questProgress.attemptStart && viewedDate <= questProgress.endDate;
+  const tileModalOpen = valueInputHabit != null || meditationHabit != null || stepsHabit != null;
+  const questSeenRef = useRef<{ key: string; done: boolean } | null>(null);
+  const questPendingRef = useRef(false);
+  const questTileRef = useRef<View>(null);
+  const habitBadges = useHabitBadges();
+  const { showTileBadges } = useUserSettingsContext();
+  useEffect(() => {
+    const key = questHabit && questDayInRange && !recordsLoading ? `${questHabit.id}|${viewedDate}` : null;
+    const prev = questSeenRef.current;
+    questSeenRef.current = key ? { key, done: questDayDone } : null;
+    if (!key) {
+      questPendingRef.current = false;
+      return;
+    }
+    if (prev?.key === key && !prev.done && questDayDone) questPendingRef.current = true;
+    if (!questDayDone) questPendingRef.current = false;
+    if (questPendingRef.current && !tileModalOpen && isFocused && questProgress && questHabit) {
+      questPendingRef.current = false;
+      const burst = { key: Date.now(), doneCount: questProgress.doneCount, habitName: questHabit.name };
+      // Burst from the tile itself (window coords; the overlay converts).
+      const tile = questTileRef.current;
+      if (tile) {
+        tile.measureInWindow((x, y, w, h) =>
+          setQuestBurst({ ...burst, origin: { x: x + w / 2, y: y + h / 2 } }),
+        );
+      } else {
+        setQuestBurst(burst);
+      }
+    }
+  }, [questHabit, questDayInRange, recordsLoading, viewedDate, questDayDone, tileModalOpen, isFocused, questProgress]);
+
   // Hold the screen until habits, the first records snapshot, AND vacation
   // days arrive — so tiles never render "unrecorded" then pop to their real
   // states, and a vacation day shows its V tile directly instead of flashing
@@ -393,6 +441,10 @@ export default function HabitsDayScreen() {
                     records={records}
                     onTapHabit={handleTap}
                     onLongPressHabit={handleLongPress}
+                    holoHabitId={questHabit?.id ?? null}
+                    holoFlashKey={questBurst?.key ?? 0}
+                    holoTileRef={questTileRef}
+                    badges={showTileBadges ? habitBadges : undefined}
                   />
                 )}
 
@@ -553,6 +605,8 @@ export default function HabitsDayScreen() {
             onClose={() => setStepsHabit(null)}
           />
         )}
+
+        <QuestCelebration burst={questBurst} />
       </ThemedView>
     </SafeAreaView>
   );

@@ -1,6 +1,6 @@
 import { LEVEL_CHECKERS } from '@/lib/habit-scoring';
 import { rollingAvgLineColor } from '@/constants/grid';
-import { relativeLuminance } from '@/lib/contrast';
+import { esc, generatedDate, htmlDocument, pdfPalette, shadeForPrint, type PdfPalette, type PdfScheme } from '@/lib/pdf-html';
 import { computeStreak } from '@/lib/habit-streaks';
 import {
   computeRates,
@@ -18,8 +18,9 @@ import {
 import type { Habit, HabitRecord } from '@/types/habit';
 
 /**
- * HTML for the Stats PDF export: one row per habit, one column per success
- * level, each cell mirroring that level's stats-screen page (streaks,
+ * HTML for the Stats PDF export, laid out for a phone: each habit, then one
+ * card per success level stacked under it, each card mirroring that level's
+ * stats-screen page (streaks,
  * 7/30/90-day rates, 18-month monthly chart with rolling average). Uses the
  * exact same computations as the screen (lib/habit-stats.ts), so the PDF
  * always matches what the user sees.
@@ -27,26 +28,6 @@ import type { Habit, HabitRecord } from '@/types/habit';
 
 const LEVEL_NAMES = ['Basic', 'Goal', 'Ideal'] as const;
 const DISPLAY_MONTHS = STATS_DISPLAY_MONTHS;
-
-function esc(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-/** Darken a hex color toward black — light line colors need more ink on
- * white paper than they need on the app's cards. */
-function shadeForPrint(hex: string): string {
-  if (relativeLuminance(hex) <= 0.55) return hex;
-  const h = hex.replace('#', '');
-  const mix = (c: number) => Math.round(c * 0.72);
-  const r = mix(parseInt(h.slice(0, 2), 16));
-  const g = mix(parseInt(h.slice(2, 4), 16));
-  const b = mix(parseInt(h.slice(4, 6), 16));
-  return `#${[r, g, b].map((c) => c.toString(16).padStart(2, '0')).join('')}`;
-}
 
 /** Round up to a clean axis ceiling (1/2/2.5/5/10 × power of ten). */
 function niceCeil(n: number): number {
@@ -65,9 +46,10 @@ function chartSvg(
   color: string,
   avgColor: string,
   percent: boolean,
+  palette: PdfPalette,
 ): string {
-  const W = 320;
-  const H = 132;
+  const W = 360;
+  const H = 140;
   const PLOT = { left: 26, right: 6, top: 8, bottom: 18 };
   const plotW = W - PLOT.left - PLOT.right;
   const plotH = H - PLOT.top - PLOT.bottom;
@@ -84,8 +66,8 @@ function chartSvg(
     .map((val) => {
       const y = yFor(val);
       return (
-        `<line x1="${PLOT.left}" y1="${y}" x2="${W - PLOT.right}" y2="${y}" stroke="#E5E7EB" stroke-width="1"/>` +
-        `<text x="${PLOT.left - 4}" y="${y + 3}" font-size="7" fill="#9CA3AF" text-anchor="end">${axisLabel(val)}</text>`
+        `<line x1="${PLOT.left}" y1="${y}" x2="${W - PLOT.right}" y2="${y}" stroke="${palette.line}" stroke-width="1"/>` +
+        `<text x="${PLOT.left - 4}" y="${y + 3}" font-size="7" fill="${palette.faint}" text-anchor="end">${axisLabel(val)}</text>`
       );
     })
     .join('');
@@ -103,7 +85,7 @@ function chartSvg(
     .map((d, i) => {
       const month = parseInt(d.date.slice(5), 10) - 1;
       const x = PLOT.left + i * slot + slot / 2;
-      return `<text x="${x.toFixed(1)}" y="${H - 6}" font-size="7" fill="#6B7280" text-anchor="middle">${MONTH_LETTERS[month] ?? ''}</text>`;
+      return `<text x="${x.toFixed(1)}" y="${H - 6}" font-size="7" fill="${palette.muted}" text-anchor="middle">${MONTH_LETTERS[month] ?? ''}</text>`;
     })
     .join('');
 
@@ -136,7 +118,7 @@ function chartSvg(
       `<text x="${(lx - 5).toFixed(1)}" y="${tagY.toFixed(1)}" font-size="9" font-weight="700" fill="${avgColor}" text-anchor="end">${tagText}</text>`;
   }
 
-  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${grid}${bars}${avgLine}${labels}</svg>`;
+  return `<svg width="100%" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${grid}${bars}${avgLine}${labels}</svg>`;
 }
 
 export function buildStatsHtml(params: {
@@ -144,8 +126,11 @@ export function buildStatsHtml(params: {
   recordIndex: Map<string, HabitRecord>;
   vacationSet: Set<string>;
   winOnlyWeekends: boolean;
+  /** The app's theme: the PDF looks like the user's phone. */
+  scheme: PdfScheme;
 }): string {
-  const { habits, recordIndex, vacationSet, winOnlyWeekends } = params;
+  const { habits, recordIndex, vacationSet, winOnlyWeekends, scheme } = params;
+  const palette = pdfPalette(scheme);
 
   const habitRows = habits
     .map((habit) => {
@@ -177,7 +162,7 @@ export function buildStatsHtml(params: {
               <span>30d <b>${formatStatValue(avgs.month)}</b></span>
               <span>90d <b>${formatStatValue(avgs.quarter)}</b></span>
             </div>
-            ${chartSvg(monthly, habit.color, shadeForPrint(rollingAvgLineColor(habit.color)), false)}
+            ${chartSvg(monthly, habit.color, shadeForPrint(rollingAvgLineColor(habit.color), scheme), false, palette)}
           </div>`);
       } else {
         for (let level = 0; level < pageCount; level++) {
@@ -206,55 +191,39 @@ export function buildStatsHtml(params: {
               <span>30d <b>${rates.month}%</b></span>
               <span>90d <b>${rates.quarter}%</b></span>
             </div>
-            ${chartSvg(monthly, habit.color, shadeForPrint(rollingAvgLineColor(habit.color)), true)}
+            ${chartSvg(monthly, habit.color, shadeForPrint(rollingAvgLineColor(habit.color), scheme), true, palette)}
           </div>`);
         }
       }
-      // Pad to 3 columns so cells align into a grid across habit rows.
-      while (cells.length < 3) cells.push('<div class="cell empty"></div>');
-
+      // The habit's name glued to its first card: iOS ignores break-after.
       return `
         <div class="habit">
-          <div class="habit-header">
-            <span class="abbr" style="color:${habit.color}">${esc(habit.icon ?? habit.abbreviation)}</span>
-            <span class="name">${esc(habit.name)}</span>
+          <div class="u">
+            <div class="habit-header">
+              <span class="abbr" style="color:${habit.color}">${esc(habit.icon ?? habit.abbreviation)}</span>
+              <span class="name">${esc(habit.name)}</span>
+            </div>
+            ${cells[0] ?? ''}
           </div>
-          <div class="cols">${cells.join('')}</div>
+          ${cells.slice(1).map((cell) => `<div class="u">${cell}</div>`).join('')}
         </div>`;
     })
     .join('');
 
-  const generated = new Date().toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
-
-  return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8" />
-<style>
-  @page { margin: 24px; }
-  body { font-family: -apple-system, Helvetica, Arial, sans-serif; color: #1F2937; margin: 0; }
-  h1 { font-size: 18px; margin: 0 0 2px; }
-  .meta { font-size: 10px; color: #6B7280; margin-bottom: 14px; }
-  .habit { break-inside: avoid; page-break-inside: avoid; margin-bottom: 16px; }
-  .habit-header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
-  .abbr { font-size: 16px; font-weight: 800; }
-  .name { font-size: 13px; font-weight: 600; }
-  .cols { display: flex; gap: 10px; }
-  .cell { flex: 1; border: 1px solid #E5E7EB; border-radius: 8px; padding: 8px 8px 4px; }
-  .cell.empty { border: none; }
-  .level { font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #6B7280; margin-bottom: 4px; }
-  .nums { display: flex; gap: 10px; font-size: 9px; color: #4B5563; margin-bottom: 2px; }
-  .nums b { font-size: 11px; color: #111827; }
-</style>
-</head>
-<body>
-  <h1>Habit Statistics</h1>
-  <div class="meta">Generated ${generated} · ${DISPLAY_MONTHS}-month rolling view · bars = monthly completion (avg/day for value habits), line = rolling average</div>
-  ${habitRows}
-</body>
-</html>`;
+  return htmlDocument(
+    `
+  .habit > .u:first-child { padding-top: 22px; }
+  .habits > .habit:first-child > .u:first-child { padding-top: 0; }
+  .habit-header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; break-after: avoid; page-break-after: avoid; }
+  .abbr { font-size: 20px; font-weight: 800; }
+  .name { font-size: 16px; font-weight: 600; }
+  .cell { border: 1px solid var(--line); background: ${palette.app.tileBackground}; border-radius: 10px; padding: 10px 10px 6px; }
+  .level { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+  .nums { display: flex; gap: 14px; font-size: 11px; color: var(--mid); margin-bottom: 4px; }
+  .nums b { font-size: 14px; color: var(--strong); }`,
+    `<h1>Habit Statistics</h1>
+  <div class="meta">Generated ${generatedDate()} · ${DISPLAY_MONTHS}-month rolling view<br/>Bars are monthly completion (avg per day for value habits), the line is the rolling average.</div>
+  <div class="habits">${habitRows}</div>`,
+    palette,
+  );
 }

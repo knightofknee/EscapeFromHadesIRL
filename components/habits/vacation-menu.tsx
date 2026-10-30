@@ -3,6 +3,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
+import { useUserSettingsContext } from '@/contexts/user-settings-context';
 
 type VacationMenuProps = {
   visible: boolean;
@@ -50,6 +51,8 @@ export function VacationMenu({
   // thumb floating on nothing. Same fix as the Settings screen switch.
   const offTrack = colorScheme === 'dark' ? '#5A5E66' : '#D8DBE0';
   const { winOnlyWeekends, setWinOnlyWeekends } = useWinOnlyWeekends();
+  const { showTileBadges, setShowTileBadges } = useUserSettingsContext();
+
   const hasBlock = blockSize > 1;
 
   return (
@@ -153,6 +156,24 @@ export function VacationMenu({
             On Saturdays and Sundays, only habits you complete count toward your
             stats. Anything left unmarked is skipped, like a mini-vacation, so
             you can win on the weekend but never lose.
+          </ThemedText>
+
+          <View style={styles.divider} />
+
+          <View style={styles.toggleRow}>
+            <ThemedText style={styles.toggleLabel}>Badges on tiles</ThemedText>
+            <Switch
+              value={showTileBadges}
+              onValueChange={setShowTileBadges}
+              trackColor={{ false: offTrack, true: blue }}
+              ios_backgroundColor={offTrack}
+              thumbColor="#fff"
+            />
+          </View>
+
+          <ThemedText style={styles.instructions}>
+            Shows each 60-day badge and how it&apos;s holding up in the corner of its habit&apos;s
+            tile. Your badges stay on the Quests tab either way.
           </ThemedText>
         </Pressable>
       </Pressable>

@@ -76,8 +76,79 @@ service cloud.firestore {
       allow update: if ownsExisting() && ownsIncoming();
     }
 
-    // Recurring chores (time since last done). Completion dates live on the doc.
+    // Chores (recurring + one-time). A chore can be SHARED: memberIds lists
+    // everyone who can see and mark it (owner included). Members can update
+    // anything but the owner and the member list; only the owner changes who
+    // it's shared with, except that a member may remove themself (leave).
+    // Only the owner deletes. Owner queries filter on userId, friends query
+    // memberIds array-contains uid; each satisfies one branch of isChoreMember.
     match /chores/{docId} {
+      function memberList(d) { return d.get('memberIds', []); }
+      function isChoreMember(d) {
+        return signedIn() && (d.userId == request.auth.uid || request.auth.uid in memberList(d));
+      }
+      function validMembers(d) { return memberList(d) is list && memberList(d).size() <= 10; }
+      function ownerEdit() {
+        return resource.data.userId == request.auth.uid && validMembers(request.resource.data);
+      }
+      function membersUnchanged() {
+        return memberList(request.resource.data) == memberList(resource.data);
+      }
+      function leaving() {
+        return request.auth.uid != resource.data.userId
+          && memberList(request.resource.data) == memberList(resource.data).removeAll([request.auth.uid]);
+      }
+      allow read: if isChoreMember(resource.data);
+      allow create: if ownsIncoming() && validMembers(request.resource.data);
+      allow update: if isChoreMember(resource.data)
+                    && request.resource.data.userId == resource.data.userId
+                    && (ownerEdit() || membersUnchanged() || leaving());
+      allow delete: if ownsExisting();
+    }
+
+    // Chore friends. An invite is a random code the inviter shares (link or
+    // typed). Anyone signed in can GET one by its code (it's the secret);
+    // nobody can list others'. A friendship is a pair doc whose id is the two
+    // uids sorted and joined, so a pair can't be duplicated, and it can only
+    // be created against a live invite from the other person.
+    match /friendInvites/{code} {
+      allow get: if signedIn();
+      allow list, delete: if ownsExisting();
+      allow create: if ownsIncoming() && code.size() >= 8;
+    }
+
+    match /friendships/{pairId} {
+      function validFriendship() {
+        let d = request.resource.data;
+        let invite = get(/databases/$(database)/documents/friendInvites/$(d.inviteCode)).data;
+        return d.memberIds is list
+          && d.memberIds.size() == 2
+          && d.memberIds[0] < d.memberIds[1]
+          && pairId == d.memberIds[0] + '_' + d.memberIds[1]
+          && request.auth.uid in d.memberIds
+          && invite.userId in d.memberIds
+          && invite.userId != request.auth.uid
+          && invite.expiresAt > request.time.toMillis();
+      }
+      allow read, delete: if signedIn() && request.auth.uid in resource.data.memberIds;
+      allow create: if signedIn() && validFriendship();
+    }
+
+    // The name friends see. Readable by anyone signed in (it's only a name);
+    // doc id == uid, written only by its owner.
+    match /userProfiles/{uid} {
+      allow read: if signedIn();
+      allow write: if signedIn() && request.auth.uid == uid;
+    }
+
+    // This user's Expo push tokens + time zone, for shared-chore pushes.
+    // Owner only; the Cloud Functions read them with admin access.
+    match /pushTokens/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    // The 60-day quest (one habit at a time). Separate from the scored quests above.
+    match /habitQuests/{docId} {
       allow read, delete: if ownsExisting();
       allow create: if ownsIncoming();
       allow update: if ownsExisting() && ownsIncoming();

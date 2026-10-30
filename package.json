@@ -15,6 +15,7 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/datetimepicker": "9.1.0",
     "@react-native-google-signin/google-signin": "^16.1.5",
+    "@react-native-masked-view/masked-view": "0.3.2",
     "@shopify/react-native-skia": "2.6.2",
     "expo": "~56.0.17",
     "expo-apple-authentication": "~56.0.4",
@@ -60,6 +61,7 @@
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
     "react-native-svg": "15.15.4",
+    "react-native-webview": "13.16.1",
     "react-native-worklets": "0.8.3",
     "react-native-zip-archive": "^9.5.3",
     "victory-native": "^41.26.0"

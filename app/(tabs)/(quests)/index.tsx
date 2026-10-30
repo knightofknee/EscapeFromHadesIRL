@@ -1,4 +1,6 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import Animated, { Easing, FadeIn, FadeOut } from 'react-native-reanimated';
+import Svg, { Path } from 'react-native-svg';
 import { ActivityIndicator, ScrollView, View, Pressable, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from 'expo-router';
@@ -6,7 +8,13 @@ import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { QuestCard } from '@/components/quests/quest-card';
-import { ScoreBar, flameColor } from '@/components/quests/score-bar';
+import {
+  HoloActionButton,
+  SixtyDayQuest,
+  type StickyBegin,
+  type StickyBeginApi,
+} from '@/components/habit-quest/sixty-day-quest';
+import { useHabitQuest } from '@/contexts/habit-quest-context';
 import { useQuests } from '@/hooks/use-quests';
 import { useHabits } from '@/hooks/use-habits';
 import { useQuestScores, questPointValue } from '@/hooks/use-quest-scores';
@@ -35,6 +43,48 @@ export default function QuestsScreen() {
   const { records, isLoading: recordsLoading } = useRecordsSnapshot(startDate, endDate, isFocused);
   const { dateSet: vacationSet } = useVacationDays();
   const { winOnlyWeekends } = useWinOnlyWeekends();
+  const { isLoading: habitQuestLoading } = useHabitQuest();
+
+  // Lets the 60-day section bring something back on screen (its Read more
+  // pill after Show less collapses the rules). Does nothing when the view is
+  // already on screen; otherwise scrolls so it sits `offset` below the top.
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollYRef = useRef(0);
+  const scrollFrameRef = useRef({ top: 0, height: 0 });
+  const revealInScroll = useCallback((target: View | null, offset: number) => {
+    target?.measureInWindow((_x, y, _w, h) => {
+      const { top, height } = scrollFrameRef.current;
+      const delta = y - top;
+      if (delta >= 0 && delta + h <= height) return;
+      scrollRef.current?.scrollTo({ y: Math.max(0, scrollYRef.current + delta - offset), animated: true });
+    });
+  }, []);
+
+  // The 60-day Begin button sticks to the bottom of the screen while a habit
+  // is picked and the real button is scrolled out of view.
+  const [sticky, setSticky] = useState<StickyBegin | null>(null);
+  const [challengesOpen, setChallengesOpen] = useState(false);
+  const stickyRef = useRef<StickyBegin | null>(null);
+  const [realBeginVisible, setRealBeginVisible] = useState(true);
+  const checkRealBegin = useCallback(() => {
+    const b = stickyRef.current;
+    if (!b) return;
+    const { height } = scrollFrameRef.current;
+    const top = scrollYRef.current;
+    setRealBeginVisible(b.contentY >= top && b.contentY + b.height <= top + height);
+  }, []);
+  const stickyBegin = useMemo<StickyBeginApi>(
+    () => ({
+      measure: (view, done) =>
+        view.measureInWindow((_x, y, _w, h) => done(y - scrollFrameRef.current.top + scrollYRef.current, h)),
+      set: (b) => {
+        stickyRef.current = b;
+        setSticky(b);
+        checkRealBegin();
+      },
+    }),
+    [checkRealBegin],
+  );
 
   // All-habit challenges are ALWAYS-ON: no Begin, no quest doc — each is a
   // synthesized virtual quest that tracks every habit automatically. Any
@@ -110,7 +160,7 @@ export default function QuestsScreen() {
   // Hold until quests and the score history arrive — otherwise started
   // quests flash as "Begin" stubs and the run score flashes 0. Keeps the
   // quests theme (dark background) rather than the themed LoadingScreen.
-  if (questsLoading || recordsLoading) {
+  if (questsLoading || recordsLoading || habitQuestLoading) {
     return (
       <View style={[styles.root, styles.loadingRoot, { paddingTop: insets.top + 8 }]}>
         {isFocused && <StatusBar style="light" />}
@@ -130,13 +180,6 @@ export default function QuestsScreen() {
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <ThemedText style={styles.headerTitle}>QUESTS</ThemedText>
-          <ThemedText style={styles.headerSub}>Current run</ThemedText>
-        </View>
-        <View style={styles.headerRight}>
-          <ThemedText style={[styles.runScore, { color: flameColor(scores.runPct) }]}>
-            {scores.runScore}
-          </ThemedText>
-          <ThemedText style={styles.runScoreLabel}>RUN SCORE · MAX {scores.totalAvailable}</ThemedText>
         </View>
         <Pressable
           style={styles.addButton}
@@ -146,15 +189,54 @@ export default function QuestsScreen() {
         </Pressable>
       </View>
 
-      <ScoreBar score={scores.runPct} showLabel={false} height={6} />
+      <ScrollView
+        ref={scrollRef}
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        onLayout={(e) => {
+          // The screen's root starts at the top of the window, so this is the
+          // scroll view's window position too.
+          scrollFrameRef.current = { top: e.nativeEvent.layout.y, height: e.nativeEvent.layout.height };
+        }}
+        onScroll={(e) => {
+          scrollYRef.current = e.nativeEvent.contentOffset.y;
+          checkRealBegin();
+        }}
+        scrollEventThrottle={32}
+      >
+        {/* THE 60-DAY QUEST: one habit, 60 days. Its own feature (own
+            collection, no run score), sitting above everything else here. */}
+        <SixtyDayQuest revealInScroll={revealInScroll} stickyBegin={stickyBegin} />
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-        {/* CHALLENGES — the quests you choose. Started ones show their score;
+        {/* CHALLENGES, ETERNAL TRIALS and YOUR PACTS: the older quests, folded
+            behind one header (collapsed by default) so the 60-day quest leads
+            and the page stays short. */}
+        <Pressable
+          style={styles.foldHeader}
+          onPress={() => setChallengesOpen((v) => !v)}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: challengesOpen }}
+          accessibilityLabel={challengesOpen ? 'Hide challenges' : 'Show challenges'}
+          hitSlop={6}
+        >
+          <ThemedText style={[styles.foldTitle, { color: QuestColors.flameMid }]}>CHALLENGES</ThemedText>
+          <Svg width={14} height={14} viewBox="0 0 10 10" style={challengesOpen ? styles.chevronUp : undefined}>
+            <Path
+              d="M2 3.5 L5 6.5 L8 3.5"
+              stroke={QuestColors.flameMid}
+              strokeWidth={1.6}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              fill="none"
+            />
+          </Svg>
+        </Pressable>
+
+        {challengesOpen && (
+        <>
+        {/* CHALLENGES: the quests you choose. Started ones show their score;
             the rest show a "Begin" stub that links a habit + starts them. */}
         <View style={styles.section}>
-          <ThemedText style={[styles.sectionHeader, { color: QuestColors.flameMid }]}>
-            CHALLENGES
-          </ThemedText>
           <ThemedText style={styles.sectionSub}>
             Ready-made quests. Begin one and link a habit.
           </ThemedText>
@@ -250,7 +332,19 @@ export default function QuestsScreen() {
             ))
           )}
         </View>
+        </>
+        )}
       </ScrollView>
+
+      {sticky && !realBeginVisible && (
+        <Animated.View
+          style={styles.stickyBegin}
+          entering={FadeIn.duration(180).easing(Easing.out(Easing.cubic))}
+          exiting={FadeOut.duration(140)}
+        >
+          <HoloActionButton label={sticky.label} onPress={sticky.onPress} />
+        </Animated.View>
+      )}
     </View>
   );
 }
@@ -318,25 +412,6 @@ const styles = StyleSheet.create({
     color: QuestColors.text,
     letterSpacing: 2,
   },
-  headerSub: {
-    fontSize: 11,
-    color: QuestColors.textDim,
-    letterSpacing: 1,
-  },
-  headerRight: {
-    alignItems: 'flex-end',
-  },
-  runScore: {
-    fontSize: 36,
-    fontWeight: '900',
-    fontVariant: ['tabular-nums'],
-    lineHeight: 38,
-  },
-  runScoreLabel: {
-    fontSize: 9,
-    color: QuestColors.textDim,
-    letterSpacing: 1.5,
-  },
   addButton: {
     backgroundColor: QuestColors.surface,
     borderWidth: 1,
@@ -350,6 +425,33 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: QuestColors.flameMid,
     letterSpacing: 1,
+  },
+  // Floats over the list, just above the tab bar.
+  stickyBegin: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 12,
+    borderRadius: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 8,
+  },
+  foldHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+  },
+  foldTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+  },
+  chevronUp: {
+    transform: [{ rotate: '180deg' }],
   },
   scroll: {
     flex: 1,

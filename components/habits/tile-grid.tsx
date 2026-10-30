@@ -1,10 +1,13 @@
-import { useState, useCallback, useMemo, memo } from 'react';
+import { useState, useCallback, useMemo, memo, type RefObject } from 'react';
 import { StyleSheet, View, Pressable, Platform, LayoutChangeEvent } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '@/constants/theme';
 import { GRID } from '@/constants/grid';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { TileContent } from './tile-content';
+import { HoloFoil } from '@/components/habit-quest/holo-foil';
+import { TileBadges } from '@/components/habit-quest/tile-badges';
+import type { HabitBadge } from '@/hooks/use-habit-badges';
 import { isRecordCompleted } from '@/lib/habit-scoring';
 import type { Habit, HabitRecord } from '@/types/habit';
 
@@ -13,6 +16,14 @@ type TileGridProps = {
   records: Map<string, HabitRecord>;
   onTapHabit: (habitId: string) => void;
   onLongPressHabit: (habitId: string) => void;
+  /** The 60-day quest habit: its tile wears the holo foil. */
+  holoHabitId?: string | null;
+  /** Bump to flash the holo tile (the per-day quest celebration). */
+  holoFlashKey?: number;
+  /** Attached to the holo tile, so the celebration can burst from where it sits. */
+  holoTileRef?: RefObject<View | null>;
+  /** 60-day medals and remission marks, by habit id. */
+  badges?: Map<string, HabitBadge>;
 };
 
 function sizeWeight(size: number): number {
@@ -26,6 +37,10 @@ const MeasuredTile = memo(function MeasuredTile({
   colors,
   onTap,
   onLongPress,
+  holo,
+  holoFlashKey,
+  holoTileRef,
+  badge,
 }: {
   habit: Habit;
   record?: HabitRecord;
@@ -33,6 +48,10 @@ const MeasuredTile = memo(function MeasuredTile({
   colors: (typeof Colors)['light'];
   onTap: (id: string) => void;
   onLongPress: (id: string) => void;
+  holo: boolean;
+  holoFlashKey: number;
+  holoTileRef?: RefObject<View | null>;
+  badge?: HabitBadge;
 }) {
   const [tileW, setTileW] = useState(0);
   const [tileH, setTileH] = useState(0);
@@ -48,6 +67,7 @@ const MeasuredTile = memo(function MeasuredTile({
 
   return (
     <Pressable
+      ref={holo ? holoTileRef : undefined}
       style={[
         styles.tile,
         {
@@ -71,11 +91,24 @@ const MeasuredTile = memo(function MeasuredTile({
       {tileW > 0 && tileH > 0 && (
         <TileContent habit={habit} record={record} tileWidth={tileW} tileHeight={tileH} />
       )}
+      {holo && <HoloFoil variant="tile" flashKey={holoFlashKey} />}
+      {badge && tileW > 0 && (
+        <TileBadges badge={badge} size={Math.min(tileW, tileH)} bg={colors.tileBackground} />
+      )}
     </Pressable>
   );
 });
 
-export function TileGrid({ habits, records, onTapHabit, onLongPressHabit }: TileGridProps) {
+export function TileGrid({
+  habits,
+  records,
+  onTapHabit,
+  onLongPressHabit,
+  holoHabitId,
+  holoFlashKey = 0,
+  holoTileRef,
+  badges,
+}: TileGridProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
@@ -121,6 +154,10 @@ export function TileGrid({ habits, records, onTapHabit, onLongPressHabit }: Tile
                 colors={colors}
                 onTap={onTapHabit}
                 onLongPress={onLongPressHabit}
+                holo={habit.id === holoHabitId}
+                holoFlashKey={habit.id === holoHabitId ? holoFlashKey : 0}
+                holoTileRef={holoTileRef}
+                badge={badges?.get(habit.id)}
               />
             ))}
           </View>
