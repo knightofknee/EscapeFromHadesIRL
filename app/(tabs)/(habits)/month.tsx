@@ -6,7 +6,7 @@ import { ThemedText } from '@/components/themed-text';
 import { LoadingScreen } from '@/components/ui/loading-screen';
 import { ThemedView } from '@/components/themed-view';
 import { useHabits } from '@/hooks/use-habits';
-import { useHabitRecords, formatDate } from '@/hooks/use-habit-records';
+import { useHabitRecords } from '@/hooks/use-habit-records';
 import { useTodayDate } from '@/hooks/use-today-date';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
@@ -16,10 +16,11 @@ import { useRecordsContext } from '@/contexts/records-context';
 import { computeDayBreakdown, heatmapShade } from '@/lib/day-breakdown';
 import { DayBreakdownPopover, type PopoverAnchor } from '@/components/habits/day-breakdown-popover';
 import {
-  computeMonthRows,
+  computeRangeRows,
   formatMonthAmount,
-  monthCalendarWeeks,
-  monthCountDays,
+  maxMonthPage,
+  monthPage,
+  rangeCalendarWeeks,
 } from '@/lib/month-habit-stats';
 import { buildMonthReportHtml, monthReportLabel, monthReportRange, REPORT_WEEKS } from '@/lib/month-pdf';
 import { loadRecordsRange, mergeWithLive } from '@/lib/records-snapshot-store';
@@ -27,15 +28,11 @@ import { nextFrame, renderPdf, sharePdf, type PdfDoc } from '@/lib/pdf-share';
 import { MonthSparkline } from '@/components/habits/month-sparkline';
 import { PdfPreview } from '@/components/ui/pdf-preview';
 import { readableTextOn } from '@/lib/contrast';
+import { parseDate } from '@/lib/date-utils';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { HabitRecord } from '@/types/habit';
 
-
-const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
 
 export default function MonthViewScreen() {
   const { habits, isLoading: habitsLoading, isOffline, hasLoaded } = useHabits();
@@ -49,21 +46,15 @@ export default function MonthViewScreen() {
   // foreground returns — a bare new Date() here would freeze at mount.
   const { todayDate, todayStr } = useTodayDate();
 
-  const { year, month, daysInMonth, startDate, endDate, monthLabel } = useMemo(() => {
-    const now = todayDate;
-    const target = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
-    const y = target.getFullYear();
-    const m = target.getMonth();
-    const dim = new Date(y, m + 1, 0).getDate();
-    return {
-      year: y,
-      month: m,
-      daysInMonth: dim,
-      startDate: formatDate(new Date(y, m, 1)),
-      endDate: formatDate(new Date(y, m, dim)),
-      monthLabel: `${MONTH_NAMES[m]} ${y}`,
-    };
-  }, [monthOffset, todayDate]);
+  // Page 0 is the past month ending today; forward of it is only the
+  // current month so far (lib/month-habit-stats monthPage). Nothing lies
+  // past that, so the forward button disappears there instead of paging
+  // into months that haven't happened.
+  const maxOffset = maxMonthPage(todayDate);
+  const page = useMemo(() => monthPage(Math.min(monthOffset, maxOffset), todayDate), [monthOffset, maxOffset, todayDate]);
+  const { year, month, startDate, endDate, dates, countDates, label: monthLabel } = page;
+  const dayCount = dates.length;
+  const canGoForward = monthOffset < maxOffset;
 
   const { records, isLoading: recordsLoading } = useHabitRecords(startDate, endDate);
 
@@ -77,10 +68,7 @@ export default function MonthViewScreen() {
   }, [records]);
 
   // Build calendar grid
-  const calendarWeeks = useMemo(() => monthCalendarWeeks(year, month), [year, month]);
-
-  // For current month, only count up to yesterday (today still in progress).
-  const countDays = useMemo(() => monthCountDays(year, month, todayDate), [year, month, todayDate]);
+  const calendarWeeks = useMemo(() => rangeCalendarWeeks(dates), [dates]);
 
   // Per-habit month stats (lib/month-habit-stats): completion rate, the
   // total/average/median trio for amount habits (value, steps, meditation
@@ -88,32 +76,32 @@ export default function MonthViewScreen() {
   // non-completions leave the month entirely; with the per-habit
   // weekend-skip rule each habit can have its own denominator.
   const habitRates = useMemo(
-    () => computeMonthRows(habits, recordIndex, year, month, countDays, vacationSet, winOnlyWeekends),
-    [habits, recordIndex, year, month, countDays, vacationSet, winOnlyWeekends],
+    () => computeRangeRows(habits, recordIndex, countDates, vacationSet, winOnlyWeekends),
+    [habits, recordIndex, countDates, vacationSet, winOnlyWeekends],
   );
 
   // Heatmap data: each day's weighted habit score (see lib/day-breakdown
   // for the weights). Vacation days are skipped — they render as the
   // vacation tile, not part of the heatmap.
   const breakdownFor = useCallback(
-    (day: number) =>
+    (dateStr: string) =>
       computeDayBreakdown(
         habits,
-        formatDate(new Date(year, month, day)),
-        (habit) => recordIndex.get(`${habit.id}_${formatDate(new Date(year, month, day))}`),
+        dateStr,
+        (habit) => recordIndex.get(`${habit.id}_${dateStr}`),
         winOnlyWeekends,
       ),
-    [habits, recordIndex, year, month, winOnlyWeekends],
+    [habits, recordIndex, winOnlyWeekends],
   );
   const dayCompletionMap = useMemo(() => {
-    const map: Record<number, number> = {};
+    const map: Record<string, number> = {};
     if (habits.length === 0) return map;
-    for (let d = 1; d <= daysInMonth; d++) {
-      if (vacationSet.has(formatDate(new Date(year, month, d)))) continue;
+    for (const d of dates) {
+      if (vacationSet.has(d)) continue;
       map[d] = breakdownFor(d).ratio;
     }
     return map;
-  }, [habits.length, breakdownFor, year, month, daysInMonth, vacationSet]);
+  }, [habits.length, breakdownFor, dates, vacationSet]);
 
   // Tap a day to see what's behind its shade. The cell is measured against
   // the screen container so the popover can sit right above it. Any touch
@@ -121,12 +109,12 @@ export default function MonthViewScreen() {
   // another day closes this one AND opens that one).
   const containerRef = useRef<View>(null);
   const [bounds, setBounds] = useState({ width: 0, height: 0 });
-  const cellRefs = useRef(new Map<number, View | null>());
-  const [popover, setPopover] = useState<{ day: number; anchor: PopoverAnchor } | null>(null);
+  const cellRefs = useRef(new Map<string, View | null>());
+  const [popover, setPopover] = useState<{ day: string; anchor: PopoverAnchor } | null>(null);
   // The day whose popover this touch just closed: tapping it again is a
   // toggle, so its press must not reopen it.
-  const closedByTouchRef = useRef<number | null>(null);
-  const openDay = useCallback((day: number) => {
+  const closedByTouchRef = useRef<string | null>(null);
+  const openDay = useCallback((day: string) => {
     if (closedByTouchRef.current === day) {
       closedByTouchRef.current = null;
       return;
@@ -145,7 +133,7 @@ export default function MonthViewScreen() {
     [popover, breakdownFor],
   );
   const popoverTitle = popover
-    ? new Date(year, month, popover.day).toLocaleDateString(undefined, {
+    ? parseDate(popover.day).toLocaleDateString(undefined, {
         weekday: 'short',
         month: 'short',
         day: 'numeric',
@@ -257,9 +245,13 @@ export default function MonthViewScreen() {
           <Pressable onPress={() => setMonthOffset(0)}>
             <ThemedText type="defaultSemiBold" style={styles.monthLabel}>{monthLabel}</ThemedText>
           </Pressable>
-          <Pressable onPress={() => setMonthOffset((o) => o + 1)} style={styles.navButton}>
-            <ThemedText style={styles.navText}>›</ThemedText>
-          </Pressable>
+          {canGoForward ? (
+            <Pressable onPress={() => setMonthOffset((o) => o + 1)} style={styles.navButton}>
+              <ThemedText style={styles.navText}>›</ThemedText>
+            </Pressable>
+          ) : (
+            <View style={styles.navButton} />
+          )}
         </View>
 
         {/* replace, not back(): history-walking lands on surprising siblings
@@ -283,11 +275,11 @@ export default function MonthViewScreen() {
             </View>
             {calendarWeeks.map((week, wi) => (
               <View key={wi} style={styles.calendarRow}>
-                {week.map((day, di) => {
-                  if (!day) {
+                {week.map((dateStr, di) => {
+                  if (!dateStr) {
                     return <View key={di} style={styles.calendarCell} />;
                   }
-                  const dateStr = formatDate(new Date(year, month, day));
+                  const day = parseDate(dateStr).getDate();
                   const vacation = vacationDays.get(dateStr);
                   // Vacation cells use the user's chosen vacation color and
                   // show a V (or first char of a custom label) — they're not
@@ -310,14 +302,14 @@ export default function MonthViewScreen() {
                     <Pressable
                       key={di}
                       ref={(node) => {
-                        cellRefs.current.set(day, node);
+                        cellRefs.current.set(dateStr, node);
                       }}
-                      onPress={() => openDay(day)}
+                      onPress={() => openDay(dateStr)}
                       accessibilityRole="button"
-                      accessibilityLabel={`${MONTH_NAMES[month]} ${day}, see habit breakdown`}
+                      accessibilityLabel={`${parseDate(dateStr).toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}, see habit breakdown`}
                       style={[
                         styles.calendarCell,
-                        { backgroundColor: heatmapColor(dayCompletionMap[day] ?? 0) },
+                        { backgroundColor: heatmapColor(dayCompletionMap[dateStr] ?? 0) },
                       ]}
                     >
                       <ThemedText style={styles.calendarDayText}>{day}</ThemedText>
@@ -362,7 +354,7 @@ export default function MonthViewScreen() {
                 color={habit.color}
                 series={series}
                 yMax={yMax}
-                daysInMonth={daysInMonth}
+                daysInMonth={dayCount}
                 baselineColor={colors.tileUnrecorded}
               />
             </View>

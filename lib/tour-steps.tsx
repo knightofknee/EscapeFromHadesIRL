@@ -170,17 +170,17 @@ export function buildGenesisTour(ctx: GenesisCtx): TourStep[] {
       cta: 'On to quests ›',
     },
 
-    // ── Quests: challenges to track (spotlights the quests tab in the nav) ──
+    // ── Quests: the 60-day quest (spotlights the quests tab in the nav) ──
     {
       id: 'first-quest',
       target: 'quests-tab',
       placement: 'top',
       match: onQuestsHome,
       onEnter: ctx.goQuests,
-      eyebrow: 'YOUR CHALLENGES',
-      title: 'Quests are challenges to meet.',
+      eyebrow: 'THE 60-DAY QUEST',
+      title: 'One habit, 60 days at a time.',
       body:
-        "Quests live under this tab, highlighted below in the nav bar. They run themselves, quietly keeping score from the habits you already record. There's nothing to set up and nothing to maintain. Visit when you want to see where you stand, and write your own if you ever want more.",
+        "Quests live under this tab, highlighted below in the nav bar. Pick one habit and take it on for 60 days, the median time it takes a new habit to form. Days you've already kept up count toward it, and reaching day 60 earns you a badge on the habit.",
       quote: {
         text: 'Fire is the test of gold; adversity, of strong men.',
         source: 'Seneca, On Providence',
@@ -196,7 +196,7 @@ export function buildGenesisTour(ctx: GenesisCtx): TourStep[] {
       eyebrow: 'THE LONG ASCENT',
       title: 'This is the whole game.',
       body:
-        "Tap your habits daily, let the quests keep score, and let time do the heavy lifting. The road out of Hades isn't steep, it's just long. Hold three things and you cannot lose.",
+        "Tap your habits daily, take on one 60-day quest at a time, and let time do the heavy lifting. The road out of Hades isn't steep, it's just long. Hold three things and you cannot lose.",
       mantras: ['Show up small.', 'Return often.', 'Let the road rise to meet you.'],
       quote: {
         text: 'Become such as you are, having learned what that is.',

@@ -1,0 +1,9 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+  <!-- Usage Access: a "special" permission the user toggles in system
+       Settings (no runtime dialog). Needed to read lock/unlock history for
+       phone-free nights. Google Play requires a declaration for it. -->
+  <uses-permission
+      android:name="android.permission.PACKAGE_USAGE_STATS"
+      tools:ignore="ProtectedPermissions" />
+</manifest>

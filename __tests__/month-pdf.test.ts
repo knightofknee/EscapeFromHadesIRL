@@ -1,5 +1,12 @@
 import { buildMonthReportHtml, monthReportLabel, monthReportRange } from '../lib/month-pdf';
-import { monthCalendarWeeks, monthCountDays } from '../lib/month-habit-stats';
+import {
+  maxMonthPage,
+  monthCalendarWeeks,
+  monthCountDays,
+  monthPage,
+  rangeCalendarWeeks,
+  trailingMonthStart,
+} from '../lib/month-habit-stats';
 import { heatmapShade } from '../lib/day-breakdown';
 import type { Habit, HabitRecord, VacationDay } from '../types/habit';
 
@@ -132,5 +139,55 @@ describe('month helpers shared with the screen', () => {
   test('heatmap shade', () => {
     expect(heatmapShade(0, '#2ECC71', '#D5D8DC')).toBe('#D5D8DC');
     expect(heatmapShade(1, '#2ECC71', '#D5D8DC')).toBe('#2ECC71FF');
+  });
+});
+
+describe('month pages', () => {
+  test('page 0 is the past month ending today, counted through yesterday', () => {
+    const p = monthPage(0, new Date(2026, 10, 4)); // Nov 4
+    expect(p.kind).toBe('trailing');
+    expect(p.startDate).toBe('2026-10-05');
+    expect(p.endDate).toBe('2026-11-04');
+    expect(p.dates).toHaveLength(31);
+    expect(p.countDates[p.countDates.length - 1]).toBe('2026-11-03');
+    expect(p.label).toBe('Oct 5 – Nov 4');
+    expect(p.year).toBe(2026);
+    expect(p.month).toBe(10);
+  });
+
+  test('page 1 is the current month so far; page -1 the previous full month', () => {
+    const today = new Date(2026, 10, 4);
+    const cur = monthPage(1, today);
+    expect(cur.kind).toBe('calendar');
+    expect([cur.startDate, cur.endDate]).toEqual(['2026-11-01', '2026-11-30']);
+    expect(cur.countDates).toEqual(['2026-11-01', '2026-11-02', '2026-11-03']);
+    expect(cur.label).toBe('November 2026');
+    const prev = monthPage(-1, today);
+    expect([prev.startDate, prev.endDate]).toEqual(['2026-10-01', '2026-10-31']);
+    expect(prev.countDates).toHaveLength(31);
+    expect(prev.label).toBe('October 2026');
+    expect(monthPage(-2, today).label).toBe('September 2026');
+  });
+
+  test('the forward button stops at the current month', () => {
+    expect(maxMonthPage(new Date(2026, 10, 4))).toBe(1);
+    // Nov 30: the past month is Oct 31 – Nov 30, still a day more than November.
+    expect(maxMonthPage(new Date(2026, 10, 30))).toBe(1);
+    // Mar 31: February is short, so the past month IS March; nothing lies forward.
+    expect(maxMonthPage(new Date(2026, 2, 31))).toBe(0);
+    expect(monthPage(0, new Date(2026, 2, 31)).label).toBe('March 2026');
+  });
+
+  test('past month start clamps to short months', () => {
+    expect(trailingMonthStart(new Date(2026, 2, 31))).toBe('2026-03-01'); // Mar 31 → Feb has 28 days
+    expect(trailingMonthStart(new Date(2026, 0, 15))).toBe('2025-12-16');
+  });
+
+  test('range calendar pads the first and last weeks', () => {
+    const weeks = rangeCalendarWeeks(['2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01', '2026-11-02']);
+    // Oct 29 2026 is a Thursday.
+    expect(weeks[0]).toEqual([null, null, null, '2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01']);
+    expect(weeks[1]).toEqual(['2026-11-02', null, null, null, null, null, null]);
+    expect(rangeCalendarWeeks([])).toEqual([]);
   });
 });

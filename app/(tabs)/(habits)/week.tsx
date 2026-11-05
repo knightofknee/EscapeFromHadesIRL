@@ -9,6 +9,7 @@ import { LoadingScreen } from '@/components/ui/loading-screen';
 import { ThemedView } from '@/components/themed-view';
 import { WeekGrid } from '@/components/habits/week-grid';
 import { SuccessColorPicker } from '@/components/habits/success-color-picker';
+import { PhoneFreeSection } from '@/components/habits/phone-free-section';
 import { useHabits } from '@/hooks/use-habits';
 import { useHabitRecords, getWeekDates } from '@/hooks/use-habit-records';
 import { useTodayDate } from '@/hooks/use-today-date';
@@ -40,8 +41,23 @@ export default function WeekViewScreen() {
     return d;
   }, [weekOffset, todayDate]);
 
-  const { dates, startDate, endDate } = useMemo(() => getWeekDates(refDate), [refDate]);
-  const { recordsByDate, isLoading: recordsLoading } = useHabitRecords(startDate, endDate);
+  const { dates } = useMemo(() => getWeekDates(refDate), [refDate]);
+
+  // The weeks either side are rendered too, so a drag reveals them. Their
+  // records load with this week's (one range, three weeks).
+  const weekDatesAt = useCallback(
+    (offset: number) => {
+      const d = new Date(todayDate);
+      d.setDate(d.getDate() + offset * 7);
+      return getWeekDates(d);
+    },
+    [todayDate],
+  );
+  const pages = useMemo(
+    () => [weekOffset - 1, weekOffset, weekOffset + 1].map((offset) => ({ offset, ...weekDatesAt(offset) })),
+    [weekOffset, weekDatesAt],
+  );
+  const { recordsByDate, isLoading: recordsLoading } = useHabitRecords(pages[0].startDate, pages[2].endDate);
   const { recordHabit } = useRecordsContext();
 
   const handleTapHabit = useCallback(
@@ -100,42 +116,79 @@ export default function WeekViewScreen() {
     [user, habits, recordsByDate, recordHabit],
   );
 
-  const translateX = useSharedValue(0);
-  const opacity = useSharedValue(1);
+  // Horizontal pager over the three weeks. Pages sit at x = offset * width
+  // and the row is translated by -position * width, where position is the
+  // week on screen in page units (plus the live drag). A swipe animates
+  // position to the neighbour, and only then commits the new offset: the
+  // commit moves the pages under an unchanged translate, so nothing jumps
+  // or resets between the animation and the re-render.
   const { width: screenWidth } = useWindowDimensions();
-  const SWIPE_THRESHOLD = screenWidth * 0.2;
+  const position = useSharedValue(0);
+  // Where a drag began, in page units: a grab mid-animation continues from
+  // there instead of snapping back to the committed week.
+  const dragStart = useSharedValue(0);
+  const [pagerHeight, setPagerHeight] = useState(0);
 
-  const changeWeek = useCallback((direction: number) => {
-    setWeekOffset((o) => o + direction);
+  const commitWeek = useCallback((offset: number) => {
+    setWeekOffset(offset);
   }, []);
 
-  // Memoized — rebuilt-per-render gesture objects churn the gesture handler.
-  const swipeGesture = useMemo(() => Gesture.Pan()
-    .activeOffsetX([-20, 20])
-    .failOffsetY([-10, 10])
-    .onUpdate((e) => {
-      translateX.value = e.translationX;
-      // Fade out as user drags further
-      opacity.value = 1 - Math.min(Math.abs(e.translationX) / screenWidth, 0.4);
-    })
-    .onEnd((e) => {
-      if (Math.abs(e.translationX) > SWIPE_THRESHOLD || Math.abs(e.velocityX) > 500) {
-        const direction = e.translationX > 0 ? -1 : 1;
-        // Slide off screen, change week, then reset
-        translateX.value = withTiming(direction * -screenWidth, { duration: 200, easing: Easing.out(Easing.cubic) }, () => {
-          runOnJS(changeWeek)(direction);
-          translateX.value = 0;
-          opacity.value = 1;
-        });
-      } else {
-        translateX.value = withTiming(0, { duration: 150 });
-        opacity.value = withTiming(1, { duration: 150 });
-      }
-    }), [screenWidth, SWIPE_THRESHOLD, changeWeek, translateX, opacity]);
+  const settleTo = useCallback(
+    (offset: number) => {
+      position.value = withTiming(
+        offset,
+        { duration: 220, easing: Easing.out(Easing.cubic) },
+        (finished) => {
+          if (finished) runOnJS(commitWeek)(offset);
+        },
+      );
+    },
+    [position, commitWeek],
+  );
 
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: translateX.value }],
-    opacity: opacity.value,
+  // The arrows step from where the pager is, not from the committed week,
+  // so two quick taps move two weeks instead of re-targeting the same one.
+  const step = useCallback(
+    (direction: number) => settleTo(Math.round(position.value) + direction),
+    [settleTo, position],
+  );
+
+  const jumpTo = useCallback(
+    (offset: number) => {
+      if (Math.abs(offset - Math.round(position.value)) === 1) {
+        settleTo(offset);
+        return;
+      }
+      position.value = offset;
+      setWeekOffset(offset);
+    },
+    [settleTo, position],
+  );
+
+  // Memoized — rebuilt-per-render gesture objects churn the gesture handler.
+  const swipeGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-20, 20])
+        .failOffsetY([-10, 10])
+        .onStart(() => {
+          dragStart.value = position.value;
+        })
+        .onUpdate((e) => {
+          position.value = dragStart.value - e.translationX / screenWidth;
+        })
+        .onEnd((e) => {
+          const from = Math.round(dragStart.value);
+          const far = Math.abs(e.translationX) > screenWidth * 0.2;
+          const fast = Math.abs(e.velocityX) > 500;
+          const direction = e.translationX > 0 ? -1 : 1;
+          runOnJS(settleTo)(far || fast ? from + direction : from);
+        }),
+    [screenWidth, position, dragStart, settleTo],
+  );
+
+  const pagerStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: -position.value * screenWidth }],
   }));
 
   const weekLabel = useMemo(() => {
@@ -164,15 +217,15 @@ export default function WeekViewScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <ThemedView style={styles.container}>
         <View style={styles.header}>
-          <Pressable onPress={() => setWeekOffset((o) => o - 1)} style={styles.navButton}>
+          <Pressable onPress={() => step(-1)} style={styles.navButton}>
             <ThemedText style={styles.navText}>‹</ThemedText>
           </Pressable>
-          <Pressable onPress={() => setWeekOffset(0)}>
+          <Pressable onPress={() => jumpTo(0)}>
             <ThemedText type="defaultSemiBold" style={styles.weekLabel}>
               {weekLabel}
             </ThemedText>
           </Pressable>
-          <Pressable onPress={() => setWeekOffset((o) => o + 1)} style={styles.navButton}>
+          <Pressable onPress={() => step(1)} style={styles.navButton}>
             <ThemedText style={styles.navText}>›</ThemedText>
           </Pressable>
         </View>
@@ -188,21 +241,38 @@ export default function WeekViewScreen() {
             <ThemedText style={{ opacity: 0.5, fontSize: 16 }}>No habits yet</ThemedText>
           </View>
         ) : (
-          <GestureDetector gesture={swipeGesture}>
-            <Animated.View style={[{ flex: 1 }, animatedStyle]}>
-              <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }}>
-                <WeekGrid
-                  dates={dates}
-                  habits={habits}
-                  recordsByDate={recordsByDate}
-                  onTapHabit={handleTapHabit}
-                  successColors={successColors}
-                  vacationDays={vacationDays}
-                />
-                <SuccessColorPicker />
-              </ScrollView>
-            </Animated.View>
-          </GestureDetector>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }}>
+            <GestureDetector gesture={swipeGesture}>
+              <View style={[styles.pager, pagerHeight > 0 && { height: pagerHeight }]}>
+                <Animated.View style={pagerStyle}>
+                  {pages.map((page) => (
+                    <View
+                      key={page.offset}
+                      style={[styles.page, { width: screenWidth, left: page.offset * screenWidth }]}
+                      onLayout={
+                        page.offset === weekOffset
+                          ? (e) => setPagerHeight(e.nativeEvent.layout.height)
+                          : undefined
+                      }
+                    >
+                      <WeekGrid
+                        dates={page.dates}
+                        habits={habits}
+                        recordsByDate={recordsByDate}
+                        onTapHabit={handleTapHabit}
+                        successColors={successColors}
+                        vacationDays={vacationDays}
+                      />
+                    </View>
+                  ))}
+                </Animated.View>
+              </View>
+            </GestureDetector>
+            <SuccessColorPicker />
+            {/* Provisional home for phone-free nights (user: "below the legend,
+                worry about ideal UI later", 2026-11-03). */}
+            <PhoneFreeSection dates={dates} />
+          </ScrollView>
         )}
       </ThemedView>
     </SafeAreaView>
@@ -215,6 +285,13 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
+  },
+  pager: {
+    overflow: 'hidden',
+  },
+  page: {
+    position: 'absolute',
+    top: 0,
   },
   header: {
     flexDirection: 'row',

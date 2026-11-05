@@ -128,7 +128,7 @@ export default function ChoresScreen() {
             <ThemedText style={styles.emptyTitle}>How long has it been?</ThemedText>
             <ThemedText style={styles.emptyBody}>
               Sheets, litter, the toilet, calling home. Log it when you do it and each chore turns
-              green, then blue, then gold once it's due.
+              green, then blue, then gold once it&apos;s due.
             </ThemedText>
             <Pressable
               onPress={() => router.push('/chore-starter')}

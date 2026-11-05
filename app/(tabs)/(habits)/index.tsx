@@ -28,6 +28,7 @@ import { useUserSettingsContext } from '@/contexts/user-settings-context';
 import { useOfflineGuard } from '@/contexts/offline-context';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import { useStepsBackfill } from '@/hooks/use-steps-backfill';
+import { usePhoneFreeSnapshot } from '@/hooks/use-phone-free-nights';
 import {
   buildDateRange,
   createVacationDays,
@@ -99,6 +100,9 @@ export default function HabitsDayScreen() {
   // Foreground sync: re-fetch today's steps for every Steps Counter habit
   // on mount + when the app foregrounds, so tiles stay fresh without taps.
   useStepsBackfill();
+  // Phone-free nights: snapshot the last week's nights on mount/foreground.
+  // The sources forget within days, so this can't wait for the week view.
+  usePhoneFreeSnapshot();
   // Milestone quotes: count today as an active day (post-setup only) and
   // surface the next earned quote every 10th day of use. Presentation is
   // held while another tab is fronted or the tour is running — this screen

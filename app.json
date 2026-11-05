@@ -2,7 +2,7 @@
   "expo": {
     "name": "Escape from Hades IRL",
     "slug": "EscapeFromHadesIRL",
-    "version": "1.0.23",
+    "version": "1.0.24",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "escapefromhadesirl",
@@ -111,6 +111,12 @@
         }
       ],
       "@bacons/apple-targets",
+      [
+        "./plugins/with-device-activity.js",
+        {
+          "appGroup": "group.com.briancarlisle.escapefromhadesirl"
+        }
+      ],
       "expo-asset",
       "expo-sharing",
       [
@@ -139,6 +145,16 @@
                   "targetName": "MeditationWidget",
                   "bundleIdentifier": "com.briancarlisle.escapefromhadesirl.MeditationWidget",
                   "entitlements": {}
+                },
+                {
+                  "targetName": "ActivityMonitorExtension",
+                  "bundleIdentifier": "com.briancarlisle.escapefromhadesirl.ActivityMonitorExtension",
+                  "entitlements": {
+                    "com.apple.developer.family-controls": true,
+                    "com.apple.security.application-groups": [
+                      "group.com.briancarlisle.escapefromhadesirl"
+                    ]
+                  }
                 }
               ]
             }
