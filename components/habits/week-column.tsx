@@ -19,7 +19,7 @@ type WeekColumnProps = {
   vacation?: VacationDay;
 };
 
-const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 function getStateColor(
   habit: Habit,
@@ -41,7 +41,7 @@ function getStateColor(
 export function WeekColumn({ date, isToday, habits, records, onTapHabit, successColors, vacation }: WeekColumnProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
-  const dayIndex = (date.getDay() + 6) % 7; // Monday=0
+  const dayIndex = date.getDay();
   const dateStr = formatDate(date);
 
   return (

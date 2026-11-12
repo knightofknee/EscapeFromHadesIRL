@@ -1,6 +1,5 @@
 import { useEffect, useMemo } from 'react';
 import { useRecordsContext } from '@/contexts/records-context';
-import { formatDate } from '@/lib/date-utils';
 import type { HabitRecord } from '@/types/habit';
 
 export { formatDate } from '@/lib/date-utils';
@@ -47,23 +46,4 @@ export function useHabitRecords(startDate: string, endDate: string) {
       : false;
 
   return { records, recordsByDate, isLoading };
-}
-
-export function getWeekDates(refDate: Date): { dates: Date[]; startDate: string; endDate: string } {
-  const day = refDate.getDay();
-  const monday = new Date(refDate);
-  monday.setDate(refDate.getDate() - ((day + 6) % 7));
-
-  const dates: Date[] = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(monday);
-    d.setDate(monday.getDate() + i);
-    dates.push(d);
-  }
-
-  return {
-    dates,
-    startDate: formatDate(dates[0]),
-    endDate: formatDate(dates[6]),
-  };
 }

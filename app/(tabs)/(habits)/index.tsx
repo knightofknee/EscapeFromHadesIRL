@@ -6,7 +6,6 @@ import Animated, {
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
   withTiming,
   Easing,
 } from 'react-native-reanimated';
@@ -19,6 +18,7 @@ import { TileGrid } from '@/components/habits/tile-grid';
 import { QuickInputModal } from '@/components/ui/quick-input-modal';
 import { MeditationTimerModal } from '@/components/habits/meditation-timer-modal';
 import { StepsModal } from '@/components/habits/steps-modal';
+import { PhoneFreeModal } from '@/components/habits/phone-free-modal';
 import { VacationMenu } from '@/components/habits/vacation-menu';
 import { VacationRangeModal } from '@/components/habits/vacation-range-modal';
 import { VacationTile } from '@/components/habits/vacation-tile';
@@ -28,7 +28,7 @@ import { useUserSettingsContext } from '@/contexts/user-settings-context';
 import { useOfflineGuard } from '@/contexts/offline-context';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import { useStepsBackfill } from '@/hooks/use-steps-backfill';
-import { usePhoneFreeSnapshot } from '@/hooks/use-phone-free-nights';
+import { usePhoneFreeBackfill } from '@/hooks/use-phone-free-nights';
 import {
   buildDateRange,
   createVacationDays,
@@ -37,6 +37,7 @@ import {
 } from '@/lib/vacation-days';
 import { EarnedQuoteModal } from '@/components/habits/earned-quote-modal';
 import { QuestCelebration, type QuestBurst } from '@/components/habit-quest/quest-celebration';
+import { useHabitQuest } from '@/contexts/habit-quest-context';
 import { useHabitQuestProgress } from '@/hooks/use-habit-quest-progress';
 import { useHabitBadges } from '@/hooks/use-habit-badges';
 import { didParticipate } from '@/lib/habit-quest';
@@ -49,6 +50,7 @@ import { useNotes } from '@/hooks/use-notes';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { addDays, parseDate } from '@/lib/date-utils';
+import { valueGoalsOn } from '@/lib/habit-scoring';
 import { emitError } from '@/lib/error-bus';
 import type { Habit } from '@/types/habit';
 
@@ -81,6 +83,7 @@ export default function HabitsDayScreen() {
   const [valueInputHabit, setValueInputHabit] = useState<Habit | null>(null);
   const [meditationHabit, setMeditationHabit] = useState<Habit | null>(null);
   const [stepsHabit, setStepsHabit] = useState<Habit | null>(null);
+  const [phoneFreeHabit, setPhoneFreeHabit] = useState<Habit | null>(null);
   const [vacationMenuVisible, setVacationMenuVisible] = useState(false);
   const [vacationRangeVisible, setVacationRangeVisible] = useState(false);
   const [vacationEditVisible, setVacationEditVisible] = useState(false);
@@ -100,9 +103,9 @@ export default function HabitsDayScreen() {
   // Foreground sync: re-fetch today's steps for every Steps Counter habit
   // on mount + when the app foregrounds, so tiles stay fresh without taps.
   useStepsBackfill();
-  // Phone-free nights: snapshot the last week's nights on mount/foreground.
-  // The sources forget within days, so this can't wait for the week view.
-  usePhoneFreeSnapshot();
+  // Phone-free nights: snapshot the last week's nights on mount/foreground
+  // (the sources forget within days) and record them for phone-free habits.
+  usePhoneFreeBackfill();
   // Milestone quotes: count today as an active day (post-setup only) and
   // surface the next earned quote every 10th day of use. Presentation is
   // held while another tab is fronted or the tour is running — this screen
@@ -161,7 +164,7 @@ export default function HabitsDayScreen() {
     // Can't go past today
     if (viewedDate >= todayStr) {
       // Spring back — don't commit
-      translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
+      translateX.value = withTiming(0, { duration: 200, easing: Easing.out(Easing.cubic) });
       isAnimatingOut.value = false;
       return;
     }
@@ -224,7 +227,7 @@ export default function HabitsDayScreen() {
           },
         );
       } else {
-        translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
+        translateX.value = withTiming(0, { duration: 200, easing: Easing.out(Easing.cubic) });
       }
     }), [screenWidth, commitPrev, commitNext, translateX, isAnimatingOut]);
 
@@ -266,6 +269,10 @@ export default function HabitsDayScreen() {
           // Meditation tile opens the timer + sessions modal.
           setMeditationHabit(habit);
           break;
+        case 'phoneFree':
+          // Phone-free tile opens the night's detail (nothing to enter).
+          setPhoneFreeHabit(habit);
+          break;
       }
     },
     [habits, toggleBoolean, cycleTriple, cycleQuad, incrementCounter],
@@ -294,17 +301,22 @@ export default function HabitsDayScreen() {
   // gets its day recorded. Fires on the not-recorded → recorded flip for the
   // viewed day (a tap, a modal save, or a steps sync while you watch), never
   // on load or a day swipe. A flip while a tile modal is open waits for it to
-  // close so the burst isn't hidden behind the sheet.
+  // close so the burst isn't hidden behind the sheet. A day the quest
+  // card's check already celebrated (tabs freeze on blur, so that flip is
+  // first seen here on refocus) is not played again.
   const { activeQuest, habit: questHabit, progress: questProgress } = useHabitQuestProgress();
+  const { celebratedDateRef } = useHabitQuest();
   const [questBurst, setQuestBurst] = useState<QuestBurst | null>(null);
   const questDayDone =
     questHabit != null && !isVacationDay && didParticipate(questHabit, records.get(questHabit.id));
   const questDayInRange =
     questProgress != null && !questProgress.isOver && activeQuest != null &&
     viewedDate >= questProgress.attemptStart && viewedDate <= questProgress.endDate;
-  const tileModalOpen = valueInputHabit != null || meditationHabit != null || stepsHabit != null;
+  const tileModalOpen =
+    valueInputHabit != null || meditationHabit != null || stepsHabit != null || phoneFreeHabit != null;
   const questSeenRef = useRef<{ key: string; done: boolean } | null>(null);
   const questPendingRef = useRef(false);
+
   const questTileRef = useRef<View>(null);
   const habitBadges = useHabitBadges();
   const { showTileBadges } = useUserSettingsContext();
@@ -316,7 +328,10 @@ export default function HabitsDayScreen() {
       questPendingRef.current = false;
       return;
     }
-    if (prev?.key === key && !prev.done && questDayDone) questPendingRef.current = true;
+    if (prev?.key === key && !prev.done && questDayDone) {
+      if (celebratedDateRef.current === viewedDate) celebratedDateRef.current = null;
+      else questPendingRef.current = true;
+    }
     if (!questDayDone) questPendingRef.current = false;
     if (questPendingRef.current && !tileModalOpen && isFocused && questProgress && questHabit) {
       questPendingRef.current = false;
@@ -331,7 +346,7 @@ export default function HabitsDayScreen() {
         setQuestBurst(burst);
       }
     }
-  }, [questHabit, questDayInRange, recordsLoading, viewedDate, questDayDone, tileModalOpen, isFocused, questProgress]);
+  }, [questHabit, questDayInRange, recordsLoading, viewedDate, questDayDone, tileModalOpen, isFocused, questProgress, celebratedDateRef]);
 
   // Hold the screen until habits, the first records snapshot, AND vacation
   // days arrive — so tiles never render "unrecorded" then pop to their real
@@ -503,6 +518,8 @@ export default function HabitsDayScreen() {
           })()}
           keyboardType="decimal-pad"
           showStepper
+          // +/- move by the habit's first goal when it has goals, else 1.
+          step={valueInputHabit ? valueGoalsOn(valueInputHabit, viewedDate)[0] ?? 1 : 1}
           onSubmit={handleValueSubmit}
           onCancel={() => setValueInputHabit(null)}
         />
@@ -609,6 +626,13 @@ export default function HabitsDayScreen() {
             onClose={() => setStepsHabit(null)}
           />
         )}
+
+        <PhoneFreeModal
+          visible={phoneFreeHabit != null}
+          habit={phoneFreeHabit}
+          date={viewedDate}
+          onClose={() => setPhoneFreeHabit(null)}
+        />
 
         <QuestCelebration burst={questBurst} />
       </ThemedView>

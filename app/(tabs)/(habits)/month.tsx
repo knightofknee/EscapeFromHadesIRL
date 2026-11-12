@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef, useCallback } from 'react';
-import { ActivityIndicator, Alert, Modal, StyleSheet, ScrollView, Pressable, Switch, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, StyleSheet, Pressable, Switch, TextInput, View } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
@@ -23,12 +24,14 @@ import {
   rangeCalendarWeeks,
 } from '@/lib/month-habit-stats';
 import { buildMonthReportHtml, monthReportLabel, monthReportRange, REPORT_WEEKS } from '@/lib/month-pdf';
+import { MonthPickerModal, type MonthPickerOption } from '@/components/habits/month-picker-modal';
 import { loadRecordsRange, mergeWithLive } from '@/lib/records-snapshot-store';
 import { nextFrame, renderPdf, sharePdf, type PdfDoc } from '@/lib/pdf-share';
 import { MonthSparkline } from '@/components/habits/month-sparkline';
 import { PdfPreview } from '@/components/ui/pdf-preview';
 import { readableTextOn } from '@/lib/contrast';
-import { parseDate } from '@/lib/date-utils';
+import { formatDate, parseDate, weekStartOf, weekdayOrder, WEEKDAY_SHORT } from '@/lib/date-utils';
+import { useWeekStart } from '@/hooks/use-week-start';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { HabitRecord } from '@/types/habit';
@@ -41,6 +44,7 @@ export default function MonthViewScreen() {
   const [monthOffset, setMonthOffset] = useState(0);
   const { days: vacationDays, dateSet: vacationSet, isLoading: vacationLoading } = useVacationDays();
   const { winOnlyWeekends } = useWinOnlyWeekends();
+  const { weekStartsOn } = useWeekStart();
 
   // todayDate keeps "this month" / "yesterday" live across midnight and
   // foreground returns — a bare new Date() here would freeze at mount.
@@ -51,10 +55,36 @@ export default function MonthViewScreen() {
   // past that, so the forward button disappears there instead of paging
   // into months that haven't happened.
   const maxOffset = maxMonthPage(todayDate);
-  const page = useMemo(() => monthPage(Math.min(monthOffset, maxOffset), todayDate), [monthOffset, maxOffset, todayDate]);
+  // Nothing exists before the month the first habit was created in, so the
+  // back arrow stops there instead of paging into empty months.
+  const firstHabitAt = useMemo(
+    () =>
+      habits.reduce(
+        (min, h) => (h.createdAt && h.createdAt < min ? h.createdAt : min),
+        Number.POSITIVE_INFINITY,
+      ),
+    [habits],
+  );
+  const minOffset = useMemo(() => {
+    if (!Number.isFinite(firstHabitAt)) return 0;
+    const c = new Date(firstHabitAt);
+    return -Math.max(0, (todayDate.getFullYear() - c.getFullYear()) * 12 + (todayDate.getMonth() - c.getMonth()));
+  }, [firstHabitAt, todayDate]);
+  const shownOffset = Math.min(Math.max(monthOffset, minOffset), maxOffset);
+  const page = useMemo(() => monthPage(shownOffset, todayDate), [shownOffset, todayDate]);
   const { year, month, startDate, endDate, dates, countDates, label: monthLabel } = page;
   const dayCount = dates.length;
-  const canGoForward = monthOffset < maxOffset;
+  const canGoForward = shownOffset < maxOffset;
+  const canGoBack = shownOffset > minOffset;
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerOptions = useMemo<MonthPickerOption[]>(() => {
+    const out: MonthPickerOption[] = [];
+    for (let o = maxOffset; o >= minOffset; o--) {
+      const p = monthPage(o, todayDate);
+      out.push({ offset: o, label: o === 0 && p.kind === 'trailing' ? `Past month, ${p.label}` : p.label });
+    }
+    return out;
+  }, [maxOffset, minOffset, todayDate]);
 
   const { records, isLoading: recordsLoading } = useHabitRecords(startDate, endDate);
 
@@ -68,7 +98,7 @@ export default function MonthViewScreen() {
   }, [records]);
 
   // Build calendar grid
-  const calendarWeeks = useMemo(() => rangeCalendarWeeks(dates), [dates]);
+  const calendarWeeks = useMemo(() => rangeCalendarWeeks(dates, weekStartsOn), [dates, weekStartsOn]);
 
   // Per-habit month stats (lib/month-habit-stats): completion rate, the
   // total/average/median trio for amount habits (value, steps, meditation
@@ -152,17 +182,61 @@ export default function MonthViewScreen() {
   // The PDF wears the app's theme, so it looks like this screen.
   const { colors: successColors } = useSuccessColors(colorScheme);
   const [shareMonths, setShareMonths] = useState(1);
+  const [shareMonthsText, setShareMonthsText] = useState('1');
   const [shareWeeks, setShareWeeks] = useState(true);
+  const [shareWeekCount, setShareWeekCount] = useState(REPORT_WEEKS);
+  const [shareWeekText, setShareWeekText] = useState(String(REPORT_WEEKS));
   const [sharing, setSharing] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<PdfDoc | null>(null);
-  const shareOpts = { year, month, monthCount: shareMonths, includeWeeks: shareWeeks };
+  // How far back the report can reach: every month from the one the first
+  // habit was created in through the month on screen. That is the only
+  // limit; any count up to it can be typed.
+  const dataMonths = useMemo(() => {
+    const created = habits.reduce(
+      (min, h) => (h.createdAt && h.createdAt < min ? h.createdAt : min),
+      Number.POSITIVE_INFINITY,
+    );
+    if (!Number.isFinite(created)) return 1;
+    const c = new Date(created);
+    return Math.max(1, (year - c.getFullYear()) * 12 + (month - c.getMonth()) + 1);
+  }, [habits, year, month]);
+  const dataSince = useMemo(() => {
+    const d = new Date(year, month - (dataMonths - 1), 1);
+    return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  }, [year, month, dataMonths]);
+  const monthsInReport = Math.min(shareMonths, dataMonths);
+  // Weeks of data: from the start of the first habit's week through today.
+  const dataWeeks = useMemo(() => {
+    if (!Number.isFinite(firstHabitAt)) return 1;
+    const start = weekStartOf(formatDate(new Date(firstHabitAt)), weekStartsOn);
+    const days = Math.round((parseDate(todayStr).getTime() - parseDate(start).getTime()) / 86_400_000) + 1;
+    return Math.max(1, Math.ceil(days / 7));
+  }, [firstHabitAt, todayStr, weekStartsOn]);
+  const weeksInReport = Math.min(shareWeekCount, dataWeeks);
+  const pickWeeks = (n: number) => {
+    const clamped = Math.min(Math.max(1, n), dataWeeks);
+    setShareWeekCount(clamped);
+    setShareWeekText(String(clamped));
+  };
+  // The quick picks always show; ones past the data are dimmed. "All" is
+  // the whole span when that isn't already one of them.
+  const quickMonthChoices = useMemo(
+    () => (SHARE_MONTH_CHOICES.includes(dataMonths) ? SHARE_MONTH_CHOICES : [...SHARE_MONTH_CHOICES, dataMonths]),
+    [dataMonths],
+  );
+  const pickMonths = (n: number) => {
+    const clamped = Math.min(Math.max(1, n), dataMonths);
+    setShareMonths(clamped);
+    setShareMonthsText(String(clamped));
+  };
+  const shareOpts = { year, month, monthCount: monthsInReport, includeWeeks: shareWeeks, weekCount: weeksInReport };
   const shareLabel = monthReportLabel(shareOpts);
 
   const buildReport = async (): Promise<PdfDoc> => {
     if (!user) throw new Error('signed out');
     await nextFrame();
-    const range = monthReportRange(shareOpts, todayDate);
+    const range = monthReportRange(shareOpts, todayDate, weekStartsOn);
     // No records exist past today; clamping lets the saved snapshot cover it.
     const end = range.endDate > todayStr ? todayStr : range.endDate;
     const fetched = await loadRecordsRange(user.uid, range.startDate, end);
@@ -179,6 +253,7 @@ export default function MonthViewScreen() {
         successColors,
         today: todayDate,
         scheme: colorScheme,
+        weekStartsOn,
       },
       shareOpts,
     );
@@ -239,14 +314,32 @@ export default function MonthViewScreen() {
         }}
       >
         <View style={styles.header}>
-          <Pressable onPress={() => setMonthOffset((o) => o - 1)} style={styles.navButton}>
-            <ThemedText style={styles.navText}>‹</ThemedText>
-          </Pressable>
-          <Pressable onPress={() => setMonthOffset(0)}>
+          {canGoBack ? (
+            <Pressable
+              onPress={() => setMonthOffset(shownOffset - 1)}
+              style={styles.navButton}
+              accessibilityRole="button"
+              accessibilityLabel="Back a month"
+            >
+              <ThemedText style={styles.navText}>‹</ThemedText>
+            </Pressable>
+          ) : (
+            <View style={styles.navButton} />
+          )}
+          <Pressable
+            onPress={() => setPickerOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Choose a month"
+          >
             <ThemedText type="defaultSemiBold" style={styles.monthLabel}>{monthLabel}</ThemedText>
           </Pressable>
           {canGoForward ? (
-            <Pressable onPress={() => setMonthOffset((o) => o + 1)} style={styles.navButton}>
+            <Pressable
+              onPress={() => setMonthOffset(shownOffset + 1)}
+              style={styles.navButton}
+              accessibilityRole="button"
+              accessibilityLabel="Forward a month"
+            >
               <ThemedText style={styles.navText}>›</ThemedText>
             </Pressable>
           ) : (
@@ -265,12 +358,17 @@ export default function MonthViewScreen() {
             <ThemedText style={{ opacity: 0.5, fontSize: 16 }}>No habits yet</ThemedText>
           </View>
         ) : (
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+        <KeyboardAwareScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          bottomOffset={24}
+        >
           {/* Calendar heatmap */}
           <View style={styles.calendarSection}>
             <View style={styles.weekdayHeaders}>
-              {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
-                <ThemedText key={i} style={styles.weekdayLabel}>{d}</ThemedText>
+              {weekdayOrder(weekStartsOn).map((d) => (
+                <ThemedText key={d} style={styles.weekdayLabel}>{WEEKDAY_SHORT[d][0]}</ThemedText>
               ))}
             </View>
             {calendarWeeks.map((week, wi) => (
@@ -368,31 +466,54 @@ export default function MonthViewScreen() {
             <View style={styles.shareRow}>
               <ThemedText style={styles.shareLabel}>Months</ThemedText>
               <View style={styles.chips}>
-                {SHARE_MONTH_CHOICES.map((n) => {
-                  const on = n === shareMonths;
+                {quickMonthChoices.map((n) => {
+                  const on = n === monthsInReport;
+                  const all = n === dataMonths && !SHARE_MONTH_CHOICES.includes(n);
+                  const beyondData = n > dataMonths;
                   return (
                     <Pressable
                       key={n}
-                      onPress={() => setShareMonths(n)}
+                      onPress={() => pickMonths(n)}
+                      disabled={beyondData}
                       style={[
                         styles.chip,
                         { borderColor: on ? colors.tint : colors.tileBorder },
                         on && { backgroundColor: colors.tint },
+                        beyondData && styles.chipOff,
                       ]}
                       accessibilityRole="button"
-                      accessibilityState={{ selected: on }}
-                      accessibilityLabel={`${n} ${n === 1 ? 'month' : 'months'}`}
+                      accessibilityState={{ selected: on, disabled: beyondData }}
+                      accessibilityLabel={all ? `All ${n} months` : `${n} ${n === 1 ? 'month' : 'months'}`}
                     >
-                      <ThemedText style={[styles.chipText, on && styles.chipTextOn]}>{n}</ThemedText>
+                      <ThemedText style={[styles.chipText, on && styles.chipTextOn]}>{all ? 'All' : n}</ThemedText>
                     </Pressable>
                   );
                 })}
+                <TextInput
+                  style={[styles.monthsInput, { color: colors.text, borderColor: colors.tileBorder }]}
+                  value={shareMonthsText}
+                  onChangeText={(t) => {
+                    const digits = t.replace(/[^0-9]/g, '');
+                    setShareMonthsText(digits);
+                    const n = parseInt(digits, 10);
+                    if (n >= 1) setShareMonths(Math.min(n, dataMonths));
+                  }}
+                  onBlur={() => setShareMonthsText(String(monthsInReport))}
+                  keyboardType="number-pad"
+                  returnKeyType="done"
+                  selectTextOnFocus
+                  maxLength={3}
+                  accessibilityLabel="Number of months"
+                />
               </View>
             </View>
+            <ThemedText style={styles.shareSub}>
+              {dataMonths === 1 ? `Data since ${dataSince}, 1 month.` : `Data since ${dataSince}, up to ${dataMonths} months.`}
+            </ThemedText>
             <View style={styles.shareRow}>
               <View style={{ flex: 1 }}>
-                <ThemedText style={styles.shareLabel}>Last {REPORT_WEEKS} weeks</ThemedText>
-                <ThemedText style={styles.shareSub}>Adds the week view for those weeks</ThemedText>
+                <ThemedText style={styles.shareLabel}>Recent weeks</ThemedText>
+                <ThemedText style={styles.shareSub}>Adds the week view for the last weeks</ThemedText>
               </View>
               <Switch
                 value={shareWeeks}
@@ -402,6 +523,51 @@ export default function MonthViewScreen() {
                 thumbColor="#fff"
               />
             </View>
+            {shareWeeks && (
+              <View style={styles.shareRow}>
+                <ThemedText style={styles.shareLabel}>Weeks</ThemedText>
+                <View style={styles.chips}>
+                  {SHARE_WEEK_CHOICES.map((n) => {
+                    const on = n === weeksInReport;
+                    const beyondData = n > dataWeeks;
+                    return (
+                      <Pressable
+                        key={n}
+                        onPress={() => pickWeeks(n)}
+                        disabled={beyondData}
+                        style={[
+                          styles.chip,
+                          { borderColor: on ? colors.tint : colors.tileBorder },
+                          on && { backgroundColor: colors.tint },
+                          beyondData && styles.chipOff,
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: on, disabled: beyondData }}
+                        accessibilityLabel={`${n} ${n === 1 ? 'week' : 'weeks'}`}
+                      >
+                        <ThemedText style={[styles.chipText, on && styles.chipTextOn]}>{n}</ThemedText>
+                      </Pressable>
+                    );
+                  })}
+                  <TextInput
+                    style={[styles.monthsInput, { color: colors.text, borderColor: colors.tileBorder }]}
+                    value={shareWeekText}
+                    onChangeText={(t) => {
+                      const digits = t.replace(/[^0-9]/g, '');
+                      setShareWeekText(digits);
+                      const n = parseInt(digits, 10);
+                      if (n >= 1) setShareWeekCount(Math.min(n, dataWeeks));
+                    }}
+                    onBlur={() => setShareWeekText(String(weeksInReport))}
+                    keyboardType="number-pad"
+                    returnKeyType="done"
+                    selectTextOnFocus
+                    maxLength={3}
+                    accessibilityLabel="Number of weeks"
+                  />
+                </View>
+              </View>
+            )}
             <ThemedText style={styles.shareSub}>{shareLabel}</ThemedText>
             <View style={styles.shareButtons}>
               <Pressable
@@ -426,8 +592,15 @@ export default function MonthViewScreen() {
               </Pressable>
             </View>
           </View>
-        </ScrollView>
+        </KeyboardAwareScrollView>
         )}
+        <MonthPickerModal
+          visible={pickerOpen}
+          options={pickerOptions}
+          current={shownOffset}
+          onPick={setMonthOffset}
+          onClose={() => setPickerOpen(false)}
+        />
         <DayBreakdownPopover
           anchor={popover?.anchor ?? null}
           bounds={bounds}
@@ -450,6 +623,7 @@ export default function MonthViewScreen() {
 }
 
 const SHARE_MONTH_CHOICES = [1, 3, 6, 12];
+const SHARE_WEEK_CHOICES = [2, 4, 8];
 
 function AmountStat({ label, value }: { label: string; value: string }) {
   return (
@@ -509,9 +683,21 @@ const styles = StyleSheet.create({
   shareRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   shareLabel: { fontSize: 14, fontWeight: '600' },
   shareSub: { fontSize: 12, opacity: 0.5, lineHeight: 16 },
-  chips: { flexDirection: 'row', gap: 6 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center', rowGap: 6, columnGap: 6, flexShrink: 1 },
   chip: { minWidth: 36, borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, alignItems: 'center' },
+  chipOff: { opacity: 0.35 },
   chipText: { fontSize: 13, fontWeight: '600' },
+  monthsInput: {
+    minWidth: 52,
+    marginLeft: 6,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    fontSize: 15,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
   chipTextOn: { color: '#fff' },
   shareButtons: { flexDirection: 'row', gap: 10 },
   shareButton: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 10, alignItems: 'center' },

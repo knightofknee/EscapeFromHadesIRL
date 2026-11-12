@@ -18,6 +18,7 @@ import { subscribeWithOfflineState } from '@/lib/firebase/subscribe';
 // import the type from there.
 import type { SuccessColors } from '@/hooks/use-success-colors';
 import { parseBirthday } from '@/lib/win-only';
+import type { WeekStart } from '@/lib/date-utils';
 
 type UserSettingsContextValue = {
   /** Raw stored success-color overrides, or null when using the defaults. */
@@ -30,12 +31,15 @@ type UserSettingsContextValue = {
   showTileBadges: boolean;
   /** "MM-DD" or null. Its week is win-only for 60-day quests (lib/win-only). */
   birthday: string | null;
+  /** First day of the week on every grid: 1 = Monday (default), 0 = Sunday. */
+  weekStartsOn: WeekStart;
   /** Persist (or clear, with null) the success-color overrides. */
   setSuccessColors: (next: SuccessColors | null) => void;
   setWinOnlyWeekends: (value: boolean) => void;
   setShowAllTileNames: (value: boolean) => void;
   setShowTileBadges: (value: boolean) => void;
   setBirthday: (value: string | null) => void;
+  setWeekStartsOn: (value: WeekStart) => void;
 };
 
 const UserSettingsContext = createContext<UserSettingsContextValue>({
@@ -44,11 +48,13 @@ const UserSettingsContext = createContext<UserSettingsContextValue>({
   showAllTileNames: false,
   showTileBadges: true,
   birthday: null,
+  weekStartsOn: 1,
   setSuccessColors: () => {},
   setWinOnlyWeekends: () => {},
   setShowAllTileNames: () => {},
   setShowTileBadges: () => {},
   setBirthday: () => {},
+  setWeekStartsOn: () => {},
 });
 
 /**
@@ -68,6 +74,7 @@ export function UserSettingsProvider({ children }: { children: ReactNode }) {
   const [showAllTileNames, setShowAllTileNamesState] = useState(false);
   const [showTileBadges, setShowTileBadgesState] = useState(true);
   const [birthday, setBirthdayState] = useState<string | null>(null);
+  const [weekStartsOn, setWeekStartsOnState] = useState<WeekStart>(1);
 
   useEffect(() => {
     if (!user) {
@@ -76,6 +83,7 @@ export function UserSettingsProvider({ children }: { children: ReactNode }) {
       setShowAllTileNamesState(false);
       setShowTileBadgesState(true);
       setBirthdayState(null);
+      setWeekStartsOnState(1);
       return;
     }
     return subscribeWithOfflineState(
@@ -88,6 +96,7 @@ export function UserSettingsProvider({ children }: { children: ReactNode }) {
         // Stored as an opt-out so a missing field means on.
         setShowTileBadgesState(data?.hideTileBadges !== true);
         setBirthdayState(parseBirthday(data?.birthday));
+        setWeekStartsOnState(data?.weekStartsOn === 0 ? 0 : 1);
       },
       // Offline state is owned by OfflineProvider's own heartbeat on this doc.
       { setOffline: () => {} },
@@ -172,6 +181,15 @@ export function UserSettingsProvider({ children }: { children: ReactNode }) {
     [user, requireOnline, queueSettingWrite],
   );
 
+  const setWeekStartsOn = useCallback(
+    (value: WeekStart) => {
+      if (!user || !requireOnline()) return;
+      setWeekStartsOnState(value);
+      queueSettingWrite({ weekStartsOn: value });
+    },
+    [user, requireOnline, queueSettingWrite],
+  );
+
   const value = useMemo(
     () => ({
       successColors,
@@ -179,11 +197,13 @@ export function UserSettingsProvider({ children }: { children: ReactNode }) {
       showAllTileNames,
       showTileBadges,
       birthday,
+      weekStartsOn,
       setSuccessColors,
       setWinOnlyWeekends,
       setShowAllTileNames,
       setShowTileBadges,
       setBirthday,
+      setWeekStartsOn,
     }),
     [
       successColors,
@@ -191,11 +211,13 @@ export function UserSettingsProvider({ children }: { children: ReactNode }) {
       showAllTileNames,
       showTileBadges,
       birthday,
+      weekStartsOn,
       setSuccessColors,
       setWinOnlyWeekends,
       setShowAllTileNames,
       setShowTileBadges,
       setBirthday,
+      setWeekStartsOn,
     ],
   );
 

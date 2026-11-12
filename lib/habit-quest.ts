@@ -8,10 +8,35 @@ import {
   WEEK_DAYS,
   type DayOutcome,
 } from '@/lib/habit-strength';
-import type { Habit, HabitRecord } from '@/types/habit';
+import type { Habit, HabitRecord, QuadValue, RecordingMode, TripleValue } from '@/types/habit';
 
 /** Two months: about the median time a new habit takes to form (Lally 2010: 66 days; Singh 2024: 59 to 66). */
 export const QUEST_LENGTH = 60;
+
+export type QuickRecordValue = boolean | TripleValue | QuadValue | number;
+
+/**
+ * What the quest card's check writes for a tap: the first success level,
+ * the same as the home tile's first tap (`first`), and nothing recorded
+ * (`cleared`) for a tap taken back. Null for the modes whose tile opens a
+ * modal instead (value, steps, meditation, phone-free): the card's check
+ * shows those but cannot record them.
+ */
+export function quickRecordValues(mode: RecordingMode): { first: QuickRecordValue; cleared: QuickRecordValue } | null {
+  switch (mode) {
+    case 'boolean':
+      return { first: true, cleared: false };
+    case 'triple':
+      return { first: 'yes', cleared: 'no' };
+    case 'quad':
+    case 'creativeWriting':
+      return { first: 'yes', cleared: 'no' };
+    case 'counter':
+      return { first: 1, cleared: 0 };
+    default:
+      return null;
+  }
+}
 
 /** Day 60's date for a quest starting on `startDate` (day 1). */
 export function questEndDate(startDate: string): string {

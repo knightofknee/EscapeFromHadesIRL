@@ -41,11 +41,15 @@ describe('remindersFor', () => {
     expect(remindersFor(c, 'a')).toEqual([{ daysBefore: 0, time: '15:00' }]);
     expect(remindersFor(c, 'b')).toEqual([]);
   });
-  it('drops malformed times and keeps at most two', () => {
+  it('drops malformed times and keeps every valid reminder', () => {
     const c = recurring(7, [], {
       reminders: { a: [{ daysBefore: 0, time: '25:00' }, { daysBefore: 0, time: '12:00' }, { daysBefore: 1, time: '09:00' }, { daysBefore: 2, time: '10:00' }] },
     });
-    expect(remindersFor(c, 'a')).toEqual([{ daysBefore: 0, time: '12:00' }, { daysBefore: 1, time: '09:00' }]);
+    expect(remindersFor(c, 'a')).toEqual([
+      { daysBefore: 0, time: '12:00' },
+      { daysBefore: 1, time: '09:00' },
+      { daysBefore: 2, time: '10:00' },
+    ]);
   });
 });
 

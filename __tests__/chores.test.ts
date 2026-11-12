@@ -1,6 +1,7 @@
 import {
   addCompletion,
   choreStatus,
+  completionIsWin,
   countDue,
   formatDue,
   formatDuePreset,
@@ -9,8 +10,8 @@ import {
   removeCompletion,
   soonWindow,
   sortChores,
-  CHORE_HISTORY_CAP,
 } from '../lib/chores';
+import { addDays } from '../lib/date-utils';
 import type { Chore } from '../types/chore';
 
 const TODAY = '2026-09-30';
@@ -116,12 +117,16 @@ describe('sortChores', () => {
 });
 
 describe('completions', () => {
-  test('dedupes, keeps newest first, caps', () => {
+  test('dedupes, keeps newest first, never caps', () => {
     expect(addCompletion(['2026-09-20'], '2026-09-25')).toEqual(['2026-09-25', '2026-09-20']);
     expect(addCompletion(['2026-09-25'], '2026-09-20')).toEqual(['2026-09-25', '2026-09-20']);
     expect(addCompletion(['2026-09-25'], '2026-09-25')).toEqual(['2026-09-25']);
-    const many = Array.from({ length: CHORE_HISTORY_CAP }, (_, i) => `2026-08-${String(i + 1).padStart(2, '0')}`);
-    expect(addCompletion(many, TODAY)).toHaveLength(CHORE_HISTORY_CAP);
+    // A daily chore logged every day for two years keeps every day.
+    const twoYears = Array.from({ length: 730 }, (_, i) => addDays('2024-09-01', i)).reverse();
+    const grown = addCompletion(twoYears, TODAY);
+    expect(grown).toHaveLength(731);
+    expect(grown[0]).toBe(TODAY);
+    expect(grown[730]).toBe('2024-09-01');
     expect(removeCompletion(['2026-09-25', '2026-09-20'], '2026-09-25')).toEqual(['2026-09-20']);
   });
 });
@@ -246,5 +251,38 @@ describe('countDue (tab bubbles)', () => {
 
   test('nothing to do is zero', () => {
     expect(countDue([], TODAY)).toEqual({ due: 0, overdue: 0 });
+  });
+});
+
+describe('completionIsWin', () => {
+  const task = (dueDate?: string, completions: string[] = []): Chore => ({
+    ...chore('t', 0, completions),
+    kind: 'once',
+    dueDate,
+    createdAt: new Date('2026-09-20T12:00:00').getTime(),
+  });
+
+  it('is a win when a due, overdue or soon chore is logged back to fresh', () => {
+    expect(completionIsWin(chore('a', 7, ['2026-09-23']), TODAY, TODAY)).toBe(true); // due
+    expect(completionIsWin(chore('a', 7, ['2026-09-10']), TODAY, TODAY)).toBe(true); // overdue
+    expect(completionIsWin(chore('a', 7, ['2026-09-25']), TODAY, TODAY)).toBe(true); // soon
+    expect(completionIsWin(chore('a', 7, ['2026-09-20']), '2026-09-29', TODAY)).toBe(true); // yesterday counts
+  });
+
+  it('is not a win on a fresh or unscheduled chore, or when removing a day', () => {
+    expect(completionIsWin(chore('a', 7, ['2026-09-28']), TODAY, TODAY)).toBe(false); // fresh
+    expect(completionIsWin(chore('a', 0, []), TODAY, TODAY)).toBe(false); // whenever
+    expect(completionIsWin(chore('a', 7, ['2026-09-23', TODAY]), TODAY, TODAY)).toBe(false); // already logged
+  });
+
+  it('is not a win when the logged day leaves the chore still due', () => {
+    expect(completionIsWin(chore('a', 7, ['2026-09-10']), '2026-09-20', TODAY)).toBe(false);
+  });
+
+  it('marks a due task done as a win, and an already done task as none', () => {
+    expect(completionIsWin(task(), TODAY, TODAY)).toBe(true); // no due date: due today
+    expect(completionIsWin(task('2026-10-01'), TODAY, TODAY)).toBe(true); // soon
+    expect(completionIsWin(task('2026-10-30'), TODAY, TODAY)).toBe(false); // fresh
+    expect(completionIsWin(task('2026-09-25', ['2026-09-26']), TODAY, TODAY)).toBe(false); // done
   });
 });

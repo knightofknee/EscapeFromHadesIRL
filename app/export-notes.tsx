@@ -1,9 +1,11 @@
 import { useState, useMemo } from 'react';
-import { StyleSheet, ScrollView, View, Pressable, Alert } from 'react-native';
+import { StyleSheet, ScrollView, View, Pressable, Alert, Modal } from 'react-native';
 import { router } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { TagChip } from '@/components/notes/tag-chip';
+import { DateCalendar } from '@/components/chores/date-calendar';
+import { getTodayString, parseDate } from '@/lib/date-utils';
 import { useAllNotes } from '@/hooks/use-notes';
 import { useTags } from '@/hooks/use-tags';
 import { useAuth } from '@/contexts/auth-context';
@@ -27,12 +29,28 @@ export default function ExportScreen() {
   const colors = Colors[colorScheme ?? 'light'];
 
   const [filterTagId, setFilterTagId] = useState<string | null>(null);
+  // Date range on the edited date (the notes list's default order). YYYY-MM-DD
+  // or null for no bound.
+  const [fromDate, setFromDate] = useState<string | null>(null);
+  const [toDate, setToDate] = useState<string | null>(null);
+  const [pickingDate, setPickingDate] = useState<'from' | 'to' | null>(null);
   const [exporting, setExporting] = useState(false);
+  const today = getTodayString();
 
   const filteredNotes = useMemo(() => {
-    if (!filterTagId) return notes;
-    return notes.filter((note) => note.tags.some((t) => t.tagId === filterTagId));
-  }, [notes, filterTagId]);
+    // Local-day bounds: from 00:00 on the start day through the end of the end day.
+    const fromMs = fromDate ? parseDate(fromDate).getTime() : -Infinity;
+    const toMs = toDate ? parseDate(toDate).getTime() + 24 * 60 * 60 * 1000 : Infinity;
+    return notes.filter(
+      (note) =>
+        (!filterTagId || note.tags.some((t) => t.tagId === filterTagId)) &&
+        note.updatedAt >= fromMs &&
+        note.updatedAt < toMs,
+    );
+  }, [notes, filterTagId, fromDate, toDate]);
+
+  const pickedValue = pickingDate === 'from' ? fromDate : toDate;
+  const setPicked = pickingDate === 'from' ? setFromDate : setToDate;
 
   async function handleExport() {
     if (filteredNotes.length === 0) {
@@ -110,6 +128,27 @@ export default function ExportScreen() {
           ))}
         </View>
 
+        {/* Date range */}
+        <ThemedText type="defaultSemiBold" style={styles.label}>
+          Date range (optional, by edited date)
+        </ThemedText>
+        <View style={styles.tagRow}>
+          <Pressable
+            style={[styles.dateButton, { borderColor: fromDate ? colors.tint : colors.tileBorder }]}
+            onPress={() => setPickingDate('from')}
+            accessibilityRole="button"
+          >
+            <ThemedText style={styles.dateButtonText}>From: {fromDate ?? 'first note'}</ThemedText>
+          </Pressable>
+          <Pressable
+            style={[styles.dateButton, { borderColor: toDate ? colors.tint : colors.tileBorder }]}
+            onPress={() => setPickingDate('to')}
+            accessibilityRole="button"
+          >
+            <ThemedText style={styles.dateButtonText}>To: {toDate ?? 'today'}</ThemedText>
+          </Pressable>
+        </View>
+
         <ThemedText style={styles.count}>
           {isLoading
             ? 'Loading notes…'
@@ -142,6 +181,46 @@ export default function ExportScreen() {
           <ThemedText style={[styles.cancelText, { color: colors.tint }]}>Cancel</ThemedText>
         </Pressable>
       </ScrollView>
+
+      <Modal
+        visible={pickingDate !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPickingDate(null)}
+      >
+        <Pressable style={styles.overlay} onPress={() => setPickingDate(null)}>
+          <Pressable
+            style={[styles.sheet, { backgroundColor: colors.tileBackground }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <ThemedText type="defaultSemiBold">
+              {pickingDate === 'from' ? 'From' : 'To'}
+            </ThemedText>
+            <DateCalendar
+              value={pickedValue ?? today}
+              today={today}
+              onChange={(date) => {
+                setPicked(date);
+                setPickingDate(null);
+              }}
+            />
+            <View style={styles.sheetActions}>
+              <Pressable
+                style={styles.sheetButton}
+                onPress={() => {
+                  setPicked(null);
+                  setPickingDate(null);
+                }}
+              >
+                <ThemedText style={[styles.cancelText, { color: colors.tint }]}>Clear</ThemedText>
+              </Pressable>
+              <Pressable style={styles.sheetButton} onPress={() => setPickingDate(null)}>
+                <ThemedText style={[styles.cancelText, { color: colors.tint }]}>Cancel</ThemedText>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ThemedView>
   );
 }
@@ -170,4 +249,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cancelText: { fontWeight: '600', fontSize: 16 },
+  dateButton: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  dateButtonText: { fontSize: 14 },
+  overlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    paddingHorizontal: 16,
+  },
+  sheet: {
+    width: '100%',
+    maxWidth: 360,
+    borderRadius: 12,
+    padding: 16,
+    gap: 12,
+  },
+  sheetActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  sheetButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
 });

@@ -31,6 +31,44 @@ export const TILE_COLORS = [
 
 export const DEFAULT_TILE_COLOR = TILE_COLORS[5]; // blue
 
+/**
+ * One palette for every color picker (tile color, vacation color, Colors of
+ * Success). The tile palette first, then the extra shades the success picker
+ * had, so every stored choice from either list still shows as selected.
+ * TILE_COLORS stays the 16-color set used for starter tasks and glyph strokes.
+ */
+export const COLOR_PALETTE: readonly string[] = [
+  ...TILE_COLORS,
+  '#FF6B6B', // coral
+  '#F39C12', // marigold
+  '#27AE60', // deep green
+  '#16A085', // deep teal
+  '#2980B9', // deep blue
+  '#8E44AD', // deep purple
+  '#D35400', // burnt orange
+  '#95A5A6', // silver
+  '#7F8C8D', // slate
+  '#FF9FF3', // pink pastel
+  '#54A0FF', // sky
+  '#5F27CD', // indigo
+  '#01A3A4', // sea
+  '#D5D8DC', // light grey
+  '#4A4D52', // charcoal
+];
+
+const HEX_COLOR = /^#[0-9A-F]{6}$/i;
+
+/** True for a #RRGGBB string. */
+export function isHexColor(value: string): boolean {
+  return HEX_COLOR.test(value);
+}
+
+/** True when the hex is one of the palette swatches (case-insensitive). */
+export function isPaletteColor(value: string): boolean {
+  const upper = value.toUpperCase();
+  return COLOR_PALETTE.some((c) => c === upper);
+}
+
 // Rolling-average line color per habit color — the color-wheel complement
 // (or nearest high-contrast neighbor) drawn from the same palette, so the
 // featured line never blends into its own habit's bars. Warm habits get

@@ -11,7 +11,8 @@ import {
 } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
-import { TILE_COLORS } from '@/constants/grid';
+import { COLOR_PALETTE, isPaletteColor } from '@/constants/grid';
+import { ColorHexField } from '@/components/ui/color-field';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
   updateVacationDay,
@@ -59,6 +60,8 @@ export function VacationEditModal({
 
   const [label, setLabel] = useState(initialLabel);
   const [color, setColor] = useState(initialColor);
+  const [customOpen, setCustomOpen] = useState(false);
+  const isCustomColor = !isPaletteColor(color);
   const [scope, setScope] = useState<Scope>('day');
   const [submitting, setSubmitting] = useState(false);
 
@@ -70,6 +73,7 @@ export function VacationEditModal({
     if (visible) {
       setLabel(initialLabel);
       setColor(initialColor);
+      setCustomOpen(false);
       setScope('day');
       setSubmitting(false);
     }
@@ -207,22 +211,43 @@ export function VacationEditModal({
 
             <ThemedText style={styles.fieldLabel}>Color</ThemedText>
             <View style={styles.colorGrid}>
-              {TILE_COLORS.map((c) => (
+              {COLOR_PALETTE.map((c) => (
                 <Pressable
                   key={c}
                   style={[
                     styles.colorSwatch,
                     { backgroundColor: c },
-                    color === c && [
+                    color.toUpperCase() === c && [
                       styles.colorSwatchSelected,
                       { borderColor: colors.text },
                     ],
                   ]}
-                  onPress={() => setColor(c)}
+                  onPress={() => {
+                    setCustomOpen(false);
+                    setColor(c);
+                  }}
                   accessibilityLabel={`Select color ${c}`}
                 />
               ))}
+              {/* Custom: any #RRGGBB. Shows the custom color once one is chosen. */}
+              <Pressable
+                style={[
+                  styles.colorSwatch,
+                  styles.customSwatch,
+                  isCustomColor
+                    ? [{ backgroundColor: color }, styles.colorSwatchSelected, { borderColor: colors.text }]
+                    : { backgroundColor: colors.tileBackground, borderWidth: 1, borderColor: colors.tileBorder },
+                ]}
+                onPress={() => setCustomOpen((open) => !open)}
+                accessibilityRole="button"
+                accessibilityLabel="Custom color"
+              >
+                <ThemedText style={[styles.customSwatchText, { color: isCustomColor ? '#fff' : colors.text }]}>
+                  +
+                </ThemedText>
+              </Pressable>
             </View>
+            {customOpen && <ColorHexField value={color} onChange={setColor} autoFocus />}
           </ScrollView>
 
           <View style={styles.buttons}>
@@ -354,6 +379,15 @@ const styles = StyleSheet.create({
   },
   colorSwatchSelected: {
     borderWidth: 3,
+  },
+  customSwatch: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  customSwatchText: {
+    fontSize: 20,
+    fontWeight: '700',
+    lineHeight: 24,
   },
   buttons: {
     flexDirection: 'row',

@@ -197,6 +197,9 @@ export const NoteListItem = memo(function NoteListItem({ note, tags, sortBy = 'u
             {uniqueTags.slice(0, 5).map((tag) => (
               <TagChip key={tag.id} name={tag.name} color={tag.color} small dense />
             ))}
+            {uniqueTags.length > 5 && (
+              <TagChip name={`+${uniqueTags.length - 5}`} small dense />
+            )}
           </View>
         )}
       </Pressable>

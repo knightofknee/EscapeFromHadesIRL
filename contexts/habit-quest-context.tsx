@@ -4,7 +4,9 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  type MutableRefObject,
   type ReactNode,
 } from 'react';
 import { useAuth } from '@/contexts/auth-context';
@@ -33,6 +35,12 @@ type HabitQuestContextValue = {
   finishQuest: (result: QuestResult) => void;
   /** Drop the running quest entirely (no history). */
   abandonQuest: () => void;
+  /**
+   * The date whose per-day celebration already played from the quest
+   * card's check, so the Habits grid does not play it again when it next
+   * sees that day recorded (tabs freeze on blur, so it sees it late).
+   */
+  celebratedDateRef: MutableRefObject<string | null>;
 };
 
 export type QuestResult = { attemptStart: string; endDate: string; daysDone: number; strength: number };
@@ -44,6 +52,7 @@ const HabitQuestContext = createContext<HabitQuestContextValue>({
   startQuest: () => {},
   finishQuest: () => {},
   abandonQuest: () => {},
+  celebratedDateRef: { current: null },
 });
 
 /**
@@ -175,8 +184,9 @@ export function HabitQuestProvider({ children }: { children: ReactNode }) {
     write();
   }, [user, activeQuest, requireOnline]);
 
+  const celebratedDateRef = useRef<string | null>(null);
   const value = useMemo(
-    () => ({ activeQuest, pastQuests, isLoading, startQuest, finishQuest, abandonQuest }),
+    () => ({ activeQuest, pastQuests, isLoading, startQuest, finishQuest, abandonQuest, celebratedDateRef }),
     [activeQuest, pastQuests, isLoading, startQuest, finishQuest, abandonQuest],
   );
 

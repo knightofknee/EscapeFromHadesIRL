@@ -23,15 +23,14 @@ export type ScheduleChore = {
   dueDate?: string;
   completions: string[];
   createdAt?: number;
-  /** Per person, keyed by uid, up to MAX_REMINDERS each. */
+  /** Per person, keyed by uid, any number each. */
   reminders?: Record<string, ChoreReminder[]>;
   /** Legacy one-time-task reminder (owner only, on the due day). */
   reminderTime?: string | null;
 };
 
-export const MAX_REMINDERS = 2;
 export const DEFAULT_REMINDER_TIME = '12:00';
-/** Offered "days before" choices; a recurring chore only offers ones shorter than its cycle. */
+/** Quick-pick "days before" choices (any number up to the cycle can be typed); a recurring chore only offers ones shorter than its cycle. */
 export const REMINDER_DAYS_BEFORE = [0, 1, 2, 3, 7] as const;
 
 export function addDaysStr(date: string, days: number): string {
@@ -48,7 +47,7 @@ export function isValidTime(time: string | null | undefined): time is string {
 /** This person's reminders on this chore (the legacy task reminder reads as the owner's). */
 export function remindersFor(chore: ScheduleChore, uid: string): ChoreReminder[] {
   const own = chore.reminders?.[uid];
-  if (own) return own.filter((r) => isValidTime(r.time)).slice(0, MAX_REMINDERS);
+  if (own) return own.filter((r) => isValidTime(r.time));
   if (uid === chore.userId && chore.kind === 'once' && isValidTime(chore.reminderTime)) {
     return [{ daysBefore: 0, time: chore.reminderTime }];
   }

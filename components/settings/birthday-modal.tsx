@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Modal, Platform, Pressable, StyleSheet, View } from 'react-native';
+import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -18,7 +19,11 @@ const MONTHS = [
   'November',
   'December',
 ];
-const DAYS_IN = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+/** The stored value is month and day only ("MM-DD"). The picker needs a
+ *  full date, so it is shown in a leap year to keep Feb 29 pickable; the
+ *  year is dropped on save. */
+const PICKER_YEAR = 2024;
 
 /** "10-16" → "Oct 16". */
 export function formatBirthday(mmdd: string): string {
@@ -26,9 +31,18 @@ export function formatBirthday(mmdd: string): string {
   return `${MONTHS[m - 1].slice(0, 3)} ${d}`;
 }
 
+function toPickerDate(mmdd: string | null): Date {
+  const [m, d] = (mmdd ?? '01-01').split('-').map(Number);
+  return new Date(PICKER_YEAR, m - 1, d);
+}
+
+function toMmdd(date: Date): string {
+  return `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
 /**
- * Month and day only (no year). Arrow steppers, wrapping around, the day
- * clamped to the month. Save stores it; Clear removes it.
+ * Month and day only (no year). Native date picker: an inline spinner on
+ * iOS, the system dialog on Android. Save stores it; Clear removes it.
  */
 export function BirthdayModal({
   visible,
@@ -43,27 +57,14 @@ export function BirthdayModal({
 }) {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
-  const [month, setMonth] = useState(1);
-  const [day, setDay] = useState(1);
+  const [date, setDate] = useState(() => toPickerDate(value));
 
   useEffect(() => {
     if (!visible) return;
-    const [m, d] = (value ?? '01-01').split('-').map(Number);
-    setMonth(m);
-    setDay(d);
+    setDate(toPickerDate(value));
   }, [visible, value]);
 
-  const stepMonth = (dir: -1 | 1) => {
-    const next = ((month - 1 + dir + 12) % 12) + 1;
-    setMonth(next);
-    setDay((d) => Math.min(d, DAYS_IN[next - 1]));
-  };
-  const stepDay = (dir: -1 | 1) => {
-    const max = DAYS_IN[month - 1];
-    setDay((d) => ((d - 1 + dir + max) % max) + 1);
-  };
-
-  const mmdd = `${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const mmdd = toMmdd(date);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -75,9 +76,37 @@ export function BirthdayModal({
           <ThemedText style={styles.title}>Birthday</ThemedText>
           <ThemedText style={styles.subtitle}>
             The day before through 6 days after is win-only for 60-day quests.
+            Month and day only. The year is not saved.
           </ThemedText>
-          <Stepper label={MONTHS[month - 1]} onStep={stepMonth} tint={colors.tint} name="month" />
-          <Stepper label={String(day)} onStep={stepDay} tint={colors.tint} name="day" />
+          {Platform.OS === 'ios' ? (
+            <DateTimePicker
+              value={date}
+              mode="date"
+              display="spinner"
+              themeVariant={scheme}
+              accentColor={colors.tint}
+              textColor={colors.text}
+              style={styles.spinner}
+              onChange={(_e, next) => next && setDate(next)}
+            />
+          ) : (
+            <Pressable
+              onPress={() =>
+                DateTimePickerAndroid.open({
+                  value: date,
+                  mode: 'date',
+                  onChange: (event, next) => {
+                    if (event.type === 'set' && next) setDate(next);
+                  },
+                })
+              }
+              style={[styles.dateButton, { borderColor: colors.tint }]}
+              accessibilityRole="button"
+              accessibilityLabel={`Birthday ${formatBirthday(mmdd)}`}
+            >
+              <ThemedText style={styles.dateButtonText}>{formatBirthday(mmdd)}</ThemedText>
+            </Pressable>
+          )}
           <View style={styles.buttons}>
             {value && (
               <Pressable
@@ -112,40 +141,6 @@ export function BirthdayModal({
   );
 }
 
-function Stepper({
-  label,
-  onStep,
-  tint,
-  name,
-}: {
-  label: string;
-  onStep: (dir: -1 | 1) => void;
-  tint: string;
-  name: string;
-}) {
-  return (
-    <View style={styles.stepper}>
-      <Pressable
-        onPress={() => onStep(-1)}
-        style={[styles.arrow, { borderColor: tint }]}
-        hitSlop={6}
-        accessibilityLabel={`Previous ${name}`}
-      >
-        <ThemedText style={[styles.arrowText, { color: tint }]}>‹</ThemedText>
-      </Pressable>
-      <ThemedText style={styles.stepValue}>{label}</ThemedText>
-      <Pressable
-        onPress={() => onStep(1)}
-        style={[styles.arrow, { borderColor: tint }]}
-        hitSlop={6}
-        accessibilityLabel={`Next ${name}`}
-      >
-        <ThemedText style={[styles.arrowText, { color: tint }]}>›</ThemedText>
-      </Pressable>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
@@ -164,17 +159,15 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 17, fontWeight: '700' },
   subtitle: { fontSize: 13, opacity: 0.6, marginTop: -8 },
-  stepper: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  arrow: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
+  spinner: { alignSelf: 'stretch' },
+  dateButton: {
+    alignSelf: 'center',
     borderWidth: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderRadius: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 9,
   },
-  arrowText: { fontSize: 22, fontWeight: '600', lineHeight: 22 },
-  stepValue: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '600' },
+  dateButtonText: { fontSize: 17, fontWeight: '600' },
   buttons: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
   clear: { paddingVertical: 9, paddingHorizontal: 4 },
   clearText: { fontSize: 15, fontWeight: '600' },

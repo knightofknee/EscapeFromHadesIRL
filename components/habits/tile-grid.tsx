@@ -1,15 +1,17 @@
-import { useState, useCallback, useMemo, memo, type RefObject } from 'react';
+import { useState, useCallback, useMemo, useRef, memo, type RefObject } from 'react';
 import { StyleSheet, View, Pressable, Platform, LayoutChangeEvent } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '@/constants/theme';
 import { GRID } from '@/constants/grid';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { TileContent } from './tile-content';
+import { FloatTile } from './float-tile';
+import { gridLines, type Rect } from '@/lib/float-tile';
 import { HoloFoil } from '@/components/habit-quest/holo-foil';
 import { TileBadges } from '@/components/habit-quest/tile-badges';
 import type { HabitBadge } from '@/hooks/use-habit-badges';
 import { isRecordCompleted } from '@/lib/habit-scoring';
-import type { Habit, HabitRecord } from '@/types/habit';
+import type { FloatPlacement, Habit, HabitRecord } from '@/types/habit';
 
 type TileGridProps = {
   habits: Habit[];
@@ -24,6 +26,17 @@ type TileGridProps = {
   holoTileRef?: RefObject<View | null>;
   /** 60-day medals and remission marks, by habit id. */
   badges?: Map<string, HabitBadge>;
+  /**
+   * Placement mode (the habit editor): this habit floats with the given
+   * placement and can be dragged and pinched; every drop is reported, not
+   * saved. The habit may be a draft that is not in `habits` yet. Every other
+   * tile is drawn as on the home screen but locked.
+   */
+  editingFloat?: {
+    habit: Habit;
+    float: FloatPlacement;
+    onChange: (float: FloatPlacement) => void;
+  };
 };
 
 function sizeWeight(size: number): number {
@@ -41,6 +54,7 @@ const MeasuredTile = memo(function MeasuredTile({
   holoFlashKey,
   holoTileRef,
   badge,
+  onMeasure,
 }: {
   habit: Habit;
   record?: HabitRecord;
@@ -52,14 +66,21 @@ const MeasuredTile = memo(function MeasuredTile({
   holoFlashKey: number;
   holoTileRef?: RefObject<View | null>;
   badge?: HabitBadge;
+  /** Reports the tile's rect within its row, for the float snap lines. */
+  onMeasure?: (habitId: string, rect: Rect) => void;
 }) {
   const [tileW, setTileW] = useState(0);
   const [tileH, setTileH] = useState(0);
 
-  const handleLayout = useCallback((e: LayoutChangeEvent) => {
-    setTileW(e.nativeEvent.layout.width);
-    setTileH(e.nativeEvent.layout.height);
-  }, []);
+  const habitId = habit.id;
+  const handleLayout = useCallback(
+    (e: LayoutChangeEvent) => {
+      setTileW(e.nativeEvent.layout.width);
+      setTileH(e.nativeEvent.layout.height);
+      onMeasure?.(habitId, e.nativeEvent.layout);
+    },
+    [onMeasure, habitId],
+  );
 
   // Through the shared completion table — an inline truthy check here is how
   // the value-mode "0" bug shipped (string "0" passed !== 0 and !== '').
@@ -108,14 +129,20 @@ export function TileGrid({
   holoFlashKey = 0,
   holoTileRef,
   badges,
+  editingFloat,
 }: TileGridProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
-  // Memoized on `habits` so a record change (a new Map every habit tap)
-  // doesn't recompute the entire grid layout on every render.
-  const { rows, rowWeights } = useMemo(() => {
-    const sorted = [...habits].sort(
+  // Floating habits sit above the grid and take no cell: the row/column
+  // layout is computed from the others alone, so adding a float never
+  // reshapes the grid. The habit being placed is drawn separately, so it
+  // leaves both the grid and the locked floats.
+  const editingId = editingFloat?.habit.id;
+  const { rows, rowWeights, floats } = useMemo(() => {
+    const others = habits.filter((h) => h.id !== editingId);
+    const floating = others.filter((h) => h.float != null);
+    const sorted = others.filter((h) => h.float == null).sort(
       (a, b) => a.position.row * 100 + a.position.col - (b.position.row * 100 + b.position.col),
     );
     const targetCols =
@@ -135,16 +162,45 @@ export function TileGrid({
     const weights = builtRows.map((row) =>
       Math.max(...row.map((h) => sizeWeight(h.tileSize))),
     );
-    return { rows: builtRows, rowWeights: weights };
-  }, [habits]);
+    return { rows: builtRows, rowWeights: weights, floats: floating };
+  }, [habits, editingId]);
 
+  // Measured geometry for the float snap lines: row rects in the container,
+  // tile rects within their row. Refs, not state: layout events fire for
+  // every tile on every grid change and nothing needs to re-render for them;
+  // the lines are read once, when a float is dropped.
+  const rowRectsRef = useRef<Map<number, Rect>>(new Map());
+  const tileRectsRef = useRef<Map<string, Rect>>(new Map());
+  const [gridSize, setGridSize] = useState({ width: 0, height: 0 });
+  const onGridLayout = useCallback((e: LayoutChangeEvent) => {
+    const { width, height } = e.nativeEvent.layout;
+    setGridSize((s) => (s.width === width && s.height === height ? s : { width, height }));
+  }, []);
+  const onTileMeasure = useCallback((habitId: string, rect: Rect) => {
+    tileRectsRef.current.set(habitId, rect);
+  }, []);
+  const getLines = useCallback(() => {
+    const rowRects: Rect[] = [];
+    const tileRects: Rect[][] = [];
+    rows.forEach((row, ri) => {
+      const r = rowRectsRef.current.get(ri);
+      if (!r) return;
+      rowRects.push(r);
+      tileRects.push(row.map((h) => tileRectsRef.current.get(h.id)).filter((t): t is Rect => t != null));
+    });
+    return gridLines(rowRects, tileRects);
+  }, [rows]);
   return (
-    <View style={[styles.container, { backgroundColor: colors.gridBackground }]}>
+    <View style={[styles.container, { backgroundColor: colors.gridBackground }]} onLayout={onGridLayout}>
       {rows.map((row, ri) => {
         const colWeights = row.map((h) => sizeWeight(h.tileSize));
 
         return (
-          <View key={ri} style={[styles.row, { flex: rowWeights[ri] }]}>
+          <View
+            key={ri}
+            style={[styles.row, { flex: rowWeights[ri] }]}
+            onLayout={(e) => rowRectsRef.current.set(ri, e.nativeEvent.layout)}
+          >
             {row.map((habit, ci) => (
               <MeasuredTile
                 key={habit.id}
@@ -158,11 +214,41 @@ export function TileGrid({
                 holoFlashKey={habit.id === holoHabitId ? holoFlashKey : 0}
                 holoTileRef={holoTileRef}
                 badge={badges?.get(habit.id)}
+                onMeasure={onTileMeasure}
               />
             ))}
           </View>
         );
       })}
+      {gridSize.width > 0 &&
+        floats.map((habit) => (
+          <FloatTile
+            key={habit.id}
+            habit={habit}
+            float={habit.float!}
+            record={records.get(habit.id)}
+            width={gridSize.width}
+            height={gridSize.height}
+            colors={colors}
+            getLines={getLines}
+            onTap={onTapHabit}
+            onLongPress={onLongPressHabit}
+          />
+        ))}
+      {gridSize.width > 0 && editingFloat && (
+        <FloatTile
+          key={editingFloat.habit.id}
+          habit={editingFloat.habit}
+          float={editingFloat.float}
+          record={records.get(editingFloat.habit.id)}
+          width={gridSize.width}
+          height={gridSize.height}
+          colors={colors}
+          getLines={getLines}
+          editable
+          onChange={editingFloat.onChange}
+        />
+      )}
     </View>
   );
 }

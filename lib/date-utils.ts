@@ -13,6 +13,21 @@ export function addDays(dateStr: string, days: number): string {
   return formatDate(date);
 }
 
+/** 0 = Sunday, 1 = Monday: the first day of the week on every grid. */
+export type WeekStart = 0 | 1;
+
+/** The first day (YYYY-MM-DD) of the week holding `dateStr`. */
+export function weekStartOf(dateStr: string, weekStartsOn: WeekStart = 1): string {
+  return addDays(dateStr, -((parseDate(dateStr).getDay() - weekStartsOn + 7) % 7));
+}
+
+/** Weekday numbers (0 = Sunday) in grid order for a week start. */
+export function weekdayOrder(weekStartsOn: WeekStart = 1): number[] {
+  return Array.from({ length: 7 }, (_, i) => (i + weekStartsOn) % 7);
+}
+
+export const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+
 /** Parse a YYYY-MM-DD string into a local Date. */
 export function parseDate(dateStr: string): Date {
   const [y, m, d] = dateStr.split('-').map(Number);

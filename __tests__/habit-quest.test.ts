@@ -6,6 +6,7 @@ import {
   computeQuestProgress,
   didParticipate,
   questEndDate,
+  quickRecordValues,
 } from '@/lib/habit-quest';
 import {
   DECAY,
@@ -721,5 +722,22 @@ describe('rough weeks are tolerated (the big picture wins)', () => {
         .map((i) => rec(addDays(start, i), true));
       expect(finish(recs).earnedBadge).toBe(true);
     }
+  });
+});
+
+describe('quickRecordValues', () => {
+  it('records the first level for the tap-to-record modes, like the home tile', () => {
+    expect(quickRecordValues('boolean')).toEqual({ first: true, cleared: false });
+    expect(quickRecordValues('triple')).toEqual({ first: 'yes', cleared: 'no' });
+    expect(quickRecordValues('quad')).toEqual({ first: 'yes', cleared: 'no' });
+    expect(quickRecordValues('creativeWriting')).toEqual({ first: 'yes', cleared: 'no' });
+    expect(quickRecordValues('counter')).toEqual({ first: 1, cleared: 0 });
+  });
+
+  it('has nothing to write for the modes whose tile opens a modal', () => {
+    expect(quickRecordValues('value')).toBeNull();
+    expect(quickRecordValues('steps')).toBeNull();
+    expect(quickRecordValues('meditation')).toBeNull();
+    expect(quickRecordValues('phoneFree')).toBeNull();
   });
 });

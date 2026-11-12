@@ -4,7 +4,9 @@ import {
   computeValueAverages,
   formatStatValue,
   isValueTrendHabit,
+  monthsOfHistory,
   recordNumericValue,
+  statsWindowStartDate,
 } from '../lib/habit-stats';
 import { formatDate } from '../lib/date-utils';
 import { LEVEL_CHECKERS } from '../lib/habit-scoring';
@@ -198,5 +200,48 @@ describe('computeMonthlyRates', () => {
     expect(august.avg).toBe(100);
     // Sep so far is 0% over its 2 counted days: (100 + 0) / 2, rounded.
     expect(data[data.length - 1].avg).toBe(50);
+  });
+});
+
+describe('months window helpers', () => {
+  test('monthsOfHistory counts calendar months inclusive', () => {
+    const now = new Date(2026, 10, 5); // Nov 2026
+    expect(monthsOfHistory(new Date(2026, 10, 1).getTime(), now)).toBe(1);
+    expect(monthsOfHistory(new Date(2026, 2, 31).getTime(), now)).toBe(9); // Mar..Nov
+    expect(monthsOfHistory(new Date(2024, 10, 30).getTime(), now)).toBe(25);
+    // Never below one month, even for a timestamp in the future.
+    expect(monthsOfHistory(new Date(2027, 0, 1).getTime(), now)).toBe(1);
+  });
+
+  test('statsWindowStartDate is the first day of the oldest month shown', () => {
+    const now = new Date(2026, 10, 5);
+    expect(statsWindowStartDate(1, now)).toBe('2026-11-01');
+    expect(statsWindowStartDate(18, now)).toBe('2025-06-01');
+    expect(statsWindowStartDate(40, now)).toBe('2023-08-01');
+  });
+});
+
+describe('windows longer than the rolling lookback', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date(2026, 8, 3, 12, 0, 0)); // 2026-09-03
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test('a 40-month window returns 40 months and keeps old data', () => {
+    const habit = makeHabit('boolean');
+    const records: HabitRecord[] = [];
+    // Every day of June 2023, the oldest month of a 40-month window ending Sep 2026.
+    for (let d = 1; d <= 30; d++) records.push(makeRecord(formatDate(new Date(2023, 5, d)), true));
+    const data = computeMonthlyRates(habit, indexOf(records), 40, LEVEL_CHECKERS[0], new Set(), false);
+    expect(data).toHaveLength(40);
+    expect(data[0].date).toBe('2023-06');
+    expect(data[0].value).toBe(100);
+    expect(data[0].avg).toBe(100);
+    const values = computeMonthlyValueAverages(habit, indexOf(records), 40, new Set(), false);
+    expect(values).toHaveLength(40);
+    expect(values[values.length - 1].date).toBe('2026-09');
   });
 });

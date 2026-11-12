@@ -3,9 +3,6 @@ import type { Chore } from '@/types/chore';
 
 export const CHORES_COLLECTION = 'chores';
 
-/** Completion dates kept per chore (enough history for the detail sheet). */
-export const CHORE_HISTORY_CAP = 30;
-
 /**
  * Where a chore stands today:
  * - overdue: a week or more past due (red)
@@ -114,6 +111,24 @@ export function choreStatus(chore: StatusInput, today: string): ChoreStatus {
   return { state, daysSince: last ? elapsed : null, dueIn, ratio: elapsed / freq };
 }
 
+/** Needs attention: on the docket or coming up (gold, red or blue). */
+export function needsAttention(state: ChoreState): boolean {
+  return isPastDue(state) || state === 'soon';
+}
+
+/**
+ * A win: logging `date` takes a chore that needs attention off the docket
+ * (the detail sheet celebrates and closes on one). Removing a day, logging
+ * a day that leaves it still due, or logging onto a chore that is already
+ * fresh or done is bookkeeping, not a win.
+ */
+export function completionIsWin(chore: StatusInput, date: string, today: string): boolean {
+  if (chore.completions.includes(date)) return false;
+  if (!needsAttention(choreStatus(chore, today).state)) return false;
+  const after = choreStatus({ ...chore, completions: addCompletion(chore.completions, date) }, today);
+  return !needsAttention(after.state);
+}
+
 /**
  * How many chores and tasks need attention today, split the way the tab
  * bubbles show them: gold `due` (on the docket) and red `overdue` (a week
@@ -177,11 +192,15 @@ export function sortChores(chores: Chore[], today: string): SortedChore[] {
     });
 }
 
-/** Add a completion date: deduped, newest first, capped. */
+/**
+ * Add a completion date: deduped, newest first. Never capped: the whole
+ * history is 10-char strings (years of a daily chore are a few KB against
+ * the 1 MB doc limit), and the sheet lets any past day be logged.
+ */
 export function addCompletion(completions: string[], date: string): string[] {
   const next = [date, ...completions.filter((d) => d !== date)];
   next.sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
-  return next.slice(0, CHORE_HISTORY_CAP);
+  return next;
 }
 
 export function removeCompletion(completions: string[], date: string): string[] {

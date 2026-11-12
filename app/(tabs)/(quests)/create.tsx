@@ -298,7 +298,7 @@ export default function CreateQuestScreen() {
               onChangeText={setCustomName}
               placeholder="Name your pact..."
               placeholderTextColor={QuestColors.textDim}
-              maxLength={100}
+              maxLength={500}
             />
 
             <ThemedText style={styles.sectionLabel}>DESCRIPTION</ThemedText>
@@ -310,7 +310,7 @@ export default function CreateQuestScreen() {
               placeholderTextColor={QuestColors.textDim}
               multiline
               numberOfLines={3}
-              maxLength={1000}
+              maxLength={5000}
             />
 
             <View style={styles.whyHeader}>
@@ -342,7 +342,7 @@ export default function CreateQuestScreen() {
               placeholderTextColor={QuestColors.textDim}
               multiline
               numberOfLines={4}
-              maxLength={2000}
+              maxLength={5000}
             />
 
             <ThemedText style={styles.sectionLabel}>QUEST TYPE</ThemedText>

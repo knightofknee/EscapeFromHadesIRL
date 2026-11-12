@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import Animated, {
   Easing,
   interpolate,
@@ -23,6 +23,8 @@ import { isSharedChore, sharedNames } from '@/lib/chore-reminders';
 import type { Chore } from '@/types/chore';
 
 const GREEN = CHORE_STATE_COLORS.fresh;
+/** How far the card's background tints toward green at the glow's peak. */
+const GLOW_WASH = 0.22;
 const CONFETTI = ['#2ECC71', '#F1C40F', '#3498DB', '#E74C3C', '#9B59B6', '#1ABC9C'];
 const PARTICLES = 12;
 /** How long the celebration plays in place before the write re-sorts the list. */
@@ -35,7 +37,7 @@ const SMOOTH = Easing.inOut(Easing.cubic);
 /** Rows gliding to a new position after a re-sort. Shared with the screen's headers. */
 export const CHORE_LAYOUT_TRANSITION = LinearTransition.duration(380).easing(SMOOTH);
 /** How long the inline Undo stays on the row after a completion. */
-const UNDO_MS = 5000;
+export const CHORE_UNDO_MS = 5000;
 
 type Props = {
   chore: Chore;
@@ -46,6 +48,14 @@ type Props = {
   onDone: (date: string) => void;
   onUndo: (date: string) => void;
   onOpen: () => void;
+  /**
+   * Completed from the detail sheet just now (already written): the row
+   * offers the same Undo as a check tap. `onDismiss` ends the offer (an
+   * undo, or the screen's timer).
+   */
+  sheetDone?: { date: string; onDismiss: () => void } | null;
+  /** The row's place in the list, so the screen can scroll it into view. */
+  onLayout?: (e: LayoutChangeEvent) => void;
 };
 
 function Particle({ index, progress }: { index: number; progress: SharedValue<number> }) {
@@ -81,7 +91,7 @@ function Particle({ index, progress }: { index: number; progress: SharedValue<nu
   );
 }
 
-export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpen }: Props) {
+export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpen, sheetDone, onLayout }: Props) {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
   const { nameOf } = useFriends();
@@ -89,10 +99,15 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
   const task = isTask(chore);
   // A task stays checked once done; a recurring chore only for today.
   const done = task ? status.state === 'done' : status.daysSince === 0;
+  // Logged today (from the check, the sheet, or another device): the card
+  // glows for the rest of the day, so today's wins stay lit in the list.
+  const doneToday = task ? status.state === 'done' && chore.completions[0] === today : status.daysSince === 0;
   const stateColor = CHORE_STATE_COLORS[status.state];
 
-  // The date this row just completed, while its Undo is on offer.
-  const [undoDate, setUndoDate] = useState<string | null>(null);
+  // The date this row just completed from its check, while its Undo is on
+  // offer; a completion from the sheet offers Undo through `sheetDone`.
+  const [checkUndoDate, setCheckUndoDate] = useState<string | null>(null);
+  const undoDate = checkUndoDate ?? sheetDone?.date ?? null;
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingWrite = useRef<(() => void) | null>(null);
   const writeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -102,6 +117,19 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
   const ring = useSharedValue(0);
   const burst = useSharedValue(0);
   const sweep = useSharedValue(0);
+  const glow = useSharedValue(doneToday ? 1 : 0);
+
+  // The glow follows the data: lights up when today's log lands (after
+  // the check's own celebration, or as the sheet closes), goes out on an
+  // undo or at the day's end. Eased timing only.
+  useEffect(() => {
+    glow.set(
+      withTiming(doneToday ? 1 : 0, {
+        duration: doneToday ? 320 : 600,
+        easing: doneToday ? Easing.out(Easing.cubic) : SMOOTH,
+      }),
+    );
+  }, [doneToday, glow]);
 
   // Track the real data: a completion arriving from elsewhere (or an undo)
   // fills/empties the check without the celebration.
@@ -149,13 +177,20 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
       onDone(date);
     };
     writeTimer.current = setTimeout(() => pendingWrite.current?.(), SETTLE_MS);
-    setUndoDate(date);
+    setCheckUndoDate(date);
     if (undoTimer.current) clearTimeout(undoTimer.current);
-    undoTimer.current = setTimeout(() => setUndoDate(null), UNDO_MS);
+    undoTimer.current = setTimeout(() => setCheckUndoDate(null), CHORE_UNDO_MS);
   }
 
   function handleUndo() {
     if (!undoDate) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    if (!checkUndoDate && sheetDone) {
+      // A sheet completion is already written: take it back.
+      onUndo(sheetDone.date);
+      sheetDone.onDismiss();
+      return;
+    }
     if (undoTimer.current) clearTimeout(undoTimer.current);
     if (writeTimer.current) clearTimeout(writeTimer.current);
     // Undo before the write landed: just cancel it.
@@ -165,8 +200,7 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
     } else {
       onUndo(undoDate);
     }
-    setUndoDate(null);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setCheckUndoDate(null);
   }
 
   const checkStyle = useAnimatedStyle(() => ({
@@ -181,6 +215,12 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
   const ringStyle = useAnimatedStyle(() => ({
     opacity: ring.value === 0 ? 0 : interpolate(ring.value, [0, 1], [0.7, 0]),
     transform: [{ scale: interpolate(ring.value, [0, 1], [1, 2.3]) }],
+  }));
+  const glowStyle = useAnimatedStyle(() => ({
+    backgroundColor: interpolateColor(glow.value * GLOW_WASH, [0, 1], [colors.tileBackground, GREEN]),
+    borderColor: interpolateColor(glow.value, [0, 1], [colors.tileBorder, GREEN]),
+    shadowOpacity: glow.value * 0.6,
+    elevation: glow.value * 10,
   }));
   const sweepStyle = useAnimatedStyle(() => ({
     opacity: sweep.value === 0 ? 0 : interpolate(sweep.value, [0, 0.25, 1], [0.5, 0.4, 0]),
@@ -202,9 +242,11 @@ export function ChoreRow({ chore, status, today, canWrite, onDone, onUndo, onOpe
   return (
     <Animated.View
       layout={CHORE_LAYOUT_TRANSITION}
+      onLayout={onLayout}
       style={[
         styles.card,
         { backgroundColor: colors.tileBackground, borderColor: colors.tileBorder },
+        glowStyle,
       ]}
     >
       <View style={[styles.stripe, { backgroundColor: stateColor }]} />
@@ -284,6 +326,10 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     minHeight: 76,
     paddingRight: 14,
+    // Only the glow lights these up (shadowOpacity animates from 0).
+    shadowColor: GREEN,
+    shadowOffset: { width: 0, height: 0 },
+    shadowRadius: 14,
   },
   stripe: {
     alignSelf: 'stretch',

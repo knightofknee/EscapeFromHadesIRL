@@ -254,3 +254,85 @@ describe('computeStreak - termination', () => {
     expect(result.current).toBe(1);
   });
 });
+
+describe('computeStreak - window edge (scanUntil)', () => {
+  // Window first day 2026-04-20; NOW is 2026-04-30 (see top of file).
+  const WINDOW_START = '2026-04-20';
+
+  test('a run alive on the window first day is reported open', () => {
+    const habit = makeHabit();
+    const records = [];
+    for (let d = 20; d <= 29; d++) records.push(makeRecord('h1', `2026-04-${d}`));
+    const result = computeStreak(habit, buildIndex(records), checker, new Set(), {
+      now: NOW,
+      scanUntil: WINDOW_START,
+    });
+    expect(result.longest).toBe(10);
+    expect(result.longestOpen).toBe(true);
+  });
+
+  test('a run that closes inside the window is not open', () => {
+    const habit = makeHabit();
+    const records = [];
+    for (let d = 22; d <= 29; d++) records.push(makeRecord('h1', `2026-04-${d}`));
+    const result = computeStreak(habit, buildIndex(records), checker, new Set(), {
+      now: NOW,
+      scanUntil: WINDOW_START,
+    });
+    expect(result.longest).toBe(8);
+    expect(result.longestOpen).toBe(false);
+  });
+
+  test('an older run on the edge is open only when it is the longest', () => {
+    const habit = makeHabit();
+    // Edge run: 20-22 (3 days). Later run: 25-29 (5 days, the longest).
+    const records = [20, 21, 22, 25, 26, 27, 28, 29].map((d) => makeRecord('h1', `2026-04-${d}`));
+    const shorterEdge = computeStreak(habit, buildIndex(records), checker, new Set(), {
+      now: NOW,
+      scanUntil: WINDOW_START,
+    });
+    expect(shorterEdge.longest).toBe(5);
+    expect(shorterEdge.longestOpen).toBe(false);
+
+    // Edge run 20-24 (5 days) ties the later 5-day run: it could still be longer.
+    const tied = [20, 21, 22, 23, 24, 26, 27, 28, 29, 30].map((d) => makeRecord('h1', `2026-04-${d}`));
+    const tiedResult = computeStreak(habit, buildIndex(tied), checker, new Set(), {
+      now: NOW,
+      scanUntil: WINDOW_START,
+    });
+    expect(tiedResult.current).toBe(5);
+    expect(tiedResult.longest).toBe(5);
+    expect(tiedResult.longestOpen).toBe(true);
+  });
+
+  test('vacation days on the edge keep the run open', () => {
+    const habit = makeHabit();
+    const records = [23, 24, 25, 26, 27, 28, 29].map((d) => makeRecord('h1', `2026-04-${d}`));
+    const vac = new Set(['2026-04-20', '2026-04-21', '2026-04-22']);
+    const result = computeStreak(habit, buildIndex(records), checker, vac, {
+      now: NOW,
+      scanUntil: WINDOW_START,
+    });
+    expect(result.longest).toBe(7);
+    expect(result.longestOpen).toBe(true);
+  });
+
+  test('a habit recorded only today is not open', () => {
+    const habit = makeHabit();
+    const result = computeStreak(habit, buildIndex([makeRecord('h1', '2026-04-30')]), checker, new Set(), {
+      now: NOW,
+      scanUntil: WINDOW_START,
+    });
+    expect(result.current).toBe(1);
+    expect(result.longestOpen).toBe(false);
+  });
+
+  test('without scanUntil the result is never open', () => {
+    const habit = makeHabit();
+    const records = [];
+    for (let d = 1; d <= 29; d++) records.push(makeRecord('h1', `2026-04-${String(d).padStart(2, '0')}`));
+    const result = computeStreak(habit, buildIndex(records), checker, new Set(), { now: NOW });
+    expect(result.longest).toBe(29);
+    expect(result.longestOpen).toBe(false);
+  });
+});

@@ -1,4 +1,5 @@
 import { isValueRecorded, recordLevel, shouldSkipWeekend, valueGoalsOn } from '@/lib/habit-scoring';
+import { formatHoursMinutes } from '@/lib/phone-free';
 import type { Habit, HabitRecord } from '@/types/habit';
 
 /**
@@ -52,6 +53,10 @@ function rowDetail(habit: Habit, record: HabitRecord | undefined, level: number)
     case 'steps':
       return typeof record?.steps === 'number'
         ? `${record.steps.toLocaleString()} · ${TIER_LABELS[level]}`
+        : TIER_LABELS[level];
+    case 'phoneFree':
+      return typeof record?.phoneFreeMs === 'number'
+        ? `${formatHoursMinutes(record.phoneFreeMs)} · ${TIER_LABELS[level]}`
         : TIER_LABELS[level];
     default:
       return TIER_LABELS[level];

@@ -3,8 +3,22 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const RESET_KEY = '@freshNoteResetMinutes';
 
+/** Quick picks. Any whole number of minutes in range is also allowed. */
 export const FRESH_NOTE_RESET_OPTIONS = [5, 15, 30, 60] as const;
 export const DEFAULT_FRESH_NOTE_RESET_MINUTES = 5;
+/** Storage needs a positive integer, so 1 is the floor. The window is
+ *  compared against the time the app was last hidden, and a window past a
+ *  full day means the previous view is always restored, so 1440 (24 hours)
+ *  is the ceiling. Settings states both. */
+export const MIN_FRESH_NOTE_RESET_MINUTES = 1;
+export const MAX_FRESH_NOTE_RESET_MINUTES = 1440;
+
+/** Whole minutes inside the stated range; anything else falls to the edge. */
+export function clampFreshNoteResetMinutes(value: number): number {
+  const whole = Math.round(value);
+  if (!Number.isFinite(whole)) return DEFAULT_FRESH_NOTE_RESET_MINUTES;
+  return Math.min(MAX_FRESH_NOTE_RESET_MINUTES, Math.max(MIN_FRESH_NOTE_RESET_MINUTES, whole));
+}
 
 // Module-global + listeners (same pattern as use-home-screen) so Settings
 // and the root-layout routing read the same value without a context.
@@ -37,8 +51,9 @@ export function useFreshNoteReset() {
   }, []);
 
   const setResetMinutes = useCallback((value: number) => {
-    notify(value);
-    AsyncStorage.setItem(RESET_KEY, String(value));
+    const minutes = clampFreshNoteResetMinutes(value);
+    notify(minutes);
+    AsyncStorage.setItem(RESET_KEY, String(minutes));
   }, []);
 
   return { resetMinutes: minutes, setResetMinutes };

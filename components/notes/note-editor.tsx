@@ -684,7 +684,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
         style={[styles.titleInput, { color: colors.text }]}
         value={title}
         onChangeText={handleTitleChange}
-        maxLength={200}
+        maxLength={500}
         placeholder="Note title..."
         placeholderTextColor={colors.icon}
         keyboardAppearance={colorScheme === 'dark' ? 'dark' : 'light'}

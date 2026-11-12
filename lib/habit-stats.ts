@@ -9,8 +9,32 @@ import type { Habit, HabitRecord } from '@/types/habit';
  * matches the screen (numbers, window length, axis labels, line rules).
  */
 
-/** Months shown in the monthly chart (screen and PDF). */
+/** Default months shown in the monthly chart (screen and PDF); the Stats
+ * screen lets the user pick another window. */
 export const STATS_DISPLAY_MONTHS = 18;
+
+/** Quick picks for the Stats months window; "All" is monthsOfHistory. */
+export const STATS_MONTH_QUICK_PICKS = [6, 12, 18] as const;
+
+/** Rolling-average lookback: raw monthly values are computed over at least
+ * this many months so pre-window history feeds the "since you started"
+ * average. */
+const ROLLING_LOOKBACK_MONTHS = 36;
+
+/** Calendar months from the month of `earliestCreatedAt` (ms) through the
+ * month of `now`, inclusive. The most months Stats can show: nothing is
+ * recorded before the first habit was created. */
+export function monthsOfHistory(earliestCreatedAt: number, now: Date): number {
+  const created = new Date(earliestCreatedAt);
+  const months = (now.getFullYear() - created.getFullYear()) * 12 + (now.getMonth() - created.getMonth()) + 1;
+  return Math.max(1, months);
+}
+
+/** First day (YYYY-MM-DD) of the oldest month in a `displayMonths` window
+ * ending in the month of `now`: the records the chart needs loaded. */
+export function statsWindowStartDate(displayMonths: number, now: Date): string {
+  return formatDate(new Date(now.getFullYear(), now.getMonth() - (Math.max(1, displayMonths) - 1), 1));
+}
 
 /** Single-letter x-axis month labels (screen and PDF). */
 export const MONTH_LETTERS = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
@@ -26,6 +50,7 @@ export function chartHasActivity(data: { value: number; avg?: number }[]): boole
 export function getStatsPageCount(habit: Habit): number {
   if (habit.recordingMode === 'quad') return 3;
   if (habit.recordingMode === 'steps') return Math.min(3, Math.max(1, habit.stepGoals?.length ?? 1));
+  if (habit.recordingMode === 'phoneFree') return Math.min(3, Math.max(1, habit.phoneFreeGoals?.length ?? 1));
   // Meditation always has 3 reachable tiers (yes/goal/ideal) since ideal is
   // a universal threshold independent of the user's per-session config.
   if (habit.recordingMode === 'meditation') return 3;
@@ -178,7 +203,7 @@ export function computeMonthlyValueAverages(
   const todayMonth = now.getMonth();
   const todayYear = now.getFullYear();
 
-  const totalMonths = 36;
+  const totalMonths = Math.max(ROLLING_LOOKBACK_MONTHS, displayMonths);
   const allAverages: { date: string; value: number }[] = [];
 
   for (let m = totalMonths - 1; m >= 0; m--) {
@@ -261,8 +286,9 @@ export function computeMonthlyRates(
   const todayMonth = now.getMonth();
   const todayYear = now.getFullYear();
 
-  // Compute 36 months of raw rates for rolling average calculation
-  const totalMonths = 36;
+  // Raw rates over the lookback (or the whole window when it is longer)
+  // for the rolling average calculation.
+  const totalMonths = Math.max(ROLLING_LOOKBACK_MONTHS, displayMonths);
   const allRates: { date: string; value: number }[] = [];
 
   for (let m = totalMonths - 1; m >= 0; m--) {

@@ -10,6 +10,8 @@ import {
   FORGIVE_MS,
   BACK_TO_SLEEP_MS,
   ABSORB_RATIO,
+  computePhoneFreeLevel,
+  DEFAULT_PHONE_FREE_GOAL_HOURS,
 } from '../lib/phone-free';
 
 // All times are local wall-clock via the Date(y, m, d, h, min) constructor,
@@ -380,5 +382,31 @@ describe('formatHoursMinutes', () => {
     expect(formatHoursMinutes(7 * H + 5 * MIN)).toBe('7h 05m');
     expect(formatHoursMinutes(8.5 * H + 29 * 1000)).toBe('8h 30m');
     expect(formatHoursMinutes(-5)).toBe('0m');
+  });
+});
+
+describe('computePhoneFreeLevel', () => {
+  const H = 60 * 60 * 1000;
+  it('climbs the hour-goal ladder like steps', () => {
+    expect(computePhoneFreeLevel(6 * H, [7, 8])).toBe('no');
+    expect(computePhoneFreeLevel(7 * H, [7, 8])).toBe('yes');
+    expect(computePhoneFreeLevel(7.5 * H, [7, 8])).toBe('yes');
+    expect(computePhoneFreeLevel(8 * H, [7, 8])).toBe('goal');
+    expect(computePhoneFreeLevel(9 * H, [7, 8, 9])).toBe('ideal');
+  });
+  it('accepts decimal goals', () => {
+    expect(computePhoneFreeLevel(7.5 * H, [7.5])).toBe('yes');
+    expect(computePhoneFreeLevel(7.49 * H, [7.5])).toBe('no');
+  });
+  it('is "no" without time or without goals', () => {
+    expect(computePhoneFreeLevel(undefined, [7])).toBe('no');
+    expect(computePhoneFreeLevel(0, [7])).toBe('no');
+    expect(computePhoneFreeLevel(9 * H, [])).toBe('no');
+  });
+  it('caps at three levels', () => {
+    expect(computePhoneFreeLevel(12 * H, [1, 2, 3, 4])).toBe('ideal');
+  });
+  it('ships research-backed defaults: 7h floor, 8h next', () => {
+    expect(DEFAULT_PHONE_FREE_GOAL_HOURS).toEqual([7, 8]);
   });
 });

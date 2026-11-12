@@ -78,7 +78,7 @@ export function QuestCard({ quest, questScore, onPress, kind, carriedBy }: Props
         ) : (
           <View style={[styles.categoryDot, { backgroundColor: QuestColors[quest.category] ?? QuestColors.custom }]} />
         )}
-        <ThemedText style={styles.name} numberOfLines={1}>
+        <ThemedText style={styles.name} numberOfLines={2}>
           {quest.name}
         </ThemedText>
         {tier && (
@@ -158,6 +158,9 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
+    // Badges stay beside a short name; a long name keeps at least half the
+    // row and pushes them onto the next line under it.
+    flexWrap: 'wrap',
     gap: 8,
   },
   categoryDot: {
@@ -174,7 +177,10 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   name: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0,
+    minWidth: '50%',
     fontSize: 15,
     fontWeight: '600',
     color: QuestColors.text,

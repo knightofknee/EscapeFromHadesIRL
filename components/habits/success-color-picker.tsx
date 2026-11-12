@@ -5,20 +5,8 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useSuccessColors } from '@/hooks/use-success-colors';
 import type { SuccessLevel } from '@/hooks/use-success-colors';
-
-const PALETTE = [
-  // Row 1 — warm
-  '#E74C3C', '#FF6B6B', '#F39C12', '#F1C40F',
-  // Row 2 — green/teal
-  '#2ECC71', '#27AE60', '#1ABC9C', '#16A085',
-  // Row 3 — blue/purple
-  '#3498DB', '#2980B9', '#9B59B6', '#8E44AD',
-  // Row 4 — neutral/misc
-  '#E67E22', '#D35400', '#95A5A6', '#7F8C8D',
-  // Row 5 — pastels & extras
-  '#FF9FF3', '#54A0FF', '#5F27CD', '#01A3A4',
-  '#D5D8DC', '#4A4D52', '#2C3E50', '#34495E',
-];
+import { COLOR_PALETTE, isPaletteColor } from '@/constants/grid';
+import { ColorHexField } from '@/components/ui/color-field';
 
 const LEVEL_LABELS: Record<SuccessLevel, string> = {
   unrecorded: 'Not Done',
@@ -34,6 +22,9 @@ export function SuccessColorPicker() {
   const themeColors = Colors[colorScheme];
   const { colors, setSuccessColor, resetColors, isCustom } = useSuccessColors(colorScheme);
   const [editingLevel, setEditingLevel] = useState<SuccessLevel | null>(null);
+  const [customOpen, setCustomOpen] = useState(false);
+  const editingColor = editingLevel ? colors[editingLevel] : null;
+  const isCustomEditing = editingColor != null && !isPaletteColor(editingColor);
 
   return (
     <View style={[styles.container, { backgroundColor: themeColors.gridBackground }]}>
@@ -57,7 +48,10 @@ export function SuccessColorPicker() {
           return (
             <Pressable
               key={level}
-              onPress={() => setEditingLevel(isActive ? null : level)}
+              onPress={() => {
+                setCustomOpen(false);
+                setEditingLevel(isActive ? null : level);
+              }}
               style={[
                 styles.levelChip,
                 { backgroundColor: colors[level] },
@@ -79,12 +73,15 @@ export function SuccessColorPicker() {
             Pick a color for &ldquo;{LEVEL_LABELS[editingLevel]}&rdquo;
           </ThemedText>
           <View style={styles.paletteGrid}>
-            {PALETTE.map((color) => {
-              const isSelected = colors[editingLevel] === color;
+            {COLOR_PALETTE.map((color) => {
+              const isSelected = colors[editingLevel].toUpperCase() === color;
               return (
                 <Pressable
                   key={color}
-                  onPress={() => setSuccessColor(editingLevel, color)}
+                  onPress={() => {
+                    setCustomOpen(false);
+                    setSuccessColor(editingLevel, color);
+                  }}
                   style={[
                     styles.swatch,
                     { backgroundColor: color },
@@ -97,7 +94,30 @@ export function SuccessColorPicker() {
                 </Pressable>
               );
             })}
+            {/* Custom: any #RRGGBB. Shows the custom color once one is chosen. */}
+            <Pressable
+              onPress={() => setCustomOpen((open) => !open)}
+              style={[
+                styles.swatch,
+                isCustomEditing
+                  ? { backgroundColor: colors[editingLevel] }
+                  : { backgroundColor: themeColors.tileBackground, borderWidth: 1, borderColor: themeColors.tileBorder },
+                isCustomEditing && styles.swatchSelected,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Custom color"
+            >
+              <ThemedText style={[styles.checkmark, !isCustomEditing && { color: themeColors.text }]}>+</ThemedText>
+            </Pressable>
           </View>
+          {customOpen && (
+            <ColorHexField
+              key={editingLevel}
+              value={colors[editingLevel]}
+              onChange={(hex) => setSuccessColor(editingLevel, hex)}
+              autoFocus
+            />
+          )}
         </View>
       )}
 

@@ -6,6 +6,7 @@ import { useUserSettingsContext } from '@/contexts/user-settings-context';
 import { GlyphRenderer } from './glyph-renderer';
 import type { Habit, HabitRecord, TripleValue, QuadValue, GlyphData } from '@/types/habit';
 import { isValueRecorded, valueGoalsOn, valueLevel } from '@/lib/habit-scoring';
+import { formatHoursMinutes } from '@/lib/phone-free';
 
 /**
  * Design space
@@ -218,7 +219,8 @@ function getFaceState(habit: Habit, record?: HabitRecord): FaceState {
     case 'quad':
     case 'steps':
     case 'meditation':
-    case 'creativeWriting': {
+    case 'creativeWriting':
+    case 'phoneFree': {
       const state = getQuadState(record);
       face.opacity = state === 'no' ? 0.35 : 1;
       face.showCircle = state === 'goal' || state === 'ideal';
@@ -229,6 +231,9 @@ function getFaceState(habit: Habit, record?: HabitRecord): FaceState {
       // a counter at 0) so the letter sits level with footerless neighbors.
       if (habit.recordingMode === 'steps' && record?.steps != null && record.steps > 0) {
         face.footer = { text: formatStepCount(record.steps) };
+      }
+      if (habit.recordingMode === 'phoneFree' && record?.phoneFreeMs != null && record.phoneFreeMs > 0) {
+        face.footer = { text: formatHoursMinutes(record.phoneFreeMs) };
       }
       break;
     }

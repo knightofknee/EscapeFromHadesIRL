@@ -1,4 +1,5 @@
 import { buildMonthReportHtml, monthReportLabel, monthReportRange } from '../lib/month-pdf';
+import { weekStartOf, weekdayOrder } from '../lib/date-utils';
 import {
   maxMonthPage,
   monthCalendarWeeks,
@@ -189,5 +190,23 @@ describe('month pages', () => {
     expect(weeks[0]).toEqual([null, null, null, '2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01']);
     expect(weeks[1]).toEqual(['2026-11-02', null, null, null, null, null, null]);
     expect(rangeCalendarWeeks([])).toEqual([]);
+  });
+});
+
+describe('week start setting', () => {
+  test('weekStartOf honours Monday and Sunday starts', () => {
+    // 2026-11-05 is a Thursday.
+    expect(weekStartOf('2026-11-05', 1)).toBe('2026-11-02');
+    expect(weekStartOf('2026-11-05', 0)).toBe('2026-11-01');
+    expect(weekStartOf('2026-11-01', 1)).toBe('2026-10-26'); // Sunday belongs to the Monday-start week before
+    expect(weekStartOf('2026-11-01', 0)).toBe('2026-11-01');
+  });
+
+  test('weekday order and calendar grid follow the setting', () => {
+    expect(weekdayOrder(1)).toEqual([1, 2, 3, 4, 5, 6, 0]);
+    expect(weekdayOrder(0)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    // Oct 1 2026 is a Thursday: Sunday-first pads four, Monday-first pads three.
+    expect(monthCalendarWeeks(2026, 9, 0)[0]).toEqual([null, null, null, null, 1, 2, 3]);
+    expect(monthCalendarWeeks(2026, 9, 1)[0]).toEqual([null, null, null, 1, 2, 3, 4]);
   });
 });

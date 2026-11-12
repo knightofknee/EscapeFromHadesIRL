@@ -13,12 +13,19 @@ import { CHORE_EMOJI_CHOICES } from '@/constants/chore-presets';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTodayDate } from '@/hooks/use-today-date';
 import { useChores, type ChoreDraft } from '@/contexts/chores-context';
-import { DUE_PRESETS, FREQUENCY_PRESETS, UNSCHEDULED, formatDuePreset, formatFrequency, formatShortDate } from '@/lib/chores';
+import {
+  DUE_PRESETS,
+  FREQUENCY_PRESETS,
+  UNSCHEDULED,
+  daysBetween,
+  formatDuePreset,
+  formatFrequency,
+  formatShortDate,
+} from '@/lib/chores';
 import { addDays } from '@/lib/date-utils';
 import { formatReminderTime, parseReminderTime, toReminderTime } from '@/lib/chore-reminders';
 import {
   DEFAULT_REMINDER_TIME,
-  MAX_REMINDERS,
   REMINDER_DAYS_BEFORE,
   formatDaysBefore,
   remindersFor,
@@ -106,8 +113,11 @@ export default function ChoreEditScreen() {
       : emoji !== existing.emoji || frequency !== existing.frequencyDays);
   // Reminders need a due date: tasks always, recurring unless "Whenever".
   const canRemind = isTask || !unscheduled;
-  // A recurring chore only offers "days before" shorter than its cycle.
-  const daysBeforeChoices = REMINDER_DAYS_BEFORE.filter((d) => isTask || d < frequency);
+  // The furthest a reminder can ring before the due day: a recurring chore's
+  // cycle minus one (any earlier lands on or before the day it was last
+  // done); a task's days left until it's due (any earlier is already past).
+  const maxDaysBefore = isTask ? Math.max(0, daysBetween(todayStr, dueDate)) : Math.max(0, frequency - 1);
+  const daysBeforeChoices = REMINDER_DAYS_BEFORE.filter((d) => d <= maxDaysBefore);
   const canSave = kind !== null && name.trim().length > 0 && dirty && !saving;
   const title = kind === null ? 'New' : `${isCreating ? 'New' : 'Edit'} ${isTask ? 'Task' : 'Chore'}`;
 
@@ -130,8 +140,8 @@ export default function ChoreEditScreen() {
         }
       : { kind: 'recurring', name: name.trim(), emoji: emoji.trim() || DEFAULT_EMOJI, frequencyDays: frequency };
     // Drop reminders the chore can't have (a "Whenever" chore, or a "days
-    // before" longer than the new cycle).
-    const keptReminders = canRemind ? reminders.filter((r) => daysBeforeChoices.includes(r.daysBefore as never)) : [];
+    // before" past the bound stated under the chips).
+    const keptReminders = canRemind ? reminders.filter((r) => r.daysBefore <= maxDaysBefore) : [];
     let ok: boolean;
     if (isCreating) {
       ok = !!(await createChore({
@@ -186,12 +196,14 @@ export default function ChoreEditScreen() {
     setRemindersDraft((cur) => cur.map((r, i) => (i === index ? { ...r, ...change } : r)));
   }
 
-  function addSecondReminder() {
-    setRemindersDraft((cur) =>
-      cur.length >= MAX_REMINDERS
-        ? cur
-        : [...cur, { daysBefore: cur[0]?.daysBefore === 0 ? (daysBeforeChoices[1] ?? 0) : 0, time: DEFAULT_REMINDER_TIME }],
-    );
+  function addReminder() {
+    // Start on the first "days before" no reminder uses yet, so a new one
+    // never duplicates an existing one.
+    setRemindersDraft((cur) => {
+      const used = new Set(cur.map((r) => r.daysBefore));
+      const daysBefore = daysBeforeChoices.find((d) => !used.has(d)) ?? 0;
+      return [...cur, { daysBefore, time: DEFAULT_REMINDER_TIME }];
+    });
   }
 
   function handleDelete() {
@@ -292,7 +304,7 @@ export default function ChoreEditScreen() {
             placeholder={isTask ? 'Renew passport' : 'Wash sheets'}
             placeholderTextColor={colors.icon}
             autoFocus={isCreating}
-            maxLength={isTask ? 80 : 40}
+            maxLength={80}
             returnKeyType="done"
           />
 
@@ -460,6 +472,23 @@ export default function ChoreEditScreen() {
                         );
                       })}
                     </View>
+                    {maxDaysBefore > 0 && (
+                      <DaysBeforeField
+                        daysBefore={r.daysBefore}
+                        max={maxDaysBefore}
+                        isPreset={(daysBeforeChoices as readonly number[]).includes(r.daysBefore)}
+                        onChange={(daysBefore) => updateReminder(i, { daysBefore })}
+                        textColor={colors.text}
+                        tint={colors.tint}
+                        border={colors.tileBorder}
+                        placeholderColor={colors.icon}
+                      />
+                    )}
+                    <ThemedText style={styles.hint}>
+                      {maxDaysBefore === 0
+                        ? 'Only on the due day.'
+                        : `Up to ${maxDaysBefore} day${maxDaysBefore === 1 ? '' : 's'} before.`}
+                    </ThemedText>
                     <View style={styles.reminderTimeLine}>
                       <ThemedText style={styles.reminderLabel}>at</ThemedText>
                       <ReminderTimePicker
@@ -482,13 +511,13 @@ export default function ChoreEditScreen() {
                     </View>
                   </View>
                 ))}
-                {reminders.length > 0 && reminders.length < MAX_REMINDERS && (
+                {reminders.length > 0 && (
                   <Pressable
-                    onPress={addSecondReminder}
+                    onPress={addReminder}
                     style={[styles.reminderRow, styles.reminderTimeRow, { borderTopColor: colors.tileBorder }]}
                     accessibilityRole="button"
                   >
-                    <ThemedText style={[styles.reminderLabel, { color: colors.tint }]}>+ Second reminder</ThemedText>
+                    <ThemedText style={[styles.reminderLabel, { color: colors.tint }]}>+ Add reminder</ThemedText>
                   </Pressable>
                 )}
               </View>
@@ -567,6 +596,65 @@ export default function ChoreEditScreen() {
       )}
       <KeyboardDismissBar />
     </ThemedView>
+  );
+}
+
+/**
+ * Free "days before" beside the quick-pick chips, same shape as the "Every N
+ * days" field above: lit when the value isn't one of the chips. Typing past
+ * `max` clamps to it (the bound is stated under the field).
+ */
+function DaysBeforeField({
+  daysBefore,
+  max,
+  isPreset,
+  onChange,
+  textColor,
+  tint,
+  border,
+  placeholderColor,
+}: {
+  daysBefore: number;
+  max: number;
+  isPreset: boolean;
+  onChange: (daysBefore: number) => void;
+  textColor: string;
+  tint: string;
+  border: string;
+  placeholderColor: string;
+}) {
+  const [text, setText] = useState(String(daysBefore));
+  // A chip tap changes the value from outside: show it in the field.
+  const [shown, setShown] = useState(daysBefore);
+  if (daysBefore !== shown) {
+    setShown(daysBefore);
+    setText(String(daysBefore));
+  }
+  return (
+    <View style={styles.customRow}>
+      <TextInput
+        style={[styles.customInput, { color: textColor, borderColor: !isPreset ? tint : border }]}
+        value={text}
+        placeholder="–"
+        placeholderTextColor={placeholderColor}
+        onChangeText={(t) => {
+          const digits = t.replace(/[^0-9]/g, '');
+          const n = parseInt(digits, 10);
+          if (isNaN(n)) {
+            setText(digits);
+            return;
+          }
+          const clamped = Math.min(max, n);
+          setText(String(clamped));
+          setShown(clamped);
+          onChange(clamped);
+        }}
+        keyboardType="number-pad"
+        maxLength={String(max).length}
+        accessibilityLabel="Days before"
+      />
+      <ThemedText style={styles.customLabel}>{daysBefore === 1 ? 'day before' : 'days before'}</ThemedText>
+    </View>
   );
 }
 

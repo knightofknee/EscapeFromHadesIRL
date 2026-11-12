@@ -1,5 +1,5 @@
 import { readableTextOn } from '@/lib/contrast';
-import { addDays, formatDate } from '@/lib/date-utils';
+import { addDays, formatDate, parseDate, weekStartOf, weekdayOrder, WEEKDAY_SHORT, type WeekStart } from '@/lib/date-utils';
 import { computeDayBreakdown, heatmapShade } from '@/lib/day-breakdown';
 import { recordLevel } from '@/lib/habit-scoring';
 import {
@@ -28,7 +28,7 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 const SHORT_MONTHS = MONTH_NAMES.map((m) => m.slice(0, 3));
-const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DAY_NAMES = WEEKDAY_SHORT;
 export const REPORT_WEEKS = 4;
 
 export type MonthReportOptions = {
@@ -38,6 +38,8 @@ export type MonthReportOptions = {
   /** 1 = just that month; more adds the months before it, newest first. */
   monthCount: number;
   includeWeeks: boolean;
+  /** How many recent weeks the week section covers; REPORT_WEEKS when left out. */
+  weekCount?: number;
 };
 
 type YM = { year: number; month: number };
@@ -49,22 +51,26 @@ function monthsOf({ year, month, monthCount }: MonthReportOptions): YM[] {
   });
 }
 
-/** Mondays of the report's weeks, newest first: the weeks up to the newest month's end (or today, if sooner). */
-function weekStarts(opts: MonthReportOptions, today: Date): string[] {
+/** First days of the report's weeks, newest first: the weeks up to the newest month's end (or today, if sooner). */
+function weekStarts(opts: MonthReportOptions, today: Date, weekStartsOn: WeekStart = 1): string[] {
   const monthEnd = new Date(opts.year, opts.month + 1, 0);
   const anchor = monthEnd < today ? monthEnd : today;
-  const monday = addDays(formatDate(anchor), -((anchor.getDay() + 6) % 7));
-  return Array.from({ length: REPORT_WEEKS }, (_, i) => addDays(monday, -7 * i));
+  const first = weekStartOf(formatDate(anchor), weekStartsOn);
+  return Array.from({ length: Math.max(1, opts.weekCount ?? REPORT_WEEKS) }, (_, i) => addDays(first, -7 * i));
 }
 
 /** The date span the report reads records from. */
-export function monthReportRange(opts: MonthReportOptions, today: Date): { startDate: string; endDate: string } {
+export function monthReportRange(
+  opts: MonthReportOptions,
+  today: Date,
+  weekStartsOn: WeekStart = 1,
+): { startDate: string; endDate: string } {
   const months = monthsOf(opts);
   const oldest = months[months.length - 1];
   let startDate = formatDate(new Date(oldest.year, oldest.month, 1));
   let endDate = formatDate(new Date(opts.year, opts.month + 1, 0));
   if (opts.includeWeeks) {
-    const weeks = weekStarts(opts, today);
+    const weeks = weekStarts(opts, today, weekStartsOn);
     const first = weeks[weeks.length - 1];
     const last = addDays(weeks[0], 6);
     if (first < startDate) startDate = first;
@@ -129,15 +135,18 @@ type ReportData = {
   today: Date;
   /** The app's theme: the PDF looks like the user's phone. */
   scheme: PdfScheme;
+  /** First day of the week on the grids; Monday when left out. */
+  weekStartsOn?: WeekStart;
 };
 
 function monthSection(data: ReportData, { year, month }: YM, tagged: boolean, palette: PdfPalette): string {
   const { habits, recordIndex, vacationDays, winOnlyWeekends, today } = data;
+  const weekStartsOn = data.weekStartsOn ?? 1;
   const vacationSet = new Set(vacationDays.keys());
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const tag = tagged ? `<span class="tag">${SHORT_MONTHS[month]} ${year}</span>` : '';
 
-  const cells = monthCalendarWeeks(year, month)
+  const cells = monthCalendarWeeks(year, month, weekStartsOn)
     .flat()
     .map((day) => {
       if (!day) return '<div class="day"></div>';
@@ -159,7 +168,7 @@ function monthSection(data: ReportData, { year, month }: YM, tagged: boolean, pa
   const calendar = `
     <div class="card calendar">
       ${tagged ? `<div class="card-top"><span></span>${tag}</div>` : ''}
-      <div class="grid">${DAY_NAMES.map((d) => `<div class="wd">${d[0]}</div>`).join('')}${cells}</div>
+      <div class="grid">${weekdayOrder(weekStartsOn).map((d) => `<div class="wd">${DAY_NAMES[d][0]}</div>`).join('')}${cells}</div>
     </div>`;
 
   const countDays = monthCountDays(year, month, today);
@@ -209,10 +218,10 @@ function keepWithNext(heading: string, block: string): string {
   return unit(`${heading}${block}`);
 }
 
-function weekCard(data: ReportData, monday: string): string {
+function weekCard(data: ReportData, weekStart: string): string {
   const { habits, recordIndex, vacationDays, successColors } = data;
   const byLevel = [successColors.unrecorded, successColors.recorded, successColors.double, successColors.triple];
-  const dates = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
+  const dates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   const short = (s: string) => `${SHORT_MONTHS[Number(s.slice(5, 7)) - 1]} ${Number(s.slice(8))}`;
   const columns = dates
     .map((dateStr, i) => {
@@ -225,7 +234,7 @@ function weekCard(data: ReportData, monday: string): string {
               return `<div class="tile" style="background:${bg};color:${readableTextOn(bg)}">${esc(habit.icon ?? habit.abbreviation)}</div>`;
             })
             .join('');
-      return `<div class="col"><div class="colhead"><div>${DAY_NAMES[i]}</div><b>${Number(dateStr.slice(8))}</b></div>${tiles}</div>`;
+      return `<div class="col"><div class="colhead"><div>${DAY_NAMES[parseDate(dateStr).getDay()]}</div><b>${Number(dateStr.slice(8))}</b></div>${tiles}</div>`;
     })
     .join('');
   return `
@@ -241,12 +250,12 @@ export function buildMonthReportHtml(data: ReportData, opts: MonthReportOptions)
   const palette = pdfPalette(data.scheme);
   const sections = months.map((ym) => monthSection(data, ym, tagged, palette));
   if (opts.includeWeeks) {
-    const weeks = weekStarts(opts, data.today).map((monday) => weekCard(data, monday));
+    const weeks = weekStarts(opts, data.today, data.weekStartsOn ?? 1).map((start) => weekCard(data, start));
     // Right after the newest month: it's the recent detail behind it.
     sections.splice(
       1,
       0,
-      `<section>${keepWithNext(`<div class="section-title">Last ${REPORT_WEEKS} Weeks</div>`, weeks[0])}${weeks.slice(1).map(unit).join('')}</section>`,
+      `<section>${keepWithNext(`<div class="section-title">Last ${weeks.length} ${weeks.length === 1 ? 'Week' : 'Weeks'}</div>`, weeks[0])}${weeks.slice(1).map(unit).join('')}</section>`,
     );
   }
 

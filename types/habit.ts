@@ -6,7 +6,16 @@ export type GridPosition = {
 /** Relative size weight for tile layout. Default 1, max 100. Higher = bigger tile. */
 export type TileSize = number;
 
-export type RecordingMode = 'boolean' | 'triple' | 'quad' | 'counter' | 'value' | 'steps' | 'meditation' | 'creativeWriting';
+export type RecordingMode =
+  | 'boolean'
+  | 'triple'
+  | 'quad'
+  | 'counter'
+  | 'value'
+  | 'steps'
+  | 'meditation'
+  | 'creativeWriting'
+  | 'phoneFree';
 
 /** A single meditation session, recorded by the timer or entered manually. */
 export type MeditationSession = {
@@ -39,6 +48,16 @@ export type GlyphData = {
   paths: SerializedPath[];
   viewBox: { width: number; height: number }; // canvas size when drawn, for scaling
 };
+
+/**
+ * Placement of a habit that floats ABOVE the grid instead of taking a cell:
+ * a square whose center is at (cx, cy) as fractions of the grid's width and
+ * height, with side = `size` × grid width. Fractions, so one phone's
+ * placement lands in the same spot on another. Floats are left out of the
+ * grid's row/column layout entirely (the grid keeps its shape), and snap to
+ * the lines between tiles when dropped near one (lib/float-tile.ts).
+ */
+export type FloatPlacement = { cx: number; cy: number; size: number };
 
 export type Habit = {
   id: string;
@@ -89,6 +108,13 @@ export type Habit = {
    */
   stepsConfirmedThrough?: string;
   /**
+   * Ascending phone-free goals in HOURS for 'phoneFree' mode, 1-3 entries
+   * (decimals allowed). Same ladder as steps: reaching goal 1/2/3 →
+   * yes/goal/ideal. The night's phone-free time comes from the device
+   * (lib/phone-free.ts), never from a tap.
+   */
+  phoneFreeGoals?: number[];
+  /**
    * For 'meditation' mode: target number of sessions per day (default 1).
    * "Goal" tier is reached when the user completes this many sessions of at
    * least `meditationMinutes` each in a single day.
@@ -113,6 +139,8 @@ export type Habit = {
    * false — tiles are letter/glyph-only unless the user opts in.
    */
   showName?: boolean;
+  /** Set when the habit floats above the grid; absent = a normal grid cell. */
+  float?: FloatPlacement;
   tileSize: TileSize;
   position: GridPosition;
   color: string;
@@ -136,6 +164,8 @@ export type HabitRecord = {
   source?: 'auto' | 'manual';
   /** For 'steps' habits: the raw step count behind the achieved tier. */
   steps?: number;
+  /** For 'phoneFree' habits: the night's phone-free milliseconds behind the tier. */
+  phoneFreeMs?: number;
   /**
    * For 'meditation' habits: every session logged on this date. Tier and
    * subtitle are derived from this array; never override `value` without

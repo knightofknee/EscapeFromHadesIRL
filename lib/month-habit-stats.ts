@@ -1,4 +1,4 @@
-import { addDays, formatDate, parseDate } from '@/lib/date-utils';
+import { addDays, formatDate, parseDate, type WeekStart } from '@/lib/date-utils';
 import { isRecordCompleted, recordLevel, shouldSkipWeekend } from '@/lib/habit-scoring';
 import { formatStatValue, recordNumericValue } from '@/lib/habit-stats';
 import type { Habit, HabitRecord } from '@/types/habit';
@@ -57,15 +57,17 @@ function amountKind(habit: Habit): MonthAmountKind | null {
     case 'steps':
       return 'steps';
     case 'meditation':
+    case 'phoneFree':
       return 'minutes';
     default:
       return null;
   }
 }
 
-function dayAmount(kind: MonthAmountKind, record?: HabitRecord): number {
+function dayAmount(habit: Habit, kind: MonthAmountKind, record?: HabitRecord): number {
   if (kind === 'value') return recordNumericValue(record);
   if (kind === 'steps') return record?.steps ?? 0;
+  if (habit.recordingMode === 'phoneFree') return (record?.phoneFreeMs ?? 0) / 60000;
   return meditationMinutes(record);
 }
 
@@ -99,7 +101,7 @@ export function computeMonthHabitStats(habit: Habit, days: MonthDayInput[]): Mon
     if (excluded) continue;
     if (isRecordCompleted(habit, record)) completed++;
     if (kind) {
-      const a = dayAmount(kind, record);
+      const a = dayAmount(habit, kind, record);
       amounts.push(a);
       series.push({ day, y: a });
     } else if (habit.recordingMode === 'counter') {
@@ -251,10 +253,10 @@ export function monthPage(offset: number, today: Date): MonthPage {
   };
 }
 
-/** Monday-first calendar grid over any run of dates: one array per week, null where the range hasn't started or has ended. */
-export function rangeCalendarWeeks(dates: string[]): (string | null)[][] {
+/** Calendar grid over any run of dates: one array per week starting on `weekStartsOn`, null where the range hasn't started or has ended. */
+export function rangeCalendarWeeks(dates: string[], weekStartsOn: WeekStart = 1): (string | null)[][] {
   if (dates.length === 0) return [];
-  const firstDayOfWeek = (parseDate(dates[0]).getDay() + 6) % 7; // Monday=0
+  const firstDayOfWeek = (parseDate(dates[0]).getDay() - weekStartsOn + 7) % 7;
   const weeks: (string | null)[][] = [];
   let currentWeek: (string | null)[] = new Array(firstDayOfWeek).fill(null);
   for (const d of dates) {
@@ -271,11 +273,11 @@ export function rangeCalendarWeeks(dates: string[]): (string | null)[][] {
   return weeks;
 }
 
-/** Monday-first calendar grid: one array per week, null where the month hasn't started or has ended. */
-export function monthCalendarWeeks(year: number, month: number): (number | null)[][] {
+/** Calendar grid for one month: one array per week starting on `weekStartsOn`, null where the month hasn't started or has ended. */
+export function monthCalendarWeeks(year: number, month: number, weekStartsOn: WeekStart = 1): (number | null)[][] {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const dates = Array.from({ length: daysInMonth }, (_, i) => formatDate(new Date(year, month, i + 1)));
-  return rangeCalendarWeeks(dates).map((week) => week.map((d) => (d ? parseDate(d).getDate() : null)));
+  return rangeCalendarWeeks(dates, weekStartsOn).map((week) => week.map((d) => (d ? parseDate(d).getDate() : null)));
 }
 
 /**

@@ -4,7 +4,7 @@ import { isWeekend } from '@/lib/date-utils';
 
 /** Recording modes with success tiers (yes/goal/ideal) — the only modes a
  * goal/ideal quest bar can be satisfied by. One list, shared everywhere. */
-const TIERED_MODES: RecordingMode[] = ['quad', 'steps', 'meditation', 'creativeWriting'];
+const TIERED_MODES: RecordingMode[] = ['quad', 'steps', 'meditation', 'creativeWriting', 'phoneFree'];
 export function isTieredMode(mode: RecordingMode): boolean {
   return TIERED_MODES.includes(mode);
 }
@@ -118,6 +118,7 @@ export function recordLevel(habit: Habit, record?: HabitRecord): number {
     case 'steps':
     case 'meditation':
     case 'creativeWriting':
+    case 'phoneFree':
     case 'quad':
       return v === 'ideal' ? 3 : v === 'goal' ? 2 : v === 'yes' ? 1 : 0;
     case 'counter':

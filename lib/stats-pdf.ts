@@ -21,13 +21,12 @@ import type { Habit, HabitRecord } from '@/types/habit';
  * HTML for the Stats PDF export, laid out for a phone: each habit, then one
  * card per success level stacked under it, each card mirroring that level's
  * stats-screen page (streaks,
- * 7/30/90-day rates, 18-month monthly chart with rolling average). Uses the
- * exact same computations as the screen (lib/habit-stats.ts), so the PDF
- * always matches what the user sees.
+ * 7/30/90-day rates, monthly chart with rolling average over the months
+ * window chosen on the screen). Uses the exact same computations as the
+ * screen (lib/habit-stats.ts), so the PDF always matches what the user sees.
  */
 
 const LEVEL_NAMES = ['Basic', 'Goal', 'Ideal'] as const;
-const DISPLAY_MONTHS = STATS_DISPLAY_MONTHS;
 
 /** Round up to a clean axis ceiling (1/2/2.5/5/10 × power of ten). */
 function niceCeil(n: number): number {
@@ -47,6 +46,7 @@ function chartSvg(
   avgColor: string,
   percent: boolean,
   palette: PdfPalette,
+  displayMonths: number,
 ): string {
   const W = 360;
   const H = 140;
@@ -99,7 +99,7 @@ function chartSvg(
     // which starts at the habit's first active month — like the in-app chart.
     // Print can't taper a stroke; the full-window line's weight is the
     // habit's months of history at the window's end (screen: per point).
-    const fullW = 0.6 + 3.4 * Math.min(1, (data[data.length - 1].months ?? 0) / DISPLAY_MONTHS);
+    const fullW = 0.6 + 3.4 * Math.min(1, (data[data.length - 1].months ?? 0) / displayMonths);
     avgLine = `<polyline fill="none" stroke="${avgColor}" stroke-opacity="0.5" stroke-width="${fullW.toFixed(1)}" points="${data
       .map((d, i) => `${(PLOT.left + i * slot + slot / 2).toFixed(1)},${yFor(d.avgFull).toFixed(1)}`)
       .join(' ')}"/>`;
@@ -128,8 +128,11 @@ export function buildStatsHtml(params: {
   winOnlyWeekends: boolean;
   /** The app's theme: the PDF looks like the user's phone. */
   scheme: PdfScheme;
+  /** Months in the chart window, as chosen on the Stats screen. */
+  displayMonths?: number;
 }): string {
   const { habits, recordIndex, vacationSet, winOnlyWeekends, scheme } = params;
+  const displayMonths = Math.max(1, params.displayMonths ?? STATS_DISPLAY_MONTHS);
   const palette = pdfPalette(scheme);
 
   const habitRows = habits
@@ -146,7 +149,7 @@ export function buildStatsHtml(params: {
         const monthly = computeMonthlyValueAverages(
           habit,
           recordIndex,
-          DISPLAY_MONTHS,
+          displayMonths,
           vacationSet,
           winOnlyWeekends,
         );
@@ -162,7 +165,7 @@ export function buildStatsHtml(params: {
               <span>30d <b>${formatStatValue(avgs.month)}</b></span>
               <span>90d <b>${formatStatValue(avgs.quarter)}</b></span>
             </div>
-            ${chartSvg(monthly, habit.color, shadeForPrint(rollingAvgLineColor(habit.color), scheme), false, palette)}
+            ${chartSvg(monthly, habit.color, shadeForPrint(rollingAvgLineColor(habit.color), scheme), false, palette, displayMonths)}
           </div>`);
       } else {
         for (let level = 0; level < pageCount; level++) {
@@ -174,7 +177,7 @@ export function buildStatsHtml(params: {
           const monthly = computeMonthlyRates(
             habit,
             recordIndex,
-            DISPLAY_MONTHS,
+            displayMonths,
             checker,
             vacationSet,
             winOnlyWeekends,
@@ -191,7 +194,7 @@ export function buildStatsHtml(params: {
               <span>30d <b>${rates.month}%</b></span>
               <span>90d <b>${rates.quarter}%</b></span>
             </div>
-            ${chartSvg(monthly, habit.color, shadeForPrint(rollingAvgLineColor(habit.color), scheme), true, palette)}
+            ${chartSvg(monthly, habit.color, shadeForPrint(rollingAvgLineColor(habit.color), scheme), true, palette, displayMonths)}
           </div>`);
         }
       }
@@ -222,7 +225,7 @@ export function buildStatsHtml(params: {
   .nums { display: flex; gap: 14px; font-size: 11px; color: var(--mid); margin-bottom: 4px; }
   .nums b { font-size: 14px; color: var(--strong); }`,
     `<h1>Habit Statistics</h1>
-  <div class="meta">Generated ${generatedDate()} · ${DISPLAY_MONTHS}-month rolling view<br/>Bars are monthly completion (avg per day for value habits), the line is the rolling average.</div>
+  <div class="meta">Generated ${generatedDate()} · ${displayMonths}-month rolling view<br/>Bars are monthly completion (avg per day for value habits), the line is the rolling average.</div>
   <div class="habits">${habitRows}</div>`,
     palette,
   );

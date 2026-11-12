@@ -24,9 +24,6 @@ type DataPoint = {
   months?: number;
 };
 
-/** Months of history at which the full-window line reaches full weight —
- * the display window: a habit with the whole window behind it is solid. */
-const SOLID_MONTHS = STATS_DISPLAY_MONTHS;
 const RIBBON_MIN = 1.5;
 const RIBBON_MAX = 8;
 
@@ -40,10 +37,14 @@ function SolidifyingLine({
   points,
   months,
   color,
+  solidMonths,
 }: {
   points: PointsArray;
   months: number[];
   color: string;
+  /** Months of history at which the line reaches full weight: the display
+   * window, so a habit with the whole window behind it is solid. */
+  solidMonths: number;
 }) {
   const { path } = useLinePath(points, { curveType: 'monotoneX' });
   const xs = points.map((p) => p.x);
@@ -54,7 +55,7 @@ function SolidifyingLine({
     const span = xs[i + 1] - xs[i] || 1;
     const t = Math.min(1, Math.max(0, (x - xs[i]) / span));
     const m = (months[i] ?? 0) * (1 - t) + (months[i + 1] ?? 0) * t;
-    return RIBBON_MIN + (RIBBON_MAX - RIBBON_MIN) * Math.min(1, m / SOLID_MONTHS);
+    return RIBBON_MIN + (RIBBON_MAX - RIBBON_MIN) * Math.min(1, m / solidMonths);
   };
 
   const ribbon = Skia.Path.Make();
@@ -88,9 +89,19 @@ type StatsChartProps = {
   /** Axis/tag formatting: completion percentages (default) or raw numeric
    * averages (value-trend habits). */
   format?: 'percent' | 'number';
+  /** Months in the chart window; the full-window line is solid once a habit
+   * has this many months of history. */
+  displayMonths?: number;
 };
 
-export function StatsChart({ data, title, color, height = 200, format = 'percent' }: StatsChartProps) {
+export function StatsChart({
+  data,
+  title,
+  color,
+  height = 200,
+  format = 'percent',
+  displayMonths = STATS_DISPLAY_MONTHS,
+}: StatsChartProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const chartColor = color ?? colors.tileRecorded;
@@ -188,7 +199,12 @@ export function StatsChart({ data, title, color, height = 200, format = 'percent
                   /* Full-window average, unlabeled: thickens with months of
                      history and meets the featured line once the whole
                      window has history. */
-                  <SolidifyingLine points={points.avgFull} months={monthsHistory} color={`${avgColor}80`} />
+                  <SolidifyingLine
+                    points={points.avgFull}
+                    months={monthsHistory}
+                    color={`${avgColor}80`}
+                    solidMonths={Math.max(1, displayMonths)}
+                  />
                 )}
                 {hasAvg && points.avg && (
                   <>

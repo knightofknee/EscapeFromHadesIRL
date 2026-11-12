@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   StyleSheet,
   Modal,
@@ -11,14 +11,21 @@ import {
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { stripLeadingZeros } from '@/lib/number-input';
 
 type QuickInputModalProps = {
   visible: boolean;
   title: string;
   initialValue?: string;
   keyboardType?: 'default' | 'numeric' | 'decimal-pad';
-  /** Show +/- stepper buttons that increment/decrement by 1. Floors at 0. */
+  /** Show +/- stepper buttons that increment/decrement by `step`. Floors at 0. */
   showStepper?: boolean;
+  /**
+   * Amount the +/- buttons move by. Defaults to 1. Only the buttons use it;
+   * the typed field stays free. Non-finite or non-positive values fall back
+   * to 1.
+   */
+  step?: number;
   onSubmit: (value: string) => void;
   onCancel: () => void;
 };
@@ -29,25 +36,45 @@ export function QuickInputModal({
   initialValue = '',
   keyboardType = 'default',
   showStepper = false,
+  step = 1,
   onSubmit,
   onCancel,
 }: QuickInputModalProps) {
+  const stepSize = Number.isFinite(step) && step > 0 ? step : 1;
   const [value, setValue] = useState(initialValue);
+  const inputRef = useRef<TextInput>(null);
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
+  const isNumeric = keyboardType !== 'default';
 
   useEffect(() => {
     if (visible) setValue(initialValue);
   }, [visible, initialValue]);
+
+  // Numbers never show leading zeros: typing 4 over the pre-filled 0 is 4.
+  const handleChangeText = useCallback(
+    (text: string) => setValue(isNumeric ? stripLeadingZeros(text) : text),
+    [isNumeric],
+  );
+
+  // selectTextOnFocus alone misses when autoFocus fires during the sheet's
+  // slide-in, leaving the caret after the pre-filled value. Select it all
+  // again once focus has settled so the first keystroke replaces it.
+  const handleFocus = useCallback(() => {
+    setTimeout(() => {
+      const len = value.length;
+      if (len > 0) inputRef.current?.setSelection(0, len);
+    }, 50);
+  }, [value]);
 
   const handleSubmit = useCallback(() => {
     onSubmit(value);
     setValue('');
   }, [onSubmit, value]);
 
-  // Step by +/- delta, parsing whatever numeric string is in the field.
-  // Floors at 0 (habit values are conventionally non-negative). Empty
-  // field treated as 0, so first tap of "+" yields "1".
+  // Step by +/- one `stepSize`, parsing whatever numeric string is in the
+  // field. Floors at 0 (habit values are conventionally non-negative).
+  // Empty field treated as 0, so first tap of "+" yields the step.
   //
   // The Math.round(... * 1e10) / 1e10 trick rounds to 10 decimal places.
   // This kills IEEE 754 binary-float artifacts (e.g. 2.2 - 1 evaluating
@@ -57,12 +84,14 @@ export function QuickInputModal({
     (delta: number) => {
       const current = parseFloat(value);
       const safeCurrent = Number.isFinite(current) ? current : 0;
-      const stepped = Math.round((safeCurrent + delta) * 1e10) / 1e10;
+      const stepped = Math.round((safeCurrent + delta * stepSize) * 1e10) / 1e10;
       const next = Math.max(0, stepped);
       setValue(String(next));
     },
-    [value],
+    [value, stepSize],
   );
+  // The buttons say what they move by once it isn't the obvious 1.
+  const stepLabel = stepSize === 1 ? '' : ` ${stepSize}`;
 
   return (
     <Modal
@@ -89,8 +118,10 @@ export function QuickInputModal({
                 styles.input,
                 { color: colors.text, borderColor: colors.tileBorder },
               ]}
+              ref={inputRef}
               value={value}
-              onChangeText={setValue}
+              onChangeText={handleChangeText}
+              onFocus={handleFocus}
               keyboardType={keyboardType}
               autoFocus
               selectTextOnFocus
@@ -109,10 +140,10 @@ export function QuickInputModal({
                     },
                   ]}
                   onPress={() => handleStep(-1)}
-                  accessibilityLabel="Decrease by 1"
+                  accessibilityLabel={`Decrease by ${stepSize}`}
                 >
                   <ThemedText style={[styles.stepperText, { color: colors.tint }]}>
-                    −
+                    −{stepLabel}
                   </ThemedText>
                 </Pressable>
                 <Pressable
@@ -124,10 +155,10 @@ export function QuickInputModal({
                     },
                   ]}
                   onPress={() => handleStep(1)}
-                  accessibilityLabel="Increase by 1"
+                  accessibilityLabel={`Increase by ${stepSize}`}
                 >
                   <ThemedText style={[styles.stepperText, { color: colors.tint }]}>
-                    +
+                    +{stepLabel}
                   </ThemedText>
                 </Pressable>
               </View>

@@ -1,14 +1,20 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path } from 'react-native-svg';
 import MaskedView from '@react-native-masked-view/masked-view';
+import { useFocusEffect } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import Animated, {
   Easing,
   cancelAnimation,
+  interpolateColor,
+  useAnimatedProps,
   useAnimatedStyle,
   useSharedValue,
+  withDelay,
   withRepeat,
+  withSequence,
   withTiming,
 } from 'react-native-reanimated';
 import { ThemedText } from '@/components/themed-text';
@@ -22,14 +28,26 @@ import { useHabits } from '@/hooks/use-habits';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import { useWinOnlyDates } from '@/hooks/use-win-only-dates';
 import { useTodayDate } from '@/hooks/use-today-date';
+import { useTodayRecords } from '@/hooks/use-today-records';
+import { useWinOnlyWeekends } from '@/hooks/use-win-only-weekends';
 import { useHabitQuestProgress } from '@/hooks/use-habit-quest-progress';
 import { useEarnedBadges, useHabitBadges, type HabitBadge } from '@/hooks/use-habit-badges';
 import { designForNumber } from '@/lib/badge-designs';
 import { useRecordsContext } from '@/contexts/records-context';
-import { QUEST_LENGTH, creditedQuest, questEndDate, type QuestDay, type QuestProgress } from '@/lib/habit-quest';
+import {
+  QUEST_LENGTH,
+  creditedQuest,
+  questEndDate,
+  quickRecordValues,
+  type QuestDay,
+  type QuestProgress,
+} from '@/lib/habit-quest';
+import { isRecordCompleted } from '@/lib/habit-scoring';
+import { computeStreak } from '@/lib/habit-streaks';
 import { addDays, formatDate, parseDate } from '@/lib/date-utils';
 import { MAINTENANCE_WINDOW_DAYS, STRENGTH_LINE } from '@/lib/habit-strength';
 import { DECAY_DAYS, FORMATION_DAYS } from '@/lib/habit-strength';
+import type { QuestBurst } from './quest-celebration';
 import type { Habit } from '@/types/habit';
 import type { HabitQuest } from '@/types/habit-quest';
 
@@ -41,6 +59,11 @@ function shortDate(date: string): string {
 
 const HOLO_INK = '#7FE9FF';
 const COLS = 10;
+/** How much further back the records window grows while the current streak runs off its edge. */
+const STREAK_STEP_DAYS = 90;
+/** Eased only, never a spring. */
+const SMOOTH = Easing.inOut(Easing.cubic);
+
 
 /**
  * THE 60-DAY QUEST: the top of the Quests tab. One habit at a time, 60 days
@@ -94,9 +117,12 @@ export function HoloActionButton({
 export function SixtyDayQuest({
   revealInScroll,
   stickyBegin,
+  onCelebrate,
 }: {
   revealInScroll?: RevealInScroll;
   stickyBegin?: StickyBeginApi;
+  /** Today recorded from the card's check: the screen plays the day's celebration (same burst as the Habits grid). */
+  onCelebrate?: (burst: QuestBurst) => void;
 }) {
   const { activeQuest } = useHabitQuest();
   const { habit, progress } = useHabitQuestProgress();
@@ -123,7 +149,7 @@ export function SixtyDayQuest({
       </ThemedText>
 
       {activeQuest && progress ? (
-        <ActiveQuest quest={activeQuest} habit={habit} progress={progress} onEarned={onEarned} />
+        <ActiveQuest quest={activeQuest} habit={habit} progress={progress} onEarned={onEarned} onCelebrate={onCelebrate} />
       ) : (
         <StartQuest revealInScroll={revealInScroll} stickyBegin={stickyBegin} onEarned={onEarned} />
       )}
@@ -478,11 +504,13 @@ function ActiveQuest({
   habit,
   progress,
   onEarned,
+  onCelebrate,
 }: {
   quest: HabitQuest;
   habit?: Habit;
   progress: QuestProgress;
   onEarned: (badge: NewBadge) => void;
+  onCelebrate?: (burst: QuestBurst) => void;
 }) {
   const { abandonQuest, finishQuest } = useHabitQuest();
   const [whyOpen, setWhyOpen] = useState(false);
@@ -499,7 +527,7 @@ function ActiveQuest({
 
   return (
     <View style={styles.activeWrap}>
-      <HoloCard quest={quest} habit={habit} progress={progress} />
+      <HoloCard quest={quest} habit={habit} progress={progress} onCelebrate={onCelebrate} />
 
       {!habit && !progress.isOver && (
         <ThemedText style={styles.goneText}>
@@ -591,11 +619,25 @@ function restartNote(progress: QuestProgress): string {
  * The quest habit as a holo trading card. Touch and drag across it to tilt
  * it and catch the light; it eases flat again on release (timing, no spring).
  */
-function HoloCard({ quest, habit, progress }: { quest: HabitQuest; habit?: Habit; progress: QuestProgress }) {
+function HoloCard({
+  quest,
+  habit,
+  progress,
+  onCelebrate,
+}: {
+  quest: HabitQuest;
+  habit?: Habit;
+  progress: QuestProgress;
+  onCelebrate?: (burst: QuestBurst) => void;
+}) {
   // The reactive map, not getRecordForDay: that reads a ref, which a
   // compiler-memoized render would serve stale.
-  const { recordsMap } = useRecordsContext();
+  const { recordsMap, loadedRange, ensureRange } = useRecordsContext();
   const { todayStr } = useTodayDate();
+  const { recordHabit } = useTodayRecords();
+  const { celebratedDateRef } = useHabitQuest();
+  const { dateSet: vacationSet } = useVacationDays();
+  const { winOnlyWeekends } = useWinOnlyWeekends();
   const [size, setSize] = useState({ w: 0, h: 0 });
   const px = useSharedValue(-1);
   const py = useSharedValue(-1);
@@ -626,14 +668,68 @@ function HoloCard({ quest, habit, progress }: { quest: HabitQuest; habit?: Habit
   const todayDay = progress.days.find((d) => d.date === todayStr);
   const faceRecord = habit ? recordsMap.get(`${habit.id}_${todayStr}`) : undefined;
 
-  let status: string;
-  if (isOver) {
-    status = progress.earnedBadge
+  // The habit's current streak (any level counts, as on Stats), scanned
+  // over the loaded window. A run still alive at the window's first day may
+  // be longer than what's loaded, so the window grows back in steps until
+  // the run closes or the habit's creation is reached.
+  const windowStart = loadedRange?.start;
+  const streak = useMemo(() => {
+    if (!habit) return null;
+    return computeStreak(habit, recordsMap, isRecordCompleted, vacationSet, {
+      now: parseDate(todayStr),
+      winOnlyWeekends,
+      scanUntil: windowStart,
+    });
+  }, [habit, recordsMap, vacationSet, winOnlyWeekends, windowStart, todayStr]);
+  const streakOpen = streak != null && streak.current > 0 && streak.longestOpen && streak.current === streak.longest;
+  const createdDate = habit ? formatDate(new Date(habit.createdAt)) : null;
+  useEffect(() => {
+    if (!streakOpen || !windowStart || !createdDate || windowStart <= createdDate) return;
+    ensureRange(addDays(windowStart, -STREAK_STEP_DAYS), todayStr);
+  }, [streakOpen, windowStart, createdDate, ensureRange, todayStr]);
+
+  // Each visit to the screen replays the check's draw, and remembers whether
+  // today was recorded from the check during this visit: only that record
+  // can be taken back here. One recorded before you arrived is locked (the
+  // tile is where records get changed).
+  const [visit, setVisit] = useState(0);
+  useFocusEffect(
+    useCallback(() => {
+      setVisit((v) => v + 1);
+    }, []),
+  );
+  const [tappedVisit, setTappedVisit] = useState<number | null>(null);
+  const recorded = todayDay?.state === 'done';
+  const vacation = todayDay?.state === 'vacation';
+  const quick = habit ? quickRecordValues(habit.recordingMode) : null;
+  const canTap = !isOver && quick != null && !vacation && (!recorded || tappedVisit === visit);
+  const onCheck = (origin?: { x: number; y: number }) => {
+    if (!habit || !quick || !canTap) return;
+    if (recorded) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      recordHabit(habit.id, quick.cleared);
+      setTappedVisit(null);
+      celebratedDateRef.current = null;
+    } else {
+      recordHabit(habit.id, quick.first);
+      setTappedVisit(visit);
+      // The day's celebration, bursting from the check (the Habits grid
+      // plays the same one from the tile; it has its own haptic), and noted
+      // so the grid does not replay it. Today is not in doneCount yet.
+      if (onCelebrate) {
+        celebratedDateRef.current = todayStr;
+        onCelebrate({ key: Date.now(), doneCount: doneCount + 1, habitName: habit.name, origin });
+      } else {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      }
+    }
+  };
+
+  const finished = isOver
+    ? progress.earnedBadge
       ? `Finished ${shortDate(progress.endDate)} · badge earned`
-      : `Finished at ${Math.round(progress.strength * 100)}%. A badge needs 50%.`;
-  } else if (todayDay?.state === 'done') status = 'Today is recorded';
-  else if (todayDay?.state === 'vacation') status = 'Today is a vacation day';
-  else status = 'Today is open';
+      : `Finished at ${Math.round(progress.strength * 100)}%. A badge needs 50%.`
+    : null;
 
   return (
     <Animated.View
@@ -651,7 +747,7 @@ function HoloCard({ quest, habit, progress }: { quest: HabitQuest; habit?: Habit
         style={StyleSheet.absoluteFill}
       />
       <HoloFoil variant="card" pointerX={px} pointerY={py} />
-      <View style={styles.cardFrame} pointerEvents="none">
+      <View style={styles.cardFrame} pointerEvents="box-none">
         <View style={styles.cardTop}>
           <Text style={styles.cardDay}>
             {isOver ? 'QUEST COMPLETE' : `DAY ${todayNumber} OF ${QUEST_LENGTH}`}
@@ -673,13 +769,40 @@ function HoloCard({ quest, habit, progress }: { quest: HabitQuest; habit?: Habit
             <Text style={styles.cardName} numberOfLines={2}>
               {habit?.name ?? quest.habitName}
             </Text>
-            <Text style={styles.cardStatus}>{status}</Text>
+            {finished && <Text style={styles.cardStatus}>{finished}</Text>}
           </View>
+          {/* The one action on the card, apart from the information: its
+              own column on the right, level with the tile. */}
+          {!isOver && (
+            <QuestCheck
+              checked={recorded}
+              dim={vacation || (!recorded && quick == null)}
+              enabled={canTap}
+              color={quest.habitColor}
+              visit={visit}
+              onPress={onCheck}
+            />
+          )}
         </View>
 
-        <View style={styles.countRow}>
-          <Text style={styles.countBig}>{doneCount}</Text>
-          <Text style={styles.countOf}>{` / ${QUEST_LENGTH} days recorded`}</Text>
+        {/* The two numbers side by side as one close group centered on the
+            card (no divider, a small gap: they are two readings of the same
+            thing, not opposites): days recorded this attempt and the habit's
+            current streak, each a centered cell, number over label. */}
+        <View style={styles.statsRow}>
+          <View style={styles.stat}>
+            <Text style={styles.countBig}>{doneCount}</Text>
+            <Text style={styles.statLabel}>DAYS</Text>
+          </View>
+          {streak != null && (
+            <>
+              <View style={styles.statDivider} />
+              <View style={styles.stat}>
+                <Text style={styles.countBig}>{streak.current}</Text>
+                <Text style={styles.statLabel}>STREAK</Text>
+              </View>
+            </>
+          )}
         </View>
 
         <View style={styles.strengthRow}>
@@ -695,6 +818,116 @@ function HoloCard({ quest, habit, progress }: { quest: HabitQuest; habit?: Habit
         </View>
       </View>
     </Animated.View>
+  );
+}
+
+const AnimatedPath = Animated.createAnimatedComponent(Path);
+const CHECK_PATH = 'M5 12.5 L10 17.5 L19 7.5';
+/** The check path's length, for the stroke draw. */
+const CHECK_LEN = 22;
+const CHECK_SIZE = 64;
+
+/**
+ * Today's check on the holo card, "Today" under it. Recorded, the
+ * box fills with the habit color and draws its check on each visit to the
+ * screen (an eased stroke, drawn twice, then held). Not yet, it breathes
+ * like the grid's open day, and a tap records the first level. A check
+ * tapped here can be tapped off again the same visit; one that was already
+ * there when you arrived does nothing on tap.
+ */
+function QuestCheck({
+  checked,
+  dim,
+  enabled,
+  color,
+  visit,
+  onPress,
+}: {
+  checked: boolean;
+  /** Nothing to do today here: a vacation day, or a habit its tile records through a modal. */
+  dim: boolean;
+  enabled: boolean;
+  color: string;
+  visit: number;
+  /** Tapped; `origin` is the box's center in window coordinates, for a burst anchored on it. */
+  onPress: (origin?: { x: number; y: number }) => void;
+}) {
+  const boxRef = useRef<View>(null);
+  const draw = useSharedValue(checked ? 1 : 0);
+  const breathe = useSharedValue(0);
+  const replayedVisit = useRef(-1);
+
+  useEffect(() => {
+    // A new visit replays the draw; a change within the visit (a tap) draws once.
+    const replay = replayedVisit.current !== visit;
+    replayedVisit.current = visit;
+    if (!checked) {
+      draw.set(withTiming(0, { duration: 220, easing: SMOOTH }));
+      return;
+    }
+    const stroke = withTiming(1, { duration: 520, easing: Easing.out(Easing.cubic) });
+    if (!replay) {
+      draw.set(stroke);
+      return;
+    }
+    draw.set(0);
+    draw.set(
+      withSequence(
+        withTiming(1, { duration: 520, easing: Easing.out(Easing.cubic) }),
+        withDelay(650, withTiming(0, { duration: 200, easing: Easing.in(Easing.cubic) })),
+        withDelay(180, withTiming(1, { duration: 520, easing: Easing.out(Easing.cubic) })),
+      ),
+    );
+  }, [checked, visit, draw]);
+
+  const breathing = !checked && enabled;
+  useEffect(() => {
+    if (!breathing) {
+      breathe.set(withTiming(0, { duration: 300, easing: SMOOTH }));
+      return;
+    }
+    breathe.set(withRepeat(withTiming(1, { duration: 1400, easing: Easing.inOut(Easing.sin) }), -1, true));
+    return () => cancelAnimation(breathe);
+  }, [breathing, breathe]);
+
+  const pathProps = useAnimatedProps(() => ({ strokeDashoffset: CHECK_LEN * (1 - draw.value) }));
+  const boxStyle = useAnimatedStyle(() => ({
+    borderColor: interpolateColor(draw.value, [0, 1], ['rgba(255,255,255,0.6)', color]),
+    backgroundColor: interpolateColor(draw.value, [0, 1], ['rgba(255,255,255,0.08)', color]),
+    shadowOpacity: draw.value * 0.9,
+    opacity: dim ? 0.35 : 0.65 + 0.35 * Math.max(draw.value, breathe.value),
+  }));
+
+  return (
+    <Pressable
+      onPress={() => {
+        const box = boxRef.current;
+        if (!box) return onPress();
+        box.measureInWindow((x, y, w, h) => onPress({ x: x + w / 2, y: y + h / 2 }));
+      }}
+      disabled={!enabled}
+      hitSlop={8}
+      style={styles.checkRow}
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked, disabled: !enabled }}
+      accessibilityLabel={checked ? 'Today recorded' : 'Record today'}
+    >
+      <Animated.View ref={boxRef} style={[styles.check, { shadowColor: color }, boxStyle]}>
+        <Svg width={CHECK_SIZE - 16} height={CHECK_SIZE - 16} viewBox="0 0 24 24">
+          <AnimatedPath
+            d={CHECK_PATH}
+            stroke="#FFFFFF"
+            strokeWidth={3.4}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            fill="none"
+            strokeDasharray={`${CHECK_LEN} ${CHECK_LEN}`}
+            animatedProps={pathProps}
+          />
+        </Svg>
+      </Animated.View>
+      <Text style={[styles.checkLabel, dim && styles.checkLabelDim]}>TODAY</Text>
+    </Pressable>
   );
 }
 
@@ -816,7 +1049,7 @@ function YourBadges() {
           <View key={quest.id} style={styles.pastRow}>
             <BadgePatch design={design} size={40} bg={QuestColors.surface} tint={0.85} />
             <View style={styles.pastText}>
-              <ThemedText style={styles.pastName} numberOfLines={1}>
+              <ThemedText style={styles.pastName} numberOfLines={2}>
                 {habit?.name ?? quest.habitName}
               </ThemedText>
               {quest.finishedAt != null && (
@@ -1077,6 +1310,7 @@ const styles = StyleSheet.create({
   },
   cardNameCol: {
     flex: 1,
+    justifyContent: 'center',
     gap: 4,
   },
   cardName: {
@@ -1089,9 +1323,51 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: 'rgba(255,255,255,0.75)',
   },
-  countRow: {
+  statsRow: {
     flexDirection: 'row',
-    alignItems: 'baseline',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  stat: {
+    width: 80,
+    alignItems: 'center',
+  },
+  statDivider: {
+    width: 1,
+    height: 40,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+  },
+  statLabel: {
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+    color: 'rgba(255,255,255,0.7)',
+    marginTop: -2,
+  },
+  checkRow: {
+    alignItems: 'center',
+    gap: 6,
+  },
+  check: {
+    width: CHECK_SIZE,
+    height: CHECK_SIZE,
+    borderRadius: 16,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowOffset: { width: 0, height: 0 },
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  checkLabel: {
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+    color: '#FFFFFF',
+  },
+  checkLabelDim: {
+    opacity: 0.45,
   },
   countBig: {
     fontSize: 44,
@@ -1099,11 +1375,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontVariant: ['tabular-nums'],
     lineHeight: 48,
-  },
-  countOf: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: 'rgba(255,255,255,0.8)',
   },
   bar: {
     height: 10,

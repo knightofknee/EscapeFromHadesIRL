@@ -41,6 +41,9 @@ import {
 import { useTodayDate } from '@/hooks/use-today-date';
 import type { Habit, HabitRecord, MeditationSession } from '@/types/habit';
 
+/** Structural ceiling for the timer length: one day. */
+const MINUTES_IN_DAY = 1440;
+
 // Bundled chime (also registered as the notification sound in app.json). A
 // single soft bowl strike with ~1.4s of trailing silence, so looping it
 // re-rings about every 5.6s — a reminder, not a nag.
@@ -525,7 +528,7 @@ export function MeditationTimerModal({
   function adjustTotalMinutes(delta: number) {
     if (running) return;
     setTotalSec((prev) => {
-      const mins = Math.max(1, Math.min(180, Math.floor(prev / 60) + delta));
+      const mins = Math.max(1, Math.min(MINUTES_IN_DAY, Math.floor(prev / 60) + delta));
       const next = mins * 60;
       setRemainingSec(next);
       return next;
@@ -540,7 +543,7 @@ export function MeditationTimerModal({
       setRemainingSec(60);
       return;
     }
-    const mins = Math.max(1, Math.min(180, n));
+    const mins = Math.max(1, Math.min(MINUTES_IN_DAY, n));
     const next = mins * 60;
     setTotalSec(next);
     setRemainingSec(next);
@@ -615,7 +618,7 @@ export function MeditationTimerModal({
                   value={String(Math.floor(totalSec / 60))}
                   onChangeText={setTotalMinutesFromInput}
                   keyboardType="number-pad"
-                  maxLength={3}
+                  maxLength={4}
                   accessibilityLabel="Timer minutes"
                 />
                 <Pressable
@@ -628,6 +631,9 @@ export function MeditationTimerModal({
                   <ThemedText style={styles.stepperText}>+</ThemedText>
                 </Pressable>
               </View>
+            )}
+            {isIdleAtFull && (
+              <ThemedText style={styles.rangeHint}>1 to {MINUTES_IN_DAY} minutes (one day).</ThemedText>
             )}
           </View>
 
@@ -782,7 +788,7 @@ export function MeditationTimerModal({
               <TextInput
                 style={[styles.logInput, { color: colors.text, borderColor: colors.tileBorder }]}
                 value={logMinutes}
-                onChangeText={(t) => setLogMinutes(t.replace(/[^0-9]/g, '').slice(0, 3))}
+                onChangeText={(t) => setLogMinutes(t.replace(/[^0-9]/g, '').slice(0, 4))}
                 keyboardType="number-pad"
                 autoFocus
                 selectTextOnFocus
@@ -938,6 +944,11 @@ const styles = StyleSheet.create({
   stepperText: {
     fontSize: 20,
     fontWeight: '600',
+  },
+  rangeHint: {
+    fontSize: 11,
+    opacity: 0.6,
+    marginTop: 4,
   },
   minutesInput: {
     width: 60,

@@ -100,6 +100,20 @@ describe('computeMonthHabitStats', () => {
     expect(s.completed).toBe(2);
   });
 
+  test('phone-free: minutes from the night, scored as a tier habit', () => {
+    const H = 60 * 60 * 1000;
+    const s = computeMonthHabitStats(habit('phoneFree', { phoneFreeGoals: [7, 8] }), [
+      { day: 1, record: rec('goal', { phoneFreeMs: 8 * H }), excluded: false },
+      { day: 2, record: rec('no', { phoneFreeMs: 6 * H }), excluded: false },
+      { day: 3, record: undefined, excluded: false },
+    ]);
+    expect(s.amount).toMatchObject({ kind: 'minutes', total: 840, median: 360 });
+    expect(s.completed).toBe(1);
+    expect(s.series.map((p) => p.y)).toEqual([480, 360, 0]);
+    expect(isTieredHabit(habit('phoneFree'))).toBe(true);
+    expect(recordLevel(habit('phoneFree'), rec('ideal'))).toBe(3);
+  });
+
   test('tier habits: no amount, series is the level, fixed ceiling', () => {
     const s = computeMonthHabitStats(habit('quad'), [
       { day: 1, record: rec('goal'), excluded: false },

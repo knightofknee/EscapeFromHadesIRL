@@ -42,10 +42,10 @@ export type Chore = {
   /** Server-maintained for shared chores: the next reminder instant (ms). */
   nextReminderAt?: number | null;
   /**
-   * Days it was done (YYYY-MM-DD), newest first, deduped, capped at
-   * CHORE_HISTORY_CAP. completions[0] is "last done". A one-time task is
-   * done when this is non-empty. Kept on the doc (not a
-   * subcollection): it's small and the list needs it on every render.
+   * Days it was done (YYYY-MM-DD), newest first, deduped, never capped
+   * (date strings are tiny next to the doc limit). completions[0] is
+   * "last done". A one-time task is done when this is non-empty. Kept on
+   * the doc (not a subcollection): the list needs it on every render.
    */
   completions: string[];
   createdAt: number;

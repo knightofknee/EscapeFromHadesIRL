@@ -14,6 +14,7 @@ import {
   type StickyBegin,
   type StickyBeginApi,
 } from '@/components/habit-quest/sixty-day-quest';
+import { QuestCelebration, type QuestBurst } from '@/components/habit-quest/quest-celebration';
 import { useHabitQuest } from '@/contexts/habit-quest-context';
 import { useQuests } from '@/hooks/use-quests';
 import { useHabits } from '@/hooks/use-habits';
@@ -36,6 +37,8 @@ export default function QuestsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
+  // The 60-day quest's day celebration, fired by the card's check.
+  const [questBurst, setQuestBurst] = useState<QuestBurst | null>(null);
   const { quests, isLoading: questsLoading } = useQuests();
   const { habits } = useHabits();
   const { todayStr } = useTodayDate();
@@ -206,7 +209,7 @@ export default function QuestsScreen() {
       >
         {/* THE 60-DAY QUEST: one habit, 60 days. Its own feature (own
             collection, no run score), sitting above everything else here. */}
-        <SixtyDayQuest revealInScroll={revealInScroll} stickyBegin={stickyBegin} />
+        <SixtyDayQuest revealInScroll={revealInScroll} stickyBegin={stickyBegin} onCelebrate={setQuestBurst} />
 
         {/* CHALLENGES, ETERNAL TRIALS and YOUR PACTS: the older quests, folded
             behind one header (collapsed by default) so the 60-day quest leads
@@ -335,6 +338,10 @@ export default function QuestsScreen() {
         </>
         )}
       </ScrollView>
+
+      {/* The 60-day quest's per-day celebration, when today is recorded from
+          the card's check: over the whole screen, like on the Habits grid. */}
+      <QuestCelebration burst={questBurst} />
 
       {sticky && !realBeginVisible && (
         <Animated.View

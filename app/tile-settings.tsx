@@ -7,7 +7,8 @@ import { ThemedView } from '@/components/themed-view';
 import { GlyphEditor } from '@/components/habits/glyph-editor';
 import { GlyphRenderer } from '@/components/habits/glyph-renderer';
 import { Colors } from '@/constants/theme';
-import { TILE_COLORS, DEFAULT_TILE_COLOR } from '@/constants/grid';
+import { COLOR_PALETTE, DEFAULT_TILE_COLOR, isPaletteColor } from '@/constants/grid';
+import { ColorHexField } from '@/components/ui/color-field';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useHabits } from '@/hooks/use-habits';
 import { useTodayRecords } from '@/hooks/use-today-records';
@@ -15,12 +16,17 @@ import { useUserSettingsContext } from '@/contexts/user-settings-context';
 import { consumePendingHabitCallback, clearPendingHabitCallback } from '@/lib/pending-habit-link';
 import { addDays, getTodayString } from '@/lib/date-utils';
 import { monthKey, nextValueGoalHistory, valueGoalsOn } from '@/lib/habit-scoring';
-import type { RecordingMode, GlyphData } from '@/types/habit';
+import type { RecordingMode, GlyphData, Habit, FloatPlacement } from '@/types/habit';
 import { pickTileIconImage } from '@/lib/tile-icon';
 import { emitError } from '@/lib/error-bus';
 import { useOfflineGuard } from '@/contexts/offline-context';
 import { getStepsPermissionRequestStatus, requestStepsPermission } from '@/lib/steps-health';
 import { StepsPrePromptModal } from '@/components/habits/steps-preprompt-modal';
+import { PhoneFreePrePromptModal } from '@/components/habits/phone-free-preprompt-modal';
+import { DEFAULT_PHONE_FREE_GOAL_HOURS } from '@/lib/phone-free';
+import { DEFAULT_FLOAT, samePlacement } from '@/lib/float-tile';
+import { FloatPlacementModal } from '@/components/habits/float-placement-modal';
+import { getPhoneFreeStatus } from '@/lib/phone-free-source';
 import { PermissionPrePromptModal } from '@/components/permission-preprompt-modal';
 import {
   getNotificationPermissionBucket,
@@ -41,6 +47,7 @@ const RECORDING_MODES: ModeOption[] = [
   { value: 'counter', label: 'Counter', description: 'Tap to increment' },
   { value: 'value', label: 'Value', description: 'Enter a number. Optional goals below light up the outline, circle and star' },
   { value: 'steps', label: 'Steps Counter', description: 'Auto-filled from your step count', auto: true },
+  { value: 'phoneFree', label: 'Phone-free Nights', description: 'Auto-filled from how long your phone stayed untouched overnight', auto: true },
   { value: 'meditation', label: 'Meditation', description: 'Tap to start a timer; pause/resume, log sessions', auto: true },
   { value: 'creativeWriting', label: 'Creative Writing', description: "Auto-bumps to 'yes' the first time you write a note today", auto: true },
 ];
@@ -71,6 +78,26 @@ function defaultAbbreviation(name: string, others: { abbreviation?: string }[]):
 
 const DEFAULT_MEDITATION_IDEAL_TOTAL_MINUTES = 30;
 
+/** Structural ceiling for the meditation minute fields: one day. */
+const MINUTES_IN_DAY = 1440;
+
+/**
+ * First user-perceived character of `s` (one emoji, however many code units
+ * it spans: flags, skin tones, ZWJ families). Falls back to the whole string
+ * on engines without Intl.Segmenter.
+ */
+function firstGrapheme(s: string): string {
+  const Segmenter = (Intl as unknown as { Segmenter?: new (
+    locale?: string,
+    options?: { granularity: 'grapheme' },
+  ) => { segment: (input: string) => Iterable<{ segment: string }> } }).Segmenter;
+  if (typeof Segmenter !== 'function') return s;
+  for (const { segment } of new Segmenter(undefined, { granularity: 'grapheme' }).segment(s)) {
+    return segment;
+  }
+  return '';
+}
+
 export default function TileSettingsModal() {
   'use no memo';
 
@@ -98,6 +125,9 @@ export default function TileSettingsModal() {
     existingHabit?.recordingMode ?? 'quad',
   );
   const [stepGoals, setStepGoals] = useState<number[]>(existingHabit?.stepGoals ?? []);
+  const [phoneFreeGoals, setPhoneFreeGoals] = useState<string[]>(
+    (existingHabit?.phoneFreeGoals ?? []).map(String),
+  );
   // Value goals are edited as text so decimals ("1.5") can be typed through.
   const [valueGoals, setValueGoals] = useState<string[]>(
     (existingHabit?.valueGoals ?? []).map(String),
@@ -132,12 +162,22 @@ export default function TileSettingsModal() {
     if (!showAllNamesTouched.current) setShowAllNames(savedShowAllNames);
   }, [savedShowAllNames]);
   const [tileSize, setTileSize] = useState<number>(existingHabit?.tileSize ?? 1);
+  // Float above the grid instead of taking a cell. New phone-free habits
+  // default to floating (the user's design for it); everything else to a cell.
+  const [floating, setFloating] = useState<boolean>(existingHabit?.float != null);
+  // Where the float sits. Changed only through the placement editor (Edit
+  // placement → drag/pinch → Save), never by a drag on the home screen, and
+  // written with the habit on Save.
+  const [floatPlacement, setFloatPlacement] = useState<FloatPlacement>(existingHabit?.float ?? DEFAULT_FLOAT);
+  const [placementEditorVisible, setPlacementEditorVisible] = useState(false);
 
-  // Compute current display order for position control
-  const sortedHabits = [...habits].sort(
+  // Compute current display order for position control. Floats take no
+  // cell, so they're left out of the numbering.
+  const gridHabits = habits.filter((h) => h.float == null);
+  const sortedHabits = [...gridHabits].sort(
     (a, b) => a.position.row * 100 + a.position.col - (b.position.row * 100 + b.position.col),
   );
-  const totalHabits = habits.length;
+  const totalHabits = gridHabits.length;
   const currentIndex = existingHabit ? sortedHabits.findIndex((h) => h.id === existingHabit.id) : -1;
   const [position, setPosition] = useState<number>(1);
   const [positionInitialized, setPositionInitialized] = useState(false);
@@ -146,6 +186,8 @@ export default function TileSettingsModal() {
   const [counterValue, setCounterValue] = useState<string>(String(currentCounterValue));
   const [counterInitialized, setCounterInitialized] = useState(false);
   const [color, setColor] = useState(existingHabit?.color ?? DEFAULT_TILE_COLOR);
+  const [customColorOpen, setCustomColorOpen] = useState(false);
+  const isCustomColor = !isPaletteColor(color);
   const [glyph, setGlyph] = useState<GlyphData | undefined>(existingHabit?.glyph);
   const [showGlyphEditor, setShowGlyphEditor] = useState(false);
   const [iconImage, setIconImage] = useState<string | undefined>(existingHabit?.iconImage);
@@ -185,6 +227,7 @@ export default function TileSettingsModal() {
   // the type) is the right moment to ask, not later when they tap the
   // tile.
   const [stepsPrePromptVisible, setStepsPrePromptVisible] = useState<boolean>(false);
+  const [phoneFreePrePromptVisible, setPhoneFreePrePromptVisible] = useState<boolean>(false);
   // Visibility of the in-app pre-prompt that explains our limited use of
   // notifications BEFORE the iOS system sheet is shown.
   const [notifPrePromptVisible, setNotifPrePromptVisible] = useState<boolean>(false);
@@ -224,6 +267,15 @@ export default function TileSettingsModal() {
         if (bucket === 'undetermined') setNotifPrePromptVisible(true);
         else if (bucket === 'denied') setNotifDeniedVisible(true);
       })();
+    } else if (recordingMode === 'phoneFree') {
+      // Pre-prompt only while setup is incomplete (permission, or the iOS
+      // app selection); a device that can't measure at all gets nothing.
+      void (async () => {
+        const status = await getPhoneFreeStatus();
+        if (status === 'needs-permission' || status === 'needs-selection') {
+          setPhoneFreePrePromptVisible(true);
+        }
+      })();
     }
     return () => clearTimeout(tid);
   }, [recordingMode, sortedAutoModes]);
@@ -248,6 +300,7 @@ export default function TileSettingsModal() {
       setIcon(existingHabit.icon ?? '');
       setRecordingMode(existingHabit.recordingMode);
       setStepGoals(existingHabit.stepGoals ?? []);
+      setPhoneFreeGoals((existingHabit.phoneFreeGoals ?? []).map(String));
       setValueGoals((existingHabit.valueGoals ?? []).map(String));
       setMeditationSessions(existingHabit.meditationSessions ?? DEFAULT_MEDITATION_SESSIONS);
       setMeditationMinutes(existingHabit.meditationMinutes ?? DEFAULT_MEDITATION_MINUTES);
@@ -256,6 +309,8 @@ export default function TileSettingsModal() {
       );
       meditationIdealTouched.current = false;
       setShowName(existingHabit.showName ?? false);
+      setFloating(existingHabit.float != null);
+      setFloatPlacement(existingHabit.float ?? DEFAULT_FLOAT);
       setTileSize(existingHabit.tileSize);
       setColor(existingHabit.color);
       setGlyph(existingHabit.glyph);
@@ -287,6 +342,15 @@ export default function TileSettingsModal() {
     }
   }, [recordingMode, stepGoals.length]);
 
+  // Same for phone-free: 7h and 8h (see DEFAULT_PHONE_FREE_GOAL_HOURS), and
+  // a new phone-free habit starts out floating above the grid.
+  useEffect(() => {
+    if (recordingMode === 'phoneFree' && phoneFreeGoals.length === 0) {
+      setPhoneFreeGoals(DEFAULT_PHONE_FREE_GOAL_HOURS.map(String));
+      if (!existingHabit) setFloating(true);
+    }
+  }, [recordingMode, phoneFreeGoals.length, existingHabit]);
+
   // Any unsaved edit? Each field compares against the same source its state
   // initializes (and re-syncs) from, so late-arriving data — the habit doc,
   // the counter record, the position index, the app-wide settings doc — never
@@ -297,6 +361,8 @@ export default function TileSettingsModal() {
     icon !== (existingHabit?.icon ?? '') ||
     recordingMode !== (existingHabit?.recordingMode ?? 'quad') ||
     showName !== (existingHabit?.showName ?? false) ||
+    floating !== (existingHabit?.float != null) ||
+    (floating && !samePlacement(floatPlacement, existingHabit?.float ?? DEFAULT_FLOAT)) ||
     showAllNames !== savedShowAllNames ||
     tileSize !== (existingHabit?.tileSize ?? 1) ||
     color !== (existingHabit?.color ?? DEFAULT_TILE_COLOR) ||
@@ -307,11 +373,38 @@ export default function TileSettingsModal() {
     meditationIdealTotalMinutes !==
       (existingHabit?.meditationIdealTotalMinutes ?? DEFAULT_MEDITATION_IDEAL_TOTAL_MINUTES) ||
     JSON.stringify(stepGoals) !== JSON.stringify(existingHabit?.stepGoals ?? []) ||
+    JSON.stringify(phoneFreeGoals) !==
+      JSON.stringify((existingHabit?.phoneFreeGoals ?? []).map(String)) ||
     JSON.stringify(valueGoals) !== JSON.stringify((existingHabit?.valueGoals ?? []).map(String)) ||
     (counterInitialized && counterValue !== String(currentCounterValue)) ||
     (positionInitialized && existingHabit != null && position !== currentIndex + 1);
 
   const canSave = isCreating ? name.trim().length > 0 : isDirty;
+
+  // The habit as the placement editor should draw it: the form's current
+  // values, so a tile being created (no doc yet) or recolored looks right
+  // while it is placed.
+  const previewHabit: Habit = {
+    id: existingHabit?.id ?? 'draft',
+    userId: existingHabit?.userId ?? '',
+    name: name.trim() || 'New habit',
+    abbreviation:
+      abbreviation.trim() ||
+      defaultAbbreviation(name, habits.filter((h) => h.id !== existingHabit?.id)) ||
+      '?',
+    icon: icon.trim() || undefined,
+    glyph: glyph && glyph.paths.length > 0 ? glyph : undefined,
+    iconImage,
+    recordingMode,
+    showName,
+    tileSize,
+    position: existingHabit?.position ?? { row: 0, col: 0 },
+    color,
+    isArchived: false,
+    createdAt: existingHabit?.createdAt ?? 0,
+    updatedAt: existingHabit?.updatedAt ?? 0,
+    float: floatPlacement,
+  };
 
   async function handleSave() {
     if (!name.trim()) {
@@ -342,6 +435,22 @@ export default function TileSettingsModal() {
       return;
     }
     const goalsToSave = recordingMode === 'steps' ? cleanGoals : undefined;
+
+    // Phone-free goals: positive hours (decimals allowed), ascending, deduped,
+    // max 3; Level 1 is required, same as steps.
+    const cleanPhoneFreeGoals = [
+      ...new Set(
+        phoneFreeGoals.map((t) => Number(t.trim())).filter((n) => Number.isFinite(n) && n > 0),
+      ),
+    ]
+      .sort((a, b) => a - b)
+      .slice(0, 3);
+    if (recordingMode === 'phoneFree' && cleanPhoneFreeGoals.length === 0) {
+      Alert.alert('Goal required', 'Set at least a Level 1 phone-free goal in hours.');
+      savingRef.current = false;
+      return;
+    }
+    const phoneFreeGoalsToSave = recordingMode === 'phoneFree' ? cleanPhoneFreeGoals : undefined;
 
     // Value goals are optional: positive numbers (decimals allowed),
     // ascending, deduped, max 3. None → field removed, plain value behavior.
@@ -396,6 +505,10 @@ export default function TileSettingsModal() {
       ? Math.max(1, Math.round(meditationIdealTotalMinutes))
       : undefined;
 
+    // Float placement: what the placement editor settled on (centered until
+    // it has been used); removed when the habit lands in a cell.
+    const floatToSave = floating ? floatPlacement : undefined;
+
     // Commit the staged global "show name on all tiles" toggle (app-wide, not
     // part of the habit doc) — deferred to Save so Cancel can discard it.
     if (showAllNames !== savedShowAllNames) {
@@ -414,6 +527,7 @@ export default function TileSettingsModal() {
         iconImage,
         recordingMode,
         stepGoals: goalsToSave,
+        phoneFreeGoals: phoneFreeGoalsToSave,
         valueGoals: valueGoalsToSave,
         ...valueGoalHistoryUpdate,
         ...(recordingMode === 'steps'
@@ -423,6 +537,7 @@ export default function TileSettingsModal() {
         meditationMinutes: meditationMinutesToSave,
         meditationIdealTotalMinutes: meditationIdealTotalMinutesToSave,
         showName,
+        float: floatToSave,
         tileSize,
         position: { row: maxRow + 1, col: 0 },
         color,
@@ -444,6 +559,7 @@ export default function TileSettingsModal() {
         ...(iconImage !== existingHabit.iconImage ? { iconImage } : {}),
         recordingMode,
         stepGoals: goalsToSave,
+        phoneFreeGoals: phoneFreeGoalsToSave,
         valueGoals: valueGoalsToSave,
         ...valueGoalHistoryUpdate,
         ...stepsPointerUpdate,
@@ -451,6 +567,7 @@ export default function TileSettingsModal() {
         meditationMinutes: meditationMinutesToSave,
         meditationIdealTotalMinutes: meditationIdealTotalMinutesToSave,
         showName,
+        float: floatToSave,
         tileSize,
         color,
       });
@@ -492,10 +609,10 @@ export default function TileSettingsModal() {
         }
       }
 
-      // Reorder if position changed
+      // Reorder if position changed (grid habits only; a float has no slot)
       const oldIndex = currentIndex;
       const newIndex = position - 1;
-      if (oldIndex >= 0 && oldIndex !== newIndex) {
+      if (!floating && oldIndex >= 0 && oldIndex !== newIndex) {
         // Remove from old position, insert at new position
         const reordered = sortedHabits.filter((h) => h.id !== existingHabit.id);
         reordered.splice(newIndex, 0, existingHabit);
@@ -655,12 +772,13 @@ export default function TileSettingsModal() {
 
         {/* Abbreviation */}
         <ThemedText type="defaultSemiBold" style={styles.label}>
-          Abbreviation (1-2 letters)
+          Abbreviation (up to 4 characters)
         </ThemedText>
         <TextInput
           style={[styles.input, { color: colors.text, borderColor: colors.tileBorder }]}
           value={abbreviation}
           onChangeText={(t) => setAbbreviation(t.slice(0, 4))}
+          maxLength={4}
           placeholder={name ? name.slice(0, 1).toUpperCase() : 'E'}
           placeholderTextColor={colors.icon}
         />
@@ -672,7 +790,13 @@ export default function TileSettingsModal() {
         <TextInput
           style={[styles.input, { color: colors.text, borderColor: colors.tileBorder }]}
           value={icon}
-          onChangeText={(t) => setIcon(t.slice(0, 2))}
+          onChangeText={(t) => {
+            // Typing after the current emoji replaces it rather than appending
+            // (an emoji can span several code units, so compare as a prefix
+            // instead of counting characters), then keep one emoji.
+            const typed = t.startsWith(icon) && t.length > icon.length ? t.slice(icon.length) : t;
+            setIcon(firstGrapheme(typed.trim()));
+          }}
           placeholder="🏃"
           placeholderTextColor={colors.icon}
         />
@@ -884,6 +1008,58 @@ export default function TileSettingsModal() {
           </>
         )}
 
+        {/* Phone-free goals (phoneFree mode) */}
+        {recordingMode === 'phoneFree' && (
+          <>
+            <ThemedText type="defaultSemiBold" style={styles.label}>
+              Phone-free Goals
+            </ThemedText>
+            {phoneFreeGoals.map((goal, i) => (
+              <View key={i} style={styles.goalRow}>
+                <ThemedText style={styles.goalLabel}>Level {i + 1}</ThemedText>
+                <TextInput
+                  style={[styles.goalInput, { color: colors.text, borderColor: colors.tileBorder }]}
+                  value={goal}
+                  onChangeText={(t) => {
+                    const cleaned = t.replace(/[^0-9.]/g, '');
+                    setPhoneFreeGoals((prev) => {
+                      const next = [...prev];
+                      next[i] = cleaned;
+                      return next;
+                    });
+                  }}
+                  keyboardType="decimal-pad"
+                  placeholder="7"
+                  placeholderTextColor={colors.icon}
+                  maxLength={5}
+                />
+                <ThemedText style={styles.goalUnit}>hours</ThemedText>
+                {phoneFreeGoals.length > 1 && i === phoneFreeGoals.length - 1 && (
+                  <Pressable
+                    style={[styles.stepperButton, { borderColor: colors.tileBorder }]}
+                    onPress={() => setPhoneFreeGoals((prev) => prev.slice(0, -1))}
+                  >
+                    <ThemedText style={styles.stepperText}>−</ThemedText>
+                  </Pressable>
+                )}
+              </View>
+            ))}
+            {phoneFreeGoals.length < 3 && (
+              <Pressable
+                style={[styles.addLevelButton, { borderColor: colors.tint }]}
+                onPress={() => setPhoneFreeGoals((prev) => [...prev, ''])}
+              >
+                <ThemedText style={[styles.addLevelText, { color: colors.tint }]}>+ Add Level</ThemedText>
+              </Pressable>
+            )}
+            <ThemedText style={styles.hint}>
+              The night runs 6pm to noon. The number is your longest stretch without the
+              phone. Pickups under 5 minutes do not end it, and every minute on the phone
+              is subtracted. Level 1 is required. Adults are advised 7 to 9 hours of sleep.
+            </ThemedText>
+          </>
+        )}
+
         {/* Optional goals (value mode) */}
         {recordingMode === 'value' && (
           <>
@@ -957,19 +1133,20 @@ export default function TileSettingsModal() {
                 value={String(meditationSessions)}
                 onChangeText={(t) => {
                   const n = parseInt(t.replace(/[^0-9]/g, ''), 10);
-                  if (!isNaN(n)) setMeditationSessions(Math.max(1, Math.min(20, n)));
+                  if (!isNaN(n)) setMeditationSessions(Math.max(1, Math.min(MINUTES_IN_DAY, n)));
                   else if (t === '') setMeditationSessions(1);
                 }}
                 keyboardType="number-pad"
-                maxLength={2}
+                maxLength={4}
               />
               <Pressable
                 style={[styles.stepperButton, { borderColor: colors.tileBorder }]}
-                onPress={() => setMeditationSessions((n) => Math.min(20, n + 1))}
+                onPress={() => setMeditationSessions((n) => Math.min(MINUTES_IN_DAY, n + 1))}
               >
                 <ThemedText style={styles.stepperText}>+</ThemedText>
               </Pressable>
             </View>
+            <ThemedText style={styles.hint}>1 to {MINUTES_IN_DAY}.</ThemedText>
 
             <ThemedText type="defaultSemiBold" style={styles.label}>
               Minutes per session
@@ -986,19 +1163,20 @@ export default function TileSettingsModal() {
                 value={String(meditationMinutes)}
                 onChangeText={(t) => {
                   const n = parseInt(t.replace(/[^0-9]/g, ''), 10);
-                  if (!isNaN(n)) setMeditationMinutes(Math.max(1, Math.min(180, n)));
+                  if (!isNaN(n)) setMeditationMinutes(Math.max(1, Math.min(MINUTES_IN_DAY, n)));
                   else if (t === '') setMeditationMinutes(1);
                 }}
                 keyboardType="number-pad"
-                maxLength={3}
+                maxLength={4}
               />
               <Pressable
                 style={[styles.stepperButton, { borderColor: colors.tileBorder }]}
-                onPress={() => setMeditationMinutes((n) => Math.min(180, n + 1))}
+                onPress={() => setMeditationMinutes((n) => Math.min(MINUTES_IN_DAY, n + 1))}
               >
                 <ThemedText style={styles.stepperText}>+</ThemedText>
               </Pressable>
             </View>
+            <ThemedText style={styles.hint}>1 to {MINUTES_IN_DAY} minutes (one day).</ThemedText>
 
             <ThemedText type="defaultSemiBold" style={styles.label}>
               Ideal total minutes
@@ -1019,22 +1197,23 @@ export default function TileSettingsModal() {
                 onChangeText={(t) => {
                   meditationIdealTouched.current = true;
                   const n = parseInt(t.replace(/[^0-9]/g, ''), 10);
-                  if (!isNaN(n)) setMeditationIdealTotalMinutes(Math.max(1, Math.min(600, n)));
+                  if (!isNaN(n)) setMeditationIdealTotalMinutes(Math.max(1, Math.min(MINUTES_IN_DAY, n)));
                   else if (t === '') setMeditationIdealTotalMinutes(1);
                 }}
                 keyboardType="number-pad"
-                maxLength={3}
+                maxLength={4}
               />
               <Pressable
                 style={[styles.stepperButton, { borderColor: colors.tileBorder }]}
                 onPress={() => {
                   meditationIdealTouched.current = true;
-                  setMeditationIdealTotalMinutes((n) => Math.min(600, n + 5));
+                  setMeditationIdealTotalMinutes((n) => Math.min(MINUTES_IN_DAY, n + 5));
                 }}
               >
                 <ThemedText style={styles.stepperText}>+</ThemedText>
               </Pressable>
             </View>
+            <ThemedText style={styles.hint}>1 to {MINUTES_IN_DAY} minutes (one day).</ThemedText>
 
             <ThemedText style={styles.hint}>
               Any session counts as a first-level win. Hitting your target sessions
@@ -1090,7 +1269,37 @@ export default function TileSettingsModal() {
           </>
         )}
 
-        {/* Tile Size */}
+        {/* Float above the grid: the tile takes no cell, so the grid keeps
+            its shape. Placement is edited here on purpose (Edit placement),
+            never by a drag on the home screen. */}
+        <View style={styles.toggleRow}>
+          <View style={{ flex: 1 }}>
+            <ThemedText style={{ fontSize: 14, fontWeight: '600' }}>Float above the grid</ThemedText>
+            <ThemedText style={{ fontSize: 12, opacity: 0.6 }}>
+              {floating
+                ? 'Takes no cell. Set where it sits and how big it is with Edit placement.'
+                : 'Sits on top of the grid instead of taking a cell.'}
+            </ThemedText>
+          </View>
+          <Switch
+            value={floating}
+            onValueChange={setFloating}
+            trackColor={{ false: colors.tileBorder, true: colors.tint }}
+            thumbColor="#fff"
+          />
+        </View>
+        {floating && (
+          <Pressable
+            style={[styles.placementButton, { borderColor: colors.tint }]}
+            onPress={() => setPlacementEditorVisible(true)}
+          >
+            <ThemedText style={[styles.placementButtonText, { color: colors.tint }]}>Edit placement</ThemedText>
+          </Pressable>
+        )}
+
+        {/* Tile Size (grid habits only: a float is pinched to size) */}
+        {!floating && (
+        <>
         <ThemedText type="defaultSemiBold" style={styles.label}>
           Relative Size
         </ThemedText>
@@ -1120,8 +1329,11 @@ export default function TileSettingsModal() {
           </Pressable>
         </View>
 
-        {/* Position (only for existing habits) */}
-        {!isCreating && totalHabits > 1 && (
+        </>
+        )}
+
+        {/* Position (only for existing grid habits) */}
+        {!isCreating && !floating && totalHabits > 1 && (
           <>
             <ThemedText type="defaultSemiBold" style={styles.label}>
               Position
@@ -1159,21 +1371,42 @@ export default function TileSettingsModal() {
           Color
         </ThemedText>
         <View style={styles.colorGrid}>
-          {TILE_COLORS.map((c) => (
+          {COLOR_PALETTE.map((c) => (
             <Pressable
               key={c}
               style={[
                 styles.colorSwatch,
                 {
                   backgroundColor: c,
-                  borderWidth: color === c ? 3 : 0,
+                  borderWidth: color.toUpperCase() === c ? 3 : 0,
                   borderColor: colors.text,
                 },
               ]}
-              onPress={() => setColor(c)}
+              onPress={() => {
+                setCustomColorOpen(false);
+                setColor(c);
+              }}
             />
           ))}
+          {/* Custom: any #RRGGBB. Shows the custom color once one is chosen. */}
+          <Pressable
+            style={[
+              styles.colorSwatch,
+              styles.customSwatch,
+              isCustomColor
+                ? { backgroundColor: color, borderWidth: 3, borderColor: colors.text }
+                : { backgroundColor: colors.tileBackground, borderWidth: 1, borderColor: colors.tileBorder },
+            ]}
+            onPress={() => setCustomColorOpen((open) => !open)}
+            accessibilityRole="button"
+            accessibilityLabel="Custom color"
+          >
+            <ThemedText style={[styles.customSwatchText, { color: isCustomColor ? '#fff' : colors.text }]}>
+              +
+            </ThemedText>
+          </Pressable>
         </View>
+        {customColorOpen && <ColorHexField value={color} onChange={setColor} autoFocus />}
 
         {/* Preview */}
         <ThemedText type="defaultSemiBold" style={styles.label}>
@@ -1210,6 +1443,19 @@ export default function TileSettingsModal() {
         )}
       </ScrollView>
 
+      {/* Placement mode for a floating tile: the draft habit over the real
+          grid; Save hands the placement back here, the habit's Save writes it. */}
+      <FloatPlacementModal
+        visible={placementEditorVisible}
+        habit={previewHabit}
+        placement={floatPlacement}
+        onSave={(placement) => {
+          setFloatPlacement(placement);
+          setPlacementEditorVisible(false);
+        }}
+        onCancel={() => setPlacementEditorVisible(false)}
+      />
+
       {/* Glyph Editor Modal */}
       <Modal visible={showGlyphEditor} animationType="slide" presentationStyle="fullScreen">
         <GlyphEditor
@@ -1224,6 +1470,12 @@ export default function TileSettingsModal() {
       <StepsPrePromptModal
         visible={stepsPrePromptVisible}
         onClose={() => setStepsPrePromptVisible(false)}
+      />
+
+      {/* Screen Time / usage-access pre-prompt for a just-picked Phone-free mode. */}
+      <PhoneFreePrePromptModal
+        visible={phoneFreePrePromptVisible}
+        onClose={() => setPhoneFreePrePromptVisible(false)}
       />
 
       {/* Notification pre-prompt — shown only when the user picks Meditation
@@ -1399,6 +1651,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
+  placementButton: {
+    height: 40,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  placementButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
   hint: {
     fontSize: 12,
     opacity: 0.6,
@@ -1508,6 +1771,15 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
+  },
+  customSwatch: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  customSwatchText: {
+    fontSize: 20,
+    fontWeight: '700',
+    lineHeight: 24,
   },
   preview: {
     width: 80,

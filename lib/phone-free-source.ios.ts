@@ -53,12 +53,25 @@ export async function getPhoneFreeStatus(): Promise<PhoneFreeStatus> {
   }
 }
 
+/** Apple's authorization flow can stall (its passcode step on a device
+ *  without one, the Family Controls agent not answering): never let the
+ *  caller's UI hang on it. The status read afterwards says what happened. */
+const AUTHORIZATION_TIMEOUT_MS = 30_000;
+
 export async function requestPhoneFreePermission(): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await requestAuthorization('individual');
+    await Promise.race([
+      requestAuthorization('individual'),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, AUTHORIZATION_TIMEOUT_MS);
+      }),
+    ]);
   } catch (e) {
     // Denied surfaces as a throw; the status read afterwards reports it.
     console.error('requestPhoneFreePermission ios failed:', e);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

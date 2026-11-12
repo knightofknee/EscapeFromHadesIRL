@@ -1,3 +1,4 @@
+import type { QuadValue } from '@/types/habit';
 import { addDays, parseDate } from '@/lib/date-utils';
 
 /**
@@ -281,6 +282,30 @@ export function intervalsFromThresholdCrossings(crossings: ThresholdCrossing[]):
     out.push({ start: c.at - sliceMs, end: c.at });
   }
   return out;
+}
+
+/**
+ * Default goals (hours) for a new phone-free habit. Adults are advised 7 to
+ * 9 hours of sleep (National Sleep Foundation / AASM consensus); a night
+ * can't hold more sleep than phone-free time, so 7h is the floor and 8h the
+ * next tier. Users edit these freely.
+ */
+export const DEFAULT_PHONE_FREE_GOAL_HOURS = [7, 8];
+
+const PHONE_FREE_TIER: QuadValue[] = ['no', 'yes', 'goal', 'ideal'];
+
+/**
+ * Tier for a night's phone-free time against ascending hour goals: level =
+ * how many goals it reaches, capped at 3; no goals or no time → 'no'.
+ */
+export function computePhoneFreeLevel(phoneFreeMs: number | undefined, goalHours: number[]): QuadValue {
+  if (!phoneFreeMs || phoneFreeMs <= 0 || goalHours.length === 0) return 'no';
+  let level = 0;
+  for (let i = 0; i < goalHours.length; i++) {
+    if (phoneFreeMs >= goalHours[i] * 60 * 60 * 1000) level = i + 1;
+    else break;
+  }
+  return PHONE_FREE_TIER[Math.min(3, level)];
 }
 
 /** "7h 42m" style; whole minutes. */

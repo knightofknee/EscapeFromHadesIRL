@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, StyleSheet, View } from 'react-native';
+import { DateCalendar } from '@/components/chores/date-calendar';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTodayDate } from '@/hooks/use-today-date';
-import { addDays, parseDate } from '@/lib/date-utils';
+import { parseDate } from '@/lib/date-utils';
 import { buildDateRange } from '@/lib/vacation-days';
 
 type VacationRangeModalProps = {
@@ -16,6 +17,8 @@ type VacationRangeModalProps = {
   onConfirm: (startDate: string, endDate: string) => void | Promise<void>;
 };
 
+type Side = 'start' | 'end';
+
 function formatPretty(dateStr: string): string {
   return parseDate(dateStr).toLocaleDateString('en-US', {
     weekday: 'short',
@@ -26,49 +29,47 @@ function formatPretty(dateStr: string): string {
 }
 
 /**
- * Arrow-stepped date selector. ‹ / › step the date by ±1 day.
- * No min/max — vacation can be in the past or future.
+ * Start / End chip. The active one is the side the calendar below edits;
+ * tapping switches which side the next calendar tap sets.
  */
-function DateStepper({
+function SideChip({
   label,
   date,
-  onChange,
+  active,
+  onPress,
   accentColor,
+  borderColor,
   textColor,
 }: {
   label: string;
   date: string;
-  onChange: (next: string) => void;
+  active: boolean;
+  onPress: () => void;
   accentColor: string;
+  borderColor: string;
   textColor: string;
 }) {
   return (
-    <View style={stepperStyles.wrap}>
-      <ThemedText style={stepperStyles.label}>{label}</ThemedText>
-      <View style={stepperStyles.row}>
-        <Pressable
-          style={[stepperStyles.arrow, { borderColor: accentColor }]}
-          onPress={() => onChange(addDays(date, -1))}
-          hitSlop={8}
-          accessibilityLabel={`${label}: previous day`}
-        >
-          <ThemedText style={[stepperStyles.arrowText, { color: accentColor }]}>‹</ThemedText>
-        </Pressable>
-        <View style={stepperStyles.dateWrap}>
-          <ThemedText style={[stepperStyles.dateText, { color: textColor }]}>
-            {formatPretty(date)}
-          </ThemedText>
-        </View>
-        <Pressable
-          style={[stepperStyles.arrow, { borderColor: accentColor }]}
-          onPress={() => onChange(addDays(date, 1))}
-          hitSlop={8}
-          accessibilityLabel={`${label}: next day`}
-        >
-          <ThemedText style={[stepperStyles.arrowText, { color: accentColor }]}>›</ThemedText>
-        </Pressable>
-      </View>
-    </View>
+    <Pressable
+      style={[
+        chipStyles.chip,
+        {
+          borderColor: active ? accentColor : borderColor,
+          backgroundColor: active ? `${accentColor}20` : 'transparent',
+        },
+      ]}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      accessibilityLabel={`${label}: ${formatPretty(date)}`}
+    >
+      <ThemedText style={[chipStyles.label, active && { color: accentColor, opacity: 1 }]}>
+        {label}
+      </ThemedText>
+      <ThemedText style={[chipStyles.date, { color: textColor }]} numberOfLines={1}>
+        {formatPretty(date)}
+      </ThemedText>
+    </Pressable>
   );
 }
 
@@ -86,6 +87,7 @@ export function VacationRangeModal({
 
   const [startDate, setStartDate] = useState(initialDate);
   const [endDate, setEndDate] = useState(initialDate);
+  const [editing, setEditing] = useState<Side>('start');
   const [submitting, setSubmitting] = useState(false);
 
   // Reset to the caller's chosen default every time the modal opens.
@@ -93,23 +95,29 @@ export function VacationRangeModal({
     if (visible) {
       setStartDate(initialDate);
       setEndDate(initialDate);
+      setEditing('start');
       setSubmitting(false);
     }
   }, [visible, initialDate]);
 
-  // Maintain `start ≤ end` invariant by *dragging the other side along*
-  // when the edited side would cross over. So clicking "next" on start
-  // when start === end advances BOTH (one-day range stays one day at the
-  // new date) — it doesn't silently move the end stepper instead.
-  const handleStartChange = useCallback((next: string) => {
-    setStartDate(next);
-    setEndDate((prev) => (next > prev ? next : prev));
-  }, []);
-
-  const handleEndChange = useCallback((next: string) => {
-    setEndDate(next);
-    setStartDate((prev) => (next < prev ? next : prev));
-  }, []);
+  // Maintain `start ≤ end` by clamping the other side: picking a start
+  // past the end moves the end up to it, and picking an end before the
+  // start moves the start back to it. The hint under the calendar says so.
+  // Picking the start hands the calendar to the end side, so a range is
+  // two taps; picking the end stays on end for fine adjustment.
+  const handlePick = useCallback(
+    (date: string) => {
+      if (editing === 'start') {
+        setStartDate(date);
+        setEndDate((prev) => (date > prev ? date : prev));
+        setEditing('end');
+      } else {
+        setEndDate(date);
+        setStartDate((prev) => (date < prev ? date : prev));
+      }
+    },
+    [editing],
+  );
 
   const dayCount = useMemo(() => {
     return buildDateRange(startDate, endDate).length;
@@ -148,27 +156,47 @@ export function VacationRangeModal({
             Set Vacation Days
           </ThemedText>
 
-          <DateStepper
-            label="Start"
-            date={startDate}
-            onChange={handleStartChange}
-            accentColor={blue}
-            textColor={colors.text}
-          />
+          <View style={styles.sides}>
+            <SideChip
+              label="Start"
+              date={startDate}
+              active={editing === 'start'}
+              onPress={() => setEditing('start')}
+              accentColor={blue}
+              borderColor={colors.tileBorder}
+              textColor={colors.text}
+            />
+            <SideChip
+              label="End"
+              date={endDate}
+              active={editing === 'end'}
+              onPress={() => setEditing('end')}
+              accentColor={blue}
+              borderColor={colors.tileBorder}
+              textColor={colors.text}
+            />
+          </View>
 
-          <DateStepper
-            label="End"
-            date={endDate}
-            onChange={handleEndChange}
-            accentColor={blue}
-            textColor={colors.text}
-          />
+          {/* One calendar edits whichever side is active. It follows the
+              active side's month, so switching sides jumps to that date. */}
+          <View style={styles.calendar}>
+            <DateCalendar
+              value={editing === 'start' ? startDate : endDate}
+              today={todayStr}
+              onChange={handlePick}
+            />
+          </View>
 
-          <ThemedText style={styles.preview}>
-            {dayCount === 1
-              ? '1 day will be marked as vacation'
-              : `${dayCount} days will be marked as vacation`}
-          </ThemedText>
+          <View style={styles.previewWrap}>
+            <ThemedText style={styles.preview}>
+              {dayCount === 1
+                ? '1 day will be marked as vacation'
+                : `${dayCount} days will be marked as vacation`}
+            </ThemedText>
+            <ThemedText style={styles.hint}>
+              End cannot come before start. The other date moves to match.
+            </ThemedText>
+          </View>
 
           <View style={styles.buttons}>
             <Pressable
@@ -207,16 +235,33 @@ const styles = StyleSheet.create({
     maxWidth: 360,
     borderRadius: 12,
     padding: 20,
-    gap: 16,
+    gap: 12,
   },
   title: {
     textAlign: 'center',
     fontSize: 16,
   },
+  sides: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  // DateCalendar carries its own marginTop: 12; the modal's gap already
+  // spaces it, so pull that back.
+  calendar: {
+    marginTop: -12,
+  },
+  previewWrap: {
+    gap: 4,
+  },
   preview: {
     textAlign: 'center',
     fontSize: 13,
     opacity: 0.75,
+  },
+  hint: {
+    textAlign: 'center',
+    fontSize: 12,
+    opacity: 0.5,
   },
   buttons: {
     flexDirection: 'row',
@@ -238,41 +283,24 @@ const styles = StyleSheet.create({
   },
 });
 
-const stepperStyles = StyleSheet.create({
-  wrap: {
-    gap: 6,
+const chipStyles = StyleSheet.create({
+  chip: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 2,
   },
   label: {
-    fontSize: 12,
+    fontSize: 11,
     opacity: 0.7,
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  arrow: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
-    borderWidth: 2,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  arrowText: {
-    fontSize: 22,
-    fontWeight: '600',
-    lineHeight: 22,
-  },
-  dateWrap: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  dateText: {
-    fontSize: 16,
+  date: {
+    fontSize: 14,
     fontWeight: '500',
   },
 });

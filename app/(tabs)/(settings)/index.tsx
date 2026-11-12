@@ -1,6 +1,9 @@
 import { useState } from 'react';
-import { StyleSheet, ScrollView, View, Pressable, Alert, Switch, Modal, Share, Linking, Platform } from 'react-native';
+import { StyleSheet, ScrollView, View, Pressable, Alert, Switch, Modal, Share, Linking, Platform, TextInput } from 'react-native';
 import { router } from 'expo-router';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import DraggableFlatList, { ScaleDecorator, type RenderItemParams } from 'react-native-draggable-flatlist';
+import { Ionicons } from '@expo/vector-icons';
 import * as Application from 'expo-application';
 import * as Clipboard from 'expo-clipboard';
 import { ThemedText } from '@/components/themed-text';
@@ -14,7 +17,12 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAppearance } from '@/hooks/use-appearance';
 import { useHomeScreen } from '@/hooks/use-home-screen';
-import { useFreshNoteReset, FRESH_NOTE_RESET_OPTIONS } from '@/hooks/use-fresh-note-reset';
+import {
+  useFreshNoteReset,
+  FRESH_NOTE_RESET_OPTIONS,
+  MIN_FRESH_NOTE_RESET_MINUTES,
+  MAX_FRESH_NOTE_RESET_MINUTES,
+} from '@/hooks/use-fresh-note-reset';
 import { useUserSettingsContext } from '@/contexts/user-settings-context';
 import { BirthdayModal, formatBirthday } from '@/components/settings/birthday-modal';
 
@@ -34,13 +42,28 @@ export default function SettingsScreen() {
   const { appearance, setAppearance } = useAppearance();
   const { homeScreen, setHomeScreen } = useHomeScreen();
   const { resetMinutes, setResetMinutes } = useFreshNoteReset();
+  // New note reset: quick-pick chips plus a free minutes field. The field
+  // mirrors the stored value, and follows it when storage loads after mount.
+  const [resetText, setResetText] = useState(String(resetMinutes));
+  const [syncedResetMinutes, setSyncedResetMinutes] = useState(resetMinutes);
+  if (resetMinutes !== syncedResetMinutes) {
+    setSyncedResetMinutes(resetMinutes);
+    if (parseInt(resetText, 10) !== resetMinutes) setResetText(String(resetMinutes));
+  }
+  const resetIsPreset = (FRESH_NOTE_RESET_OPTIONS as readonly number[]).includes(resetMinutes);
+
+  function pickResetMinutes(minutes: number) {
+    setResetMinutes(minutes);
+    setResetText(String(minutes));
+  }
   const { tags, setTagOrder } = useTags();
-  const { birthday, setBirthday } = useUserSettingsContext();
+  const { birthday, setBirthday, weekStartsOn, setWeekStartsOn } = useUserSettingsContext();
   const [birthdayOpen, setBirthdayOpen] = useState(false);
 
   // Keyword Order: reorder the tag chips shown on the notes list (one
   // scrollable line — the first few are the always-visible ones). Local
-  // copy while the modal is open; every move persists immediately.
+  // copy while the modal is open. A drag persists once on drop; the
+  // chevrons (kept for accessibility) persist on every tap.
   const [keywordOrderOpen, setKeywordOrderOpen] = useState(false);
   const [orderedTags, setOrderedTags] = useState<Tag[]>([]);
 
@@ -190,20 +213,65 @@ export default function SettingsScreen() {
                   </ThemedText>
                 </View>
               </View>
-              {FRESH_NOTE_RESET_OPTIONS.map((minutes) => (
-                <Pressable
-                  key={minutes}
-                  style={[styles.row, styles.subRow]}
-                  onPress={() => setResetMinutes(minutes)}
-                >
-                  <ThemedText style={styles.label}>
-                    {minutes === 60 ? '1 hour' : `${minutes} minutes`}
+              <View style={styles.resetBlock}>
+                <View style={styles.resetChips}>
+                  {FRESH_NOTE_RESET_OPTIONS.map((minutes) => {
+                    const active = resetMinutes === minutes;
+                    return (
+                      <Pressable
+                        key={minutes}
+                        onPress={() => pickResetMinutes(minutes)}
+                        style={[
+                          styles.resetChip,
+                          {
+                            borderColor: active ? colors.tint : colors.tileBorder,
+                            backgroundColor: active ? `${colors.tint}20` : 'transparent',
+                          },
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: active }}
+                      >
+                        <ThemedText style={styles.resetChipText}>
+                          {minutes === 60 ? '1 hour' : `${minutes} min`}
+                        </ThemedText>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <View style={styles.resetCustomRow}>
+                  <ThemedText style={styles.resetCustomLabel}>After</ThemedText>
+                  <TextInput
+                    style={[
+                      styles.resetCustomInput,
+                      { color: colors.text, borderColor: !resetIsPreset ? colors.tint : colors.tileBorder },
+                    ]}
+                    value={resetText}
+                    placeholder="–"
+                    placeholderTextColor={colors.icon}
+                    onChangeText={(t) => {
+                      const digits = t.replace(/[^0-9]/g, '');
+                      setResetText(digits);
+                      const n = parseInt(digits, 10);
+                      if (!isNaN(n) && n >= MIN_FRESH_NOTE_RESET_MINUTES) {
+                        setResetMinutes(Math.min(MAX_FRESH_NOTE_RESET_MINUTES, n));
+                      }
+                    }}
+                    // Show the stored value once editing ends, so a cleared
+                    // field or a number past the limit reads back as what
+                    // was kept.
+                    onBlur={() => setResetText(String(resetMinutes))}
+                    keyboardType="number-pad"
+                    maxLength={4}
+                    accessibilityLabel="New note reset, minutes"
+                  />
+                  <ThemedText style={styles.resetCustomLabel}>
+                    {resetMinutes === 1 ? 'minute' : 'minutes'}
                   </ThemedText>
-                  {resetMinutes === minutes && (
-                    <ThemedText style={{ color: colors.tint }}>✓</ThemedText>
-                  )}
-                </Pressable>
-              ))}
+                </View>
+                <ThemedText style={[styles.value, { opacity: 0.5, fontSize: 12 }]}>
+                  {MIN_FRESH_NOTE_RESET_MINUTES} to {MAX_FRESH_NOTE_RESET_MINUTES} minutes (one day)
+                </ThemedText>
+              </View>
             </>
           )}
         </View>
@@ -243,6 +311,25 @@ export default function SettingsScreen() {
             <ThemedText style={styles.label}>Dark</ThemedText>
             {appearance === 'dark' && <ThemedText style={{ color: colors.tint }}>✓</ThemedText>}
           </Pressable>
+        </View>
+
+        {/* One first day of the week for every grid: week strip, month
+            heatmap, chore calendar, PDFs. */}
+        <ThemedText type="defaultSemiBold" style={styles.sectionHeader}>
+          Week starts on
+        </ThemedText>
+        <View style={[styles.card, { backgroundColor: colors.tileBackground, borderColor: colors.tileBorder }]}>
+          <Pressable style={styles.row} onPress={() => setWeekStartsOn(1)} accessibilityRole="button" accessibilityState={{ selected: weekStartsOn === 1 }}>
+            <ThemedText style={styles.label}>Monday</ThemedText>
+            {weekStartsOn === 1 && <ThemedText style={{ color: colors.tint }}>✓</ThemedText>}
+          </Pressable>
+          <Pressable style={styles.row} onPress={() => setWeekStartsOn(0)} accessibilityRole="button" accessibilityState={{ selected: weekStartsOn === 0 }}>
+            <ThemedText style={styles.label}>Sunday</ThemedText>
+            {weekStartsOn === 0 && <ThemedText style={{ color: colors.tint }}>✓</ThemedText>}
+          </Pressable>
+          <ThemedText style={[styles.value, { opacity: 0.5, fontSize: 12, paddingHorizontal: 16, paddingBottom: 12 }]}>
+            Applies to the week view, month calendar, chore calendars, and PDFs.
+          </ThemedText>
         </View>
 
         {/* 60-day quest: birthday week is win-only. Never prompted; it's
@@ -380,14 +467,17 @@ export default function SettingsScreen() {
         </Pressable>
       </Modal>
 
-      {/* Keyword Order — themed card (never a native alert), reorder with
-          up/down arrows, persists on every move. */}
+      {/* Keyword Order — themed card (never a native alert). Long-press the
+          handle to drag a row (one write on drop); up/down arrows stay as
+          the accessible fallback. The gesture root is needed because a
+          Modal is its own native view tree on Android. */}
       <Modal
         visible={keywordOrderOpen}
         transparent
         animationType="fade"
         onRequestClose={() => setKeywordOrderOpen(false)}
       >
+        <GestureHandlerRootView style={styles.orderRoot}>
         <Pressable style={styles.orderBackdrop} onPress={() => setKeywordOrderOpen(false)}>
           {/* Inner press swallows taps so tapping the card doesn't dismiss. */}
           <Pressable
@@ -396,43 +486,78 @@ export default function SettingsScreen() {
           >
             <ThemedText style={styles.orderTitle}>Keyword Order</ThemedText>
             <ThemedText style={styles.orderSubtitle}>
-              Top of this list shows first on the notes page
+              Top of this list shows first on the notes page. Hold the handle to drag.
             </ThemedText>
-            <ScrollView style={styles.orderList}>
-              {orderedTags.length === 0 && (
-                <ThemedText style={styles.orderEmpty}>No keywords yet.</ThemedText>
-              )}
-              {orderedTags.map((tag, i) => (
-                <View key={tag.id} style={styles.orderRow}>
-                  <ThemedText
-                    style={[styles.orderName, { color: tag.color ?? colors.tint }]}
-                    numberOfLines={1}
-                  >
-                    {tag.name}
-                  </ThemedText>
-                  <Pressable
-                    onPress={() => moveTag(i, -1)}
-                    disabled={i === 0}
-                    style={[styles.orderArrow, i === 0 && styles.orderArrowDisabled]}
-                    hitSlop={6}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Move ${tag.name} up`}
-                  >
-                    <IconSymbol name="chevron.up" size={20} color={colors.icon} />
-                  </Pressable>
-                  <Pressable
-                    onPress={() => moveTag(i, 1)}
-                    disabled={i === orderedTags.length - 1}
-                    style={[styles.orderArrow, i === orderedTags.length - 1 && styles.orderArrowDisabled]}
-                    hitSlop={6}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Move ${tag.name} down`}
-                  >
-                    <IconSymbol name="chevron.down" size={20} color={colors.icon} />
-                  </Pressable>
-                </View>
-              ))}
-            </ScrollView>
+            {orderedTags.length === 0 ? (
+              <ThemedText style={styles.orderEmpty}>No keywords yet.</ThemedText>
+            ) : (
+              <DraggableFlatList
+                data={orderedTags}
+                keyExtractor={(tag) => tag.id}
+                style={styles.orderList}
+                // The list is the scroller here (the card has no other), so
+                // it autoscrolls while a row is dragged past its edge.
+                onDragEnd={({ data }) => {
+                  setOrderedTags(data);
+                  void setTagOrder(data.map((t) => t.id));
+                }}
+                // The library shifts rows with a spring; clamp the overshoot
+                // so nothing bounces.
+                animationConfig={{ overshootClamping: true }}
+                renderItem={({ item: tag, getIndex, drag, isActive }: RenderItemParams<Tag>) => {
+                  const i = getIndex() ?? 0;
+                  return (
+                    <ScaleDecorator>
+                      <View
+                        style={[
+                          styles.orderRow,
+                          // Opaque while lifted so the scaled row covers its
+                          // neighbours instead of showing them through.
+                          isActive && { backgroundColor: colors.tileBackground },
+                        ]}
+                      >
+                        <ThemedText
+                          style={[styles.orderName, { color: tag.color ?? colors.tint }]}
+                          numberOfLines={1}
+                        >
+                          {tag.name}
+                        </ThemedText>
+                        <Pressable
+                          onPress={() => moveTag(i, -1)}
+                          disabled={i === 0}
+                          style={[styles.orderArrow, i === 0 && styles.orderArrowDisabled]}
+                          hitSlop={6}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Move ${tag.name} up`}
+                        >
+                          <IconSymbol name="chevron.up" size={20} color={colors.icon} />
+                        </Pressable>
+                        <Pressable
+                          onPress={() => moveTag(i, 1)}
+                          disabled={i === orderedTags.length - 1}
+                          style={[styles.orderArrow, i === orderedTags.length - 1 && styles.orderArrowDisabled]}
+                          hitSlop={6}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Move ${tag.name} down`}
+                        >
+                          <IconSymbol name="chevron.down" size={20} color={colors.icon} />
+                        </Pressable>
+                        <Pressable
+                          onLongPress={drag}
+                          delayLongPress={200}
+                          disabled={isActive}
+                          hitSlop={8}
+                          style={styles.orderHandle}
+                          accessibilityLabel={`Drag ${tag.name} to reorder`}
+                        >
+                          <Ionicons name="reorder-three" size={22} color={colors.icon} />
+                        </Pressable>
+                      </View>
+                    </ScaleDecorator>
+                  );
+                }}
+              />
+            )}
             <Pressable
               style={[styles.orderDone, { backgroundColor: colors.tint }]}
               onPress={() => setKeywordOrderOpen(false)}
@@ -442,6 +567,7 @@ export default function SettingsScreen() {
             </Pressable>
           </Pressable>
         </Pressable>
+        </GestureHandlerRootView>
       </Modal>
     </ThemedView>
   );
@@ -462,7 +588,26 @@ const styles = StyleSheet.create({
     borderBottomColor: 'rgba(128,128,128,0.15)',
   },
   label: { fontSize: 15 },
-  subRow: { paddingLeft: 32, paddingVertical: 10 },
+  resetBlock: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(128,128,128,0.15)',
+  },
+  resetChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  resetChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7 },
+  resetChipText: { fontSize: 14 },
+  resetCustomRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  resetCustomLabel: { fontSize: 15 },
+  resetCustomInput: {
+    borderWidth: 1,
+    borderRadius: 10,
+    width: 72,
+    paddingVertical: 8,
+    fontSize: 16,
+    textAlign: 'center',
+  },
   value: { fontSize: 15, opacity: 0.6 },
   chevron: { fontSize: 20, opacity: 0.3, fontWeight: '300' },
   signOutButton: {
@@ -474,6 +619,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   signOutText: { color: '#E74C3C', fontWeight: '600', fontSize: 16 },
+  orderRoot: { flex: 1 },
   orderBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -501,6 +647,7 @@ const styles = StyleSheet.create({
   orderName: { flex: 1, fontSize: 15, fontWeight: '600' },
   orderArrow: { padding: 6 },
   orderArrowDisabled: { opacity: 0.25 },
+  orderHandle: { paddingLeft: 8, paddingRight: 2, paddingVertical: 4 },
   orderDone: {
     marginTop: 12,
     alignSelf: 'flex-end',
