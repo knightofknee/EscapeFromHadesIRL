@@ -17,17 +17,22 @@ import { useRecordsContext } from '@/contexts/records-context';
 import { computeDayBreakdown, heatmapShade } from '@/lib/day-breakdown';
 import { DayBreakdownPopover, type PopoverAnchor } from '@/components/habits/day-breakdown-popover';
 import {
+  cellAmount,
   computeRangeRows,
+  focusDayRatio,
   formatMonthAmount,
   maxMonthPage,
+  minMonthPage,
   monthPage,
   rangeCalendarWeeks,
+  reportPages,
 } from '@/lib/month-habit-stats';
 import { buildMonthReportHtml, monthReportLabel, monthReportRange, REPORT_WEEKS } from '@/lib/month-pdf';
 import { MonthPickerModal, type MonthPickerOption } from '@/components/habits/month-picker-modal';
 import { loadRecordsRange, mergeWithLive } from '@/lib/records-snapshot-store';
 import { nextFrame, renderPdf, sharePdf, type PdfDoc } from '@/lib/pdf-share';
 import { MonthSparkline } from '@/components/habits/month-sparkline';
+import { HabitFocusPicker } from '@/components/habits/habit-focus-picker';
 import { PdfPreview } from '@/components/ui/pdf-preview';
 import { readableTextOn } from '@/lib/contrast';
 import { formatDate, parseDate, weekStartOf, weekdayOrder, WEEKDAY_SHORT } from '@/lib/date-utils';
@@ -35,7 +40,6 @@ import { useWeekStart } from '@/hooks/use-week-start';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { HabitRecord } from '@/types/habit';
-
 
 export default function MonthViewScreen() {
   const { habits, isLoading: habitsLoading, isOffline, hasLoaded } = useHabits();
@@ -55,8 +59,8 @@ export default function MonthViewScreen() {
   // past that, so the forward button disappears there instead of paging
   // into months that haven't happened.
   const maxOffset = maxMonthPage(todayDate);
-  // Nothing exists before the month the first habit was created in, so the
-  // back arrow stops there instead of paging into empty months.
+  // Nothing exists before the first habit was created, so the back arrow
+  // stops at the page holding that day instead of paging into empty months.
   const firstHabitAt = useMemo(
     () =>
       habits.reduce(
@@ -65,14 +69,13 @@ export default function MonthViewScreen() {
       ),
     [habits],
   );
-  const minOffset = useMemo(() => {
-    if (!Number.isFinite(firstHabitAt)) return 0;
-    const c = new Date(firstHabitAt);
-    return -Math.max(0, (todayDate.getFullYear() - c.getFullYear()) * 12 + (todayDate.getMonth() - c.getMonth()));
-  }, [firstHabitAt, todayDate]);
+  const minOffset = useMemo(
+    () => minMonthPage(todayDate, Number.isFinite(firstHabitAt) ? formatDate(new Date(firstHabitAt)) : null),
+    [firstHabitAt, todayDate],
+  );
   const shownOffset = Math.min(Math.max(monthOffset, minOffset), maxOffset);
   const page = useMemo(() => monthPage(shownOffset, todayDate), [shownOffset, todayDate]);
-  const { year, month, startDate, endDate, dates, countDates, label: monthLabel } = page;
+  const { startDate, endDate, dates, countDates, label: monthLabel } = page;
   const dayCount = dates.length;
   const canGoForward = shownOffset < maxOffset;
   const canGoBack = shownOffset > minOffset;
@@ -123,15 +126,24 @@ export default function MonthViewScreen() {
       ),
     [habits, recordIndex, winOnlyWeekends],
   );
+  // One habit at a time (the selector under the calendar), like a quest
+  // grid for any habit: each day shaded by how far that habit got, out of
+  // its top level. Null shows every habit together.
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const focusHabit = focusId ? (habits.find((h) => h.id === focusId) ?? null) : null;
   const dayCompletionMap = useMemo(() => {
     const map: Record<string, number> = {};
     if (habits.length === 0) return map;
     for (const d of dates) {
       if (vacationSet.has(d)) continue;
+      if (focusHabit) {
+        map[d] = focusDayRatio(focusHabit, recordIndex.get(`${focusHabit.id}_${d}`), d, winOnlyWeekends);
+        continue;
+      }
       map[d] = breakdownFor(d).ratio;
     }
     return map;
-  }, [habits.length, breakdownFor, dates, vacationSet]);
+  }, [habits.length, breakdownFor, dates, vacationSet, focusHabit, recordIndex, winOnlyWeekends]);
 
   // Tap a day to see what's behind its shade. The cell is measured against
   // the screen container so the popover can sit right above it. Any touch
@@ -158,10 +170,17 @@ export default function MonthViewScreen() {
       });
     });
   }, []);
-  const popoverBreakdown = useMemo(
-    () => (popover ? breakdownFor(popover.day) : null),
-    [popover, breakdownFor],
-  );
+  const popoverBreakdown = useMemo(() => {
+    if (!popover) return null;
+    if (!focusHabit) return breakdownFor(popover.day);
+    // One habit: its row alone.
+    return computeDayBreakdown(
+      [focusHabit],
+      popover.day,
+      (habit) => recordIndex.get(`${habit.id}_${popover.day}`),
+      winOnlyWeekends,
+    );
+  }, [popover, breakdownFor, focusHabit, recordIndex, winOnlyWeekends]);
   const popoverTitle = popover
     ? parseDate(popover.day).toLocaleDateString(undefined, {
         weekday: 'short',
@@ -171,7 +190,7 @@ export default function MonthViewScreen() {
     : '';
 
   function heatmapColor(ratio: number): string {
-    return heatmapShade(ratio, colors.tileRecorded, colors.tileUnrecorded);
+    return heatmapShade(ratio, focusHabit?.color ?? colors.tileRecorded, colors.tileUnrecorded);
   }
 
   // --- Share as PDF (the export section at the bottom) ---
@@ -189,22 +208,19 @@ export default function MonthViewScreen() {
   const [sharing, setSharing] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<PdfDoc | null>(null);
-  // How far back the report can reach: every month from the one the first
-  // habit was created in through the month on screen. That is the only
-  // limit; any count up to it can be typed.
-  const dataMonths = useMemo(() => {
-    const created = habits.reduce(
-      (min, h) => (h.createdAt && h.createdAt < min ? h.createdAt : min),
-      Number.POSITIVE_INFINITY,
-    );
-    if (!Number.isFinite(created)) return 1;
-    const c = new Date(created);
-    return Math.max(1, (year - c.getFullYear()) * 12 + (month - c.getMonth()) + 1);
-  }, [habits, year, month]);
-  const dataSince = useMemo(() => {
-    const d = new Date(year, month - (dataMonths - 1), 1);
-    return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-  }, [year, month, dataMonths]);
+  // How far back the report can reach: the page on screen and every page
+  // before it, back to the one holding the first habit's day. That is the
+  // only limit; any count up to it can be typed.
+  const dataMonths = shownOffset - minOffset + 1;
+  const dataSince = useMemo(
+    () =>
+      parseDate(monthPage(minOffset, todayDate).startDate).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      }),
+    [minOffset, todayDate],
+  );
   const monthsInReport = Math.min(shareMonths, dataMonths);
   // Weeks of data: from the start of the first habit's week through today.
   const dataWeeks = useMemo(() => {
@@ -230,7 +246,13 @@ export default function MonthViewScreen() {
     setShareMonths(clamped);
     setShareMonthsText(String(clamped));
   };
-  const shareOpts = { year, month, monthCount: monthsInReport, includeWeeks: shareWeeks, weekCount: weeksInReport };
+  // What's selected on screen: this page and the ones before it, and the
+  // picked habit, if any.
+  const sharePages = useMemo(
+    () => reportPages(shownOffset, monthsInReport, todayDate),
+    [shownOffset, monthsInReport, todayDate],
+  );
+  const shareOpts = { pages: sharePages, includeWeeks: shareWeeks, weekCount: weeksInReport };
   const shareLabel = monthReportLabel(shareOpts);
 
   const buildReport = async (): Promise<PdfDoc> => {
@@ -247,6 +269,7 @@ export default function MonthViewScreen() {
     const html = buildMonthReportHtml(
       {
         habits,
+        focus: focusHabit,
         recordIndex: index,
         vacationDays,
         winOnlyWeekends,
@@ -257,7 +280,7 @@ export default function MonthViewScreen() {
       },
       shareOpts,
     );
-    return renderPdf(html, `${shareLabel} Habits`);
+    return renderPdf(html, `${shareLabel} ${focusHabit ? focusHabit.name : 'Habits'}`);
   };
 
   const reportFailed = (e: unknown) => {
@@ -411,12 +434,24 @@ export default function MonthViewScreen() {
                       ]}
                     >
                       <ThemedText style={styles.calendarDayText}>{day}</ThemedText>
+                      {/* A habit with an amount, on its own: the day's amount under the date. */}
+                      {focusHabit && (() => {
+                        const v = cellAmount(focusHabit, recordIndex.get(`${focusHabit.id}_${dateStr}`));
+                        return v ? (
+                          <ThemedText style={styles.calendarValueText} numberOfLines={1}>
+                            {v}
+                          </ThemedText>
+                        ) : null;
+                      })()}
                     </Pressable>
                   );
                 })}
               </View>
             ))}
           </View>
+
+          {/* Show one habit on the calendar, or all of them. */}
+          <HabitFocusPicker habits={habits} focusId={focusId} onPick={setFocusId} />
 
           {/* Per-habit rates */}
           <ThemedText type="defaultSemiBold" style={styles.sectionTitle}>
@@ -662,6 +697,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   calendarDayText: { fontSize: 11, fontWeight: '500' },
+  calendarValueText: { fontSize: 11, lineHeight: 13, fontWeight: '800' },
   sectionTitle: { fontSize: 16, marginTop: 8 },
   habitRow: {
     borderWidth: 1,

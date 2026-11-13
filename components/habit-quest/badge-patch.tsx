@@ -10,7 +10,7 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
-import Svg, { Circle, Defs, G, Path, RadialGradient, Stop } from 'react-native-svg';
+import Svg, { Circle, Defs, G, LinearGradient, Path, RadialGradient, Stop } from 'react-native-svg';
 import { SHAPE_PATHS, type BadgeDesign } from '@/lib/badge-designs';
 import type { MaintenanceStatus } from '@/lib/habit-strength';
 
@@ -27,6 +27,29 @@ function mix(a: string, b: string, t: number): string {
 /** Scale a 100 x 100 shape about its center. */
 const inset = (scale: number) => `translate(${50 * (1 - scale)} ${50 * (1 - scale)}) scale(${scale})`;
 
+/** Level Two's blue for text (light enough to read on the dark surfaces). */
+export const LEVEL_TWO_INK = '#4FA8FF';
+/**
+ * Level Two's blue for glows and filled squares: a saturated royal blue.
+ * A light blue at glow opacity over the dark tiles reads as gray; this one
+ * stays blue, the way the green glow stays green.
+ */
+export const LEVEL_TWO_BLUE = '#2F6BFF';
+/**
+ * Ideal's purple (amethyst, leaning magenta so it never reads as Level Two's
+ * blue): ideal days on the grid and ideal strength. A strong ideal badge
+ * glows this, as green is Level 1 and blue is Level 2.
+ */
+export const IDEAL_PURPLE = '#A64DFF';
+/** Ideal's purple for text on the dark surfaces. */
+export const IDEAL_INK = '#C59BFF';
+
+/** The upgraded badge's edge: deep blues, as dark as the other patch edges. */
+const LEVEL_TWO_EDGE = ['#141C52', '#1A3488', '#1F4F96'] as const;
+/** The upgraded badge's field and thread: royal blue cloth, pale silver-blue stitching. */
+const LEVEL_TWO_FIELD = '#24489E';
+const LEVEL_TWO_THREAD = '#D6E6FF';
+
 /**
  * A 60-day badge as an embroidered patch, like a scout merit badge or a
  * gym badge: its own shape and colors, a rolled edge, a stitched border,
@@ -34,6 +57,8 @@ const inset = (scale: number) => `translate(${50 * (1 - scale)} ${50 * (1 - scal
  * (lib/badge-designs). Blended into what it sits on (`bg`) by `tint`
  * (about 0.6 on a tile, so it's quiet; 1 in the earned-badge modal).
  * ×N when the habit has earned more than one.
+ * Level 2 (upgraded by a Level Two quest): the same patch with a blue foil
+ * edge and a second stitched ring, so it reads as the same badge, evolved.
  */
 export function BadgePatch({
   design,
@@ -41,21 +66,48 @@ export function BadgePatch({
   bg,
   tint = 0.6,
   count = 1,
+  level = 1,
 }: {
   design: BadgeDesign;
   size: number;
   bg: string;
   tint?: number;
   count?: number;
+  level?: 1 | 2;
 }) {
+  const upgraded = level === 2;
+  // Upgraded, the whole patch goes blue (field and thread too), so the
+  // design's own greens and golds don't fight the blue edge and glow. Shape
+  // and emblem stay: it's the same badge, evolved.
   const edge = mix(design.edge, bg, Math.min(1, tint + 0.25));
-  const field = mix(design.field, bg, tint);
-  const thread = mix(design.thread, bg, Math.min(1, tint + 0.15));
+  const field = mix(upgraded ? LEVEL_TWO_FIELD : design.field, bg, tint);
+  const thread = mix(upgraded ? LEVEL_TWO_THREAD : design.thread, bg, Math.min(1, tint + 0.15));
   const outline = SHAPE_PATHS[design.shape];
+  const edgeTint = Math.min(1, tint + 0.25);
+  const gradientId = `edge2-${design.name.replace(/\W/g, '')}-${Math.round(edgeTint * 100)}`;
   return (
     <View style={{ width: size, height: size }}>
       <Svg width={size} height={size} viewBox="0 0 100 100">
-        <Path d={outline} fill={edge} />
+        {upgraded && (
+          <Defs>
+            <LinearGradient id={gradientId} x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+              {LEVEL_TWO_EDGE.map((c, i) => (
+                <Stop key={c} offset={i / (LEVEL_TWO_EDGE.length - 1)} stopColor={mix(c, bg, edgeTint)} />
+              ))}
+            </LinearGradient>
+          </Defs>
+        )}
+        <Path d={outline} fill={upgraded ? `url(#${gradientId})` : edge} />
+        {upgraded && (
+          <Path
+            d={outline}
+            fill="none"
+            stroke={mix('#7FB2FF', bg, edgeTint)}
+            strokeWidth={2.2}
+            strokeDasharray="4 3.5"
+            transform={inset(0.93)}
+          />
+        )}
         <Path d={outline} fill={field} transform={inset(0.84)} />
         <Path d={outline} fill="none" stroke={thread} strokeWidth={2.6} strokeDasharray="5 4" transform={inset(0.76)} />
         <G transform={inset(0.96)}>
@@ -89,6 +141,28 @@ export const STATUS_LABELS: Record<MaintenanceStatus, { label: string; ink: stri
   remission: { label: 'In remission', ink: '#F1948A' },
 };
 
+/**
+ * What a badge shows for how it's holding up. A plain badge: its status
+ * over any level. An upgraded badge: its status over goal days only, with
+ * blue in place of green for strong (gold and red as usual).
+ */
+export function badgeStatus(badge: {
+  status: MaintenanceStatus | null;
+  strength: number;
+  levelTwo: { strength: number; status: MaintenanceStatus | null } | null;
+}): { status: MaintenanceStatus; ink: string; glow: string; label: string; strength: number } | null {
+  const upgraded = badge.levelTwo != null;
+  const status = upgraded ? badge.levelTwo!.status : badge.status;
+  if (!status) return null;
+  const strength = upgraded ? badge.levelTwo!.strength : badge.strength;
+  const base = STATUS_LABELS[status];
+  // The blue already says "level 2", so the words stay the same at both levels.
+  if (upgraded && status === 'strong') {
+    return { status, ink: LEVEL_TWO_INK, glow: LEVEL_TWO_BLUE, label: base.label, strength };
+  }
+  return { status, ink: base.ink, glow: base.ink, label: base.label, strength };
+}
+
 /** Gentle strokes on a 10 x 10 canvas: a soft rise, a lazy wave, a soft fall. */
 const MARK_PATHS: Record<MaintenanceStatus, string> = {
   strong: 'M2 6.5 L5 3.5 L8 6.5',
@@ -101,8 +175,8 @@ const MARK_PATHS: Record<MaintenanceStatus, string> = {
  * while strong, a yellow wave while kept up, a red fall in remission.
  * Muted on purpose, so it informs without competing with the patch.
  */
-export function StatusMark({ status, size }: { status: MaintenanceStatus; size: number }) {
-  const ink = mix(STATUS_LABELS[status].ink, '#2C2F33', 0.62);
+export function StatusMark({ status, size, color }: { status: MaintenanceStatus; size: number; color?: string }) {
+  const ink = mix(color ?? STATUS_LABELS[status].ink, '#2C2F33', 0.62);
   return (
     <View accessibilityLabel={STATUS_LABELS[status].label}>
       <Svg width={size} height={size} viewBox="0 0 10 10">
@@ -129,7 +203,16 @@ export function StatusMark({ status, size }: { status: MaintenanceStatus; size: 
 /** One breath in or out takes a random time in this range. */
 const BREATH_MS = { min: 2000, max: 2800 };
 
-export function StatusGlow({ status, size }: { status: MaintenanceStatus; size: number }) {
+export function StatusGlow({
+  status,
+  size,
+  color: colorOverride,
+}: {
+  status: MaintenanceStatus;
+  size: number;
+  /** Replaces the status color (an upgraded badge glows blue while strong). */
+  color?: string;
+}) {
   const reduceMotion = useReducedMotion();
   const pulse = useSharedValue(0.5);
   useEffect(() => {
@@ -167,8 +250,8 @@ export function StatusGlow({ status, size }: { status: MaintenanceStatus; size: 
     transform: [{ scale: interpolate(pulse.value, [0, 1], [0.88, 1.06]) }],
   }));
   const d = size * 1.75;
-  const color = STATUS_LABELS[status].ink;
-  const id = `glow-${status}`;
+  const color = colorOverride ?? STATUS_LABELS[status].ink;
+  const id = `glow-${status}-${color.replace('#', '')}`;
   return (
     <Animated.View
       pointerEvents="none"

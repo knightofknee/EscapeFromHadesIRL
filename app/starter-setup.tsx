@@ -11,7 +11,6 @@ import { useTour } from '@/contexts/tour-context';
 import { useUserSettingsContext } from '@/contexts/user-settings-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useHabits } from '@/hooks/use-habits';
-import { useQuests } from '@/hooks/use-quests';
 import { useTodayDate } from '@/hooks/use-today-date';
 import { emitError } from '@/lib/error-bus';
 import { setPendingHabitCallback } from '@/lib/pending-habit-link';
@@ -24,7 +23,7 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } fro
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 /**
- * Intro bubble-picker for adding preset habits + their linked quests. Two
+ * Intro bubble-picker for adding preset habits. Two
  * groups: "The Path" (walk/meditate/read) pre-selected (opt-out), and "Worthy
  * Pursuits" (write/exercise/yoga/music) opt-in. Reached two ways:
  *   - `?intro=1` — the start of the Genesis tour for brand-new users. On
@@ -41,7 +40,6 @@ export default function StarterSetupScreen() {
   const colors = Colors[colorScheme ?? 'light'];
 
   const { habits, createHabit, archiveHabit, reviveHabit } = useHabits();
-  const { quests, createQuest } = useQuests();
   const { setShowAllTileNames } = useUserSettingsContext();
   const { todayStr } = useTodayDate();
   const { startGenesis, isActive: tourActive } = useTour();
@@ -123,14 +121,14 @@ export default function StarterSetupScreen() {
 
   const addedKeys = useMemo(() => {
     const s = new Set<string>();
-    for (const t of STARTER_TASKS) if (isStarterAdded(t, habits, quests)) s.add(t.key);
+    for (const t of STARTER_TASKS) if (isStarterAdded(t, habits)) s.add(t.key);
     return s;
-  }, [habits, quests]);
+  }, [habits]);
 
   // Core pre-selected (opt-out); pursuits start empty (opt-in). Already-added
   // are never auto-selected — applyStarterTasks skips them regardless.
   const [selected, setSelected] = useState<Set<string>>(
-    () => new Set(CORE_STARTER_KEYS.filter((k) => !isStarterAdded(byKey(k), habits, quests))),
+    () => new Set(CORE_STARTER_KEYS.filter((k) => !isStarterAdded(byKey(k), habits))),
   );
 
   const toggle = useCallback((key: string) => {
@@ -154,10 +152,7 @@ export default function StarterSetupScreen() {
       setBusy(true);
       let createdSteps = false;
       try {
-        const created = await applyStarterTasks(keys, habits, todayStr, {
-          createHabit,
-          createQuest,
-        }, quests);
+        const created = await applyStarterTasks(keys, habits, todayStr, { createHabit });
         if (created.length > 0) setShowAllTileNames(true);
         createdSteps = created.some((h) => h.recordingMode === 'steps');
       } catch (e) {
@@ -188,7 +183,7 @@ export default function StarterSetupScreen() {
       }
       exit();
     },
-    [habits, quests, todayStr, createHabit, createQuest, setShowAllTileNames, isIntro, tourActive, startGenesis],
+    [habits, todayStr, createHabit, setShowAllTileNames, isIntro, tourActive, startGenesis],
   );
 
   const core = STARTER_TASKS.filter((t) => t.category === 'core');
@@ -291,9 +286,12 @@ export default function StarterSetupScreen() {
             scrollRef.current?.scrollToEnd({ animated: true });
           }}
         >
+          <ThemedText style={[styles.lede, styles.ledeFirst]}>
+            Pick what you want to track. Change or remove any of them later.
+          </ThemedText>
           <ThemedText style={styles.lede}>
-            Pick what you want to track. We add the habit and its quest, and you can
-            change or remove any of them later.
+            Two months is the median time to form a new habit. Once you’re tracking, take one
+            habit on as your 60-day quest on the Quests tab. Reach day 60 and it earns a badge.
           </ThemedText>
 
           {/* --- The Path (core, opt-out) --- */}
@@ -418,7 +416,7 @@ export default function StarterSetupScreen() {
           ) : isIntro ? (
             <ThemedText style={styles.footerNote}>
               {toCreateCount > 0
-                ? 'We’ll add what you picked (plus its quest) and start you off. Change anything later.'
+                ? 'We’ll add what you picked and start you off. Change anything later.'
                 : 'You’re all set. Continue to start the tour.'}
             </ThemedText>
           ) : null}
@@ -585,6 +583,7 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 16, paddingBottom: 24 },
   lede: { fontSize: 15, lineHeight: 21, opacity: 0.8, marginBottom: 20 },
+  ledeFirst: { marginBottom: 10 },
   sectionHeading: {
     fontSize: 12,
     fontWeight: '800',

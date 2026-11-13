@@ -1,12 +1,13 @@
 import { StyleSheet, View } from 'react-native';
-import { BadgePatch, STATUS_LABELS, StatusGlow } from './badge-patch';
+import { BadgePatch, StatusGlow, badgeStatus } from './badge-patch';
 import type { HabitBadge } from '@/hooks/use-habit-badges';
 
 /**
  * The little guy in a habit tile's top-left corner: the patch of the latest
  * badge earned on the habit, blended into the tile, with a soft light pulsing
  * from behind it for how it's holding up (green strong, gold kept up, red in
- * remission).
+ * remission). An upgraded badge (Level Two) wears its blue edge and glows
+ * blue instead of green while strong at goal.
  * Overlay only; the tile face underneath is untouched.
  */
 export function TileBadges({
@@ -19,17 +20,19 @@ export function TileBadges({
   bg: string;
 }) {
   const d = Math.round(Math.max(18, Math.min(26, size * 0.18)));
+  const shown = badgeStatus(badge);
+  const upgraded = badge.levelTwo != null;
   return (
     <View
       pointerEvents="none"
       style={StyleSheet.absoluteFill}
-      accessibilityLabel={`Badge earned${badge.earned > 1 ? ` ${badge.earned} times` : ''}${
-        badge.status ? `, ${STATUS_LABELS[badge.status].label.toLowerCase()}` : ''
+      accessibilityLabel={`${upgraded ? 'Upgraded badge' : 'Badge'} earned${badge.earned > 1 ? ` ${badge.earned} times` : ''}${
+        shown ? `, ${shown.label.toLowerCase()}` : ''
       }`}
     >
       <View style={[styles.corner, { width: d, height: d }]}>
-        {badge.status && <StatusGlow status={badge.status} size={d} />}
-        <BadgePatch design={badge.design} size={d} bg={bg} count={badge.earned} />
+        {shown && <StatusGlow status={shown.status} size={d} color={shown.glow} />}
+        <BadgePatch design={badge.design} size={d} bg={bg} count={badge.earned} level={upgraded ? 2 : 1} />
       </View>
     </View>
   );

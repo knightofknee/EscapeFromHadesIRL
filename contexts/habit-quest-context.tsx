@@ -16,31 +16,38 @@ import { subscribeWithOfflineState } from '@/lib/firebase/subscribe';
 import { emitError } from '@/lib/error-bus';
 import type { Habit } from '@/types/habit';
 import type { HabitQuest } from '@/types/habit-quest';
+import type { QuestLevel } from '@/lib/habit-quest';
 
 export const HABIT_QUESTS_COLLECTION = 'habitQuests';
 
 type HabitQuestContextValue = {
   /** The one running 60-day quest, or null. */
   activeQuest: HabitQuest | null;
-  /** Finished quests, newest first. */
+  /** Finished 60-day quests, newest first. Badge numbering reads these. */
   pastQuests: HabitQuest[];
+  /** The one running Level Two quest, or null. Runs alongside the 60-day quest. */
+  activeLevelTwo: HabitQuest | null;
+  /** Finished Level Two quests, newest first. */
+  pastLevelTwo: HabitQuest[];
   isLoading: boolean;
   /**
-   * Start a quest on `habit`, day 1 = `startDate`. No-op while one is
-   * running. With `passed` (the habit's last 60 days already pass), the
-   * quest is recorded as finished on the spot and the badge is earned.
+   * Start a quest of `level` on `habit`, day 1 = `startDate`. No-op while
+   * one of that level is running. With `passed` (the habit's last 60 days
+   * already pass), the quest is recorded as finished on the spot and the
+   * badge is earned (or upgraded, at level 2).
    */
-  startQuest: (habit: Habit, startDate: string, passed?: QuestResult) => void;
-  /** Close out the running quest: the completed attempt's day 1, its count, and its final strength. */
-  finishQuest: (result: QuestResult) => void;
-  /** Drop the running quest entirely (no history). */
-  abandonQuest: () => void;
+  startQuest: (habit: Habit, startDate: string, passed?: QuestResult, level?: QuestLevel) => void;
+  /** Close out the running quest of `level`: the completed attempt's day 1, its count, and its final strength. */
+  finishQuest: (result: QuestResult, level?: QuestLevel) => void;
+  /** Drop the running quest of `level` entirely (no history). */
+  abandonQuest: (level?: QuestLevel) => void;
   /**
-   * The date whose per-day celebration already played from the quest
-   * card's check, so the Habits grid does not play it again when it next
-   * sees that day recorded (tabs freeze on blur, so it sees it late).
+   * The date whose per-day celebration already played from a quest card's
+   * check, per level, so the Habits grid does not play it again when it
+   * next sees that day recorded (tabs freeze on blur, so it sees it late).
    */
   celebratedDateRef: MutableRefObject<string | null>;
+  celebratedLevelTwoDateRef: MutableRefObject<string | null>;
 };
 
 export type QuestResult = { attemptStart: string; endDate: string; daysDone: number; strength: number };
@@ -48,11 +55,14 @@ export type QuestResult = { attemptStart: string; endDate: string; daysDone: num
 const HabitQuestContext = createContext<HabitQuestContextValue>({
   activeQuest: null,
   pastQuests: [],
+  activeLevelTwo: null,
+  pastLevelTwo: [],
   isLoading: true,
   startQuest: () => {},
   finishQuest: () => {},
   abandonQuest: () => {},
   celebratedDateRef: { current: null },
+  celebratedLevelTwoDateRef: { current: null },
 });
 
 /**
@@ -97,24 +107,29 @@ export function HabitQuestProvider({ children }: { children: ReactNode }) {
     );
   }, [user]);
 
-  const activeQuest = useMemo(
-    () =>
+  const byLevel = useMemo(() => {
+    const active = (level: QuestLevel) =>
       quests
-        .filter((q) => q.status === 'active')
-        .sort((a, b) => a.createdAt - b.createdAt)[0] ?? null,
-    [quests],
-  );
-  const pastQuests = useMemo(
-    () =>
+        .filter((q) => q.status === 'active' && (q.level ?? 1) === level)
+        .sort((a, b) => a.createdAt - b.createdAt)[0] ?? null;
+    const past = (level: QuestLevel) =>
       quests
-        .filter((q) => q.status === 'finished')
-        .sort((a, b) => (a.startDate < b.startDate ? 1 : a.startDate > b.startDate ? -1 : 0)),
-    [quests],
+        .filter((q) => q.status === 'finished' && (q.level ?? 1) === level)
+        .sort((a, b) => (a.startDate < b.startDate ? 1 : a.startDate > b.startDate ? -1 : 0));
+    return { active1: active(1), active2: active(2), past1: past(1), past2: past(2) };
+  }, [quests]);
+  const activeQuest = byLevel.active1;
+  const activeLevelTwo = byLevel.active2;
+  const pastQuests = byLevel.past1;
+  const pastLevelTwo = byLevel.past2;
+  const activeOf = useCallback(
+    (level: QuestLevel) => (level === 2 ? activeLevelTwo : activeQuest),
+    [activeQuest, activeLevelTwo],
   );
 
   const startQuest = useCallback(
-    (habit: Habit, startDate: string, passed?: QuestResult) => {
-      if (!user || activeQuest) return;
+    (habit: Habit, startDate: string, passed?: QuestResult, level: QuestLevel = 1) => {
+      if (!user || activeOf(level)) return;
       if (!requireOnline()) return;
       const ref = doc(collection(db, HABIT_QUESTS_COLLECTION));
       const now = Date.now();
@@ -126,6 +141,7 @@ export function HabitQuestProvider({ children }: { children: ReactNode }) {
         habitColor: habit.color,
         createdAt: now,
         updatedAt: now,
+        ...(level === 2 ? { level: 2 as const } : {}),
         ...(passed
           ? {
               startDate: passed.attemptStart,
@@ -145,15 +161,16 @@ export function HabitQuestProvider({ children }: { children: ReactNode }) {
         });
       write();
     },
-    [user, activeQuest, requireOnline],
+    [user, activeOf, requireOnline],
   );
 
   const finishQuest = useCallback(
-    ({ attemptStart, endDate, daysDone, strength }: QuestResult) => {
-      if (!user || !activeQuest) return;
+    ({ attemptStart, endDate, daysDone, strength }: QuestResult, level: QuestLevel = 1) => {
+      const quest = activeOf(level);
+      if (!user || !quest) return;
       if (!requireOnline()) return;
       const now = Date.now();
-      const ref = doc(db, HABIT_QUESTS_COLLECTION, activeQuest.id);
+      const ref = doc(db, HABIT_QUESTS_COLLECTION, quest.id);
       const write = () =>
         setDoc(
           ref,
@@ -169,25 +186,38 @@ export function HabitQuestProvider({ children }: { children: ReactNode }) {
         );
       write();
     },
-    [user, activeQuest, requireOnline],
+    [user, activeOf, requireOnline],
   );
 
-  const abandonQuest = useCallback(() => {
-    if (!user || !activeQuest) return;
+  const abandonQuest = useCallback((level: QuestLevel = 1) => {
+    const quest = activeOf(level);
+    if (!user || !quest) return;
     if (!requireOnline()) return;
-    const ref = doc(db, HABIT_QUESTS_COLLECTION, activeQuest.id);
+    const ref = doc(db, HABIT_QUESTS_COLLECTION, quest.id);
     const write = () =>
       deleteDoc(ref).catch((e) => {
         console.error('[habitQuests] abandon failed', e);
         emitError("Couldn't abandon the quest. Tap Retry.", write);
       });
     write();
-  }, [user, activeQuest, requireOnline]);
+  }, [user, activeOf, requireOnline]);
 
   const celebratedDateRef = useRef<string | null>(null);
+  const celebratedLevelTwoDateRef = useRef<string | null>(null);
   const value = useMemo(
-    () => ({ activeQuest, pastQuests, isLoading, startQuest, finishQuest, abandonQuest, celebratedDateRef }),
-    [activeQuest, pastQuests, isLoading, startQuest, finishQuest, abandonQuest],
+    () => ({
+      activeQuest,
+      pastQuests,
+      activeLevelTwo,
+      pastLevelTwo,
+      isLoading,
+      startQuest,
+      finishQuest,
+      abandonQuest,
+      celebratedDateRef,
+      celebratedLevelTwoDateRef,
+    }),
+    [activeQuest, pastQuests, activeLevelTwo, pastLevelTwo, isLoading, startQuest, finishQuest, abandonQuest],
   );
 
   return <HabitQuestContext.Provider value={value}>{children}</HabitQuestContext.Provider>;

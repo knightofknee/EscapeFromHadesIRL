@@ -3,11 +3,13 @@ import { addDays, formatDate, parseDate, weekStartOf, weekdayOrder, WEEKDAY_SHOR
 import { computeDayBreakdown, heatmapShade } from '@/lib/day-breakdown';
 import { recordLevel } from '@/lib/habit-scoring';
 import {
-  computeMonthRows,
+  cellAmount,
+  computeRangeRows,
+  focusDayRatio,
   formatMonthAmount,
-  monthCalendarWeeks,
-  monthCountDays,
+  rangeCalendarWeeks,
   type MonthHabitStats,
+  type MonthPage,
 } from '@/lib/month-habit-stats';
 import { esc, generatedDate, htmlDocument, pdfPalette, type PdfPalette, type PdfScheme } from '@/lib/pdf-html';
 import { monotoneCurvePath, smoothSeries } from '@/lib/sparkline';
@@ -15,12 +17,15 @@ import type { SuccessColors } from '@/hooks/use-success-colors';
 import type { Habit, HabitRecord, VacationDay } from '@/types/habit';
 
 /**
- * HTML for the Month view's shareable PDF, laid out for a phone: the newest
- * month's calendar heatmap and Habit Completion cards (the same numbers as
- * the screen, via lib/month-habit-stats + lib/day-breakdown), optionally the
- * last 4 weeks of the week view, then any older months. With more than one
- * month, every month's cards carry a small month tag so a reader scrolling
- * the middle of the file always knows which month they're in.
+ * HTML for the Month view's shareable PDF, laid out for a phone. It is what
+ * the user has selected on screen: the page on show (a past month lined up
+ * with today, or the current month) and the pages before it, and the one
+ * habit picked under the calendar, if any. Each page has its calendar
+ * heatmap and Habit Completion cards (the same numbers as the screen, via
+ * lib/month-habit-stats + lib/day-breakdown), optionally the recent weeks of
+ * the week view after the newest page. With more than one page, every card
+ * carries a small tag so a reader in the middle of the file always knows
+ * which month they're in.
  */
 
 const MONTH_NAMES = [
@@ -32,30 +37,18 @@ const DAY_NAMES = WEEKDAY_SHORT;
 export const REPORT_WEEKS = 4;
 
 export type MonthReportOptions = {
-  /** The newest month in the report (the one on screen). */
-  year: number;
-  month: number;
-  /** 1 = just that month; more adds the months before it, newest first. */
-  monthCount: number;
+  /** The pages in the report, newest first: the one on screen, then the ones before it (lib/month-habit-stats reportPages). */
+  pages: MonthPage[];
   includeWeeks: boolean;
   /** How many recent weeks the week section covers; REPORT_WEEKS when left out. */
   weekCount?: number;
 };
 
-type YM = { year: number; month: number };
-
-function monthsOf({ year, month, monthCount }: MonthReportOptions): YM[] {
-  return Array.from({ length: Math.max(1, monthCount) }, (_, i) => {
-    const d = new Date(year, month - i, 1);
-    return { year: d.getFullYear(), month: d.getMonth() };
-  });
-}
-
-/** First days of the report's weeks, newest first: the weeks up to the newest month's end (or today, if sooner). */
+/** First days of the report's weeks, newest first: the weeks up to the newest page's end (or today, if sooner). */
 function weekStarts(opts: MonthReportOptions, today: Date, weekStartsOn: WeekStart = 1): string[] {
-  const monthEnd = new Date(opts.year, opts.month + 1, 0);
-  const anchor = monthEnd < today ? monthEnd : today;
-  const first = weekStartOf(formatDate(anchor), weekStartsOn);
+  const todayStr = formatDate(today);
+  const end = opts.pages[0].endDate;
+  const first = weekStartOf(end < todayStr ? end : todayStr, weekStartsOn);
   return Array.from({ length: Math.max(1, opts.weekCount ?? REPORT_WEEKS) }, (_, i) => addDays(first, -7 * i));
 }
 
@@ -65,10 +58,8 @@ export function monthReportRange(
   today: Date,
   weekStartsOn: WeekStart = 1,
 ): { startDate: string; endDate: string } {
-  const months = monthsOf(opts);
-  const oldest = months[months.length - 1];
-  let startDate = formatDate(new Date(oldest.year, oldest.month, 1));
-  let endDate = formatDate(new Date(opts.year, opts.month + 1, 0));
+  let startDate = opts.pages[opts.pages.length - 1].startDate;
+  let endDate = opts.pages[0].endDate;
   if (opts.includeWeeks) {
     const weeks = weekStarts(opts, today, weekStartsOn);
     const first = weeks[weeks.length - 1];
@@ -79,17 +70,20 @@ export function monthReportRange(
   return { startDate, endDate };
 }
 
-/** "October 2026", or "Aug – Oct 2026" / "Nov 2025 – Oct 2026" for several months. */
+const shortDate = (d: string) => `${SHORT_MONTHS[Number(d.slice(5, 7)) - 1]} ${Number(d.slice(8))}`;
+
+/**
+ * The report's title: "November 2026" for a whole calendar month, else the
+ * span with its year, "Oct 13 – Nov 12, 2026" / "Dec 13, 2025 – Jan 12, 2026".
+ */
 export function monthReportLabel(opts: MonthReportOptions): string {
-  const months = monthsOf(opts);
-  const newest = months[0];
-  if (months.length === 1) return `${MONTH_NAMES[newest.month]} ${newest.year}`;
-  const oldest = months[months.length - 1];
-  const from =
-    oldest.year === newest.year
-      ? SHORT_MONTHS[oldest.month]
-      : `${SHORT_MONTHS[oldest.month]} ${oldest.year}`;
-  return `${from} – ${SHORT_MONTHS[newest.month]} ${newest.year}`;
+  const newest = opts.pages[0];
+  const startDate = opts.pages[opts.pages.length - 1].startDate;
+  if (opts.pages.length === 1 && /\d{4}$/.test(newest.label)) return newest.label;
+  const fromYear = startDate.slice(0, 4);
+  const toYear = newest.endDate.slice(0, 4);
+  const from = fromYear === toYear ? shortDate(startDate) : `${shortDate(startDate)}, ${fromYear}`;
+  return `${from} – ${shortDate(newest.endDate)}, ${toYear}`;
 }
 
 /** The month row's sparkline (components/habits/month-sparkline.tsx), as inline SVG. */
@@ -127,6 +121,8 @@ function sparklineSvg(color: string, stats: MonthHabitStats, daysInMonth: number
 
 type ReportData = {
   habits: Habit[];
+  /** The one habit picked on screen: the report shows it alone, shaded in its color with each day's amount. */
+  focus?: Habit | null;
   recordIndex: Map<string, HabitRecord>;
   vacationDays: Map<string, VacationDay>;
   winOnlyWeekends: boolean;
@@ -139,22 +135,29 @@ type ReportData = {
   weekStartsOn?: WeekStart;
 };
 
-function monthSection(data: ReportData, { year, month }: YM, tagged: boolean, palette: PdfPalette): string {
-  const { habits, recordIndex, vacationDays, winOnlyWeekends, today } = data;
+function monthSection(data: ReportData, page: MonthPage, tagged: boolean, palette: PdfPalette): string {
+  const { recordIndex, vacationDays, winOnlyWeekends } = data;
+  const focus = data.focus ?? null;
+  const habits = focus ? [focus] : data.habits;
   const weekStartsOn = data.weekStartsOn ?? 1;
   const vacationSet = new Set(vacationDays.keys());
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const tag = tagged ? `<span class="tag">${SHORT_MONTHS[month]} ${year}</span>` : '';
+  const tag = tagged ? `<span class="tag">${esc(page.label)}</span>` : '';
 
-  const cells = monthCalendarWeeks(year, month, weekStartsOn)
+  const cells = rangeCalendarWeeks(page.dates, weekStartsOn)
     .flat()
-    .map((day) => {
-      if (!day) return '<div class="day"></div>';
-      const dateStr = formatDate(new Date(year, month, day));
+    .map((dateStr) => {
+      if (!dateStr) return '<div class="day"></div>';
+      const day = Number(dateStr.slice(8));
       const vacation = vacationDays.get(dateStr);
       if (vacation) {
         const initial = (vacation.label.trim() || 'V')[0];
         return `<div class="day" style="background:${vacation.color};color:${readableTextOn(vacation.color)};font-weight:700">${esc(initial)}</div>`;
+      }
+      if (focus) {
+        const record = recordIndex.get(`${focus.id}_${dateStr}`);
+        const ratio = focusDayRatio(focus, record, dateStr, winOnlyWeekends);
+        const amount = cellAmount(focus, record);
+        return `<div class="day" style="background:${heatmapShade(ratio, focus.color, palette.app.tileUnrecorded)}">${day}${amount ? `<b class="amt-day">${esc(amount)}</b>` : ''}</div>`;
       }
       const ratio =
         habits.length === 0
@@ -171,8 +174,7 @@ function monthSection(data: ReportData, { year, month }: YM, tagged: boolean, pa
       <div class="grid">${weekdayOrder(weekStartsOn).map((d) => `<div class="wd">${DAY_NAMES[d][0]}</div>`).join('')}${cells}</div>
     </div>`;
 
-  const countDays = monthCountDays(year, month, today);
-  const rows = computeMonthRows(habits, recordIndex, year, month, countDays, vacationSet, winOnlyWeekends)
+  const rows = computeRangeRows(habits, recordIndex, page.countDates, vacationSet, winOnlyWeekends)
     .map((row) => {
       const { habit, completed, activeDays, rate, amount } = row;
       const trio = amount
@@ -192,13 +194,13 @@ function monthSection(data: ReportData, { year, month }: YM, tagged: boolean, pa
             <div><div class="rate">${rate == null ? '—' : `${rate}%`}</div><div class="count">${completed}/${activeDays} days</div></div>
             ${trio}
           </div>
-          ${sparklineSvg(habit.color, row, daysInMonth, palette)}
+          ${sparklineSvg(habit.color, row, page.dates.length, palette)}
         </div>`;
     });
 
   return `
     <section>
-      ${keepWithNext(tagged ? `<div class="divider"><span>${MONTH_NAMES[month]} ${year}</span></div>` : '', calendar)}
+      ${keepWithNext(tagged ? `<div class="divider"><span>${esc(page.label)}</span></div>` : '', calendar)}
       ${keepWithNext('<div class="section-title">Habit Completion</div>', rows[0] ?? '')}
       ${rows.slice(1).map(unit).join('')}
     </section>`;
@@ -219,10 +221,10 @@ function keepWithNext(heading: string, block: string): string {
 }
 
 function weekCard(data: ReportData, weekStart: string): string {
-  const { habits, recordIndex, vacationDays, successColors } = data;
+  const { recordIndex, vacationDays, successColors } = data;
+  const habits = data.focus ? [data.focus] : data.habits;
   const byLevel = [successColors.unrecorded, successColors.recorded, successColors.double, successColors.triple];
   const dates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
-  const short = (s: string) => `${SHORT_MONTHS[Number(s.slice(5, 7)) - 1]} ${Number(s.slice(8))}`;
   const columns = dates
     .map((dateStr, i) => {
       const vacation = vacationDays.get(dateStr);
@@ -239,16 +241,15 @@ function weekCard(data: ReportData, weekStart: string): string {
     .join('');
   return `
     <div class="card week">
-      <div class="week-label">${short(dates[0])} – ${short(dates[6])}</div>
+      <div class="week-label">${shortDate(dates[0])} – ${shortDate(dates[6])}</div>
       <div class="cols">${columns}</div>
     </div>`;
 }
 
 export function buildMonthReportHtml(data: ReportData, opts: MonthReportOptions): string {
-  const months = monthsOf(opts);
-  const tagged = months.length > 1;
+  const tagged = opts.pages.length > 1;
   const palette = pdfPalette(data.scheme);
-  const sections = months.map((ym) => monthSection(data, ym, tagged, palette));
+  const sections = opts.pages.map((page) => monthSection(data, page, tagged, palette));
   if (opts.includeWeeks) {
     const weeks = weekStarts(opts, data.today, data.weekStartsOn ?? 1).map((start) => weekCard(data, start));
     // Right after the newest month: it's the recent detail behind it.
@@ -271,6 +272,8 @@ export function buildMonthReportHtml(data: ReportData, opts: MonthReportOptions)
   .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
   .wd { text-align: center; font-size: 11px; font-weight: 600; color: var(--muted); padding-bottom: 2px; }
   .day { aspect-ratio: 1; border-radius: 5px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 500; }
+  .day { flex-direction: column; line-height: 1.1; }
+  .amt-day { font-size: 9px; font-weight: 800; }
   .section-title { font-size: 16px; font-weight: 700; margin: 8px 0 8px; break-after: avoid; page-break-after: avoid; }
   .hname { font-size: 14px; display: flex; align-items: center; gap: 8px; }
   .abbr { font-size: 16px; font-weight: 700; }
@@ -289,7 +292,7 @@ export function buildMonthReportHtml(data: ReportData, opts: MonthReportOptions)
   .tile { width: 90%; border-radius: 4px; padding: 3px 1px; text-align: center; font-size: 9px; font-weight: 700; white-space: nowrap; overflow: hidden; }
   .vac { width: 90%; min-height: 56px; border-radius: 4px; padding: 6px 3px; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 12px; font-weight: 700; word-break: break-word; }`,
     `<h1>${esc(monthReportLabel(opts))}</h1>
-  <div class="meta">Habit month · Generated ${generatedDate(data.today)}</div>
+  <div class="meta">${data.focus ? esc(data.focus.name) : 'Habit month'} · Generated ${generatedDate(data.today)}</div>
   ${sections.join('')}`,
     palette,
   );

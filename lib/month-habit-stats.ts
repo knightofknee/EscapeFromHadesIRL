@@ -1,5 +1,5 @@
 import { addDays, formatDate, parseDate, type WeekStart } from '@/lib/date-utils';
-import { isRecordCompleted, recordLevel, shouldSkipWeekend } from '@/lib/habit-scoring';
+import { isRecordCompleted, isValueRecorded, recordLevel, shouldSkipWeekend, valueGoalsOn } from '@/lib/habit-scoring';
 import { formatStatValue, recordNumericValue } from '@/lib/habit-stats';
 import type { Habit, HabitRecord } from '@/types/habit';
 
@@ -163,7 +163,8 @@ export function formatMonthAmount(amount: MonthAmount, n: number | null): string
 /**
  * One page of the Month view. Page 0 is the past month ending today (the
  * same date last month, plus a day, through today). Page 1 is the current
- * calendar month so far; negative pages are earlier full calendar months.
+ * calendar month so far; negative pages are the past months before page 0,
+ * lined up with today (see monthPage).
  * Nothing lies past page 1, and when the past month already IS the current
  * month (today is the last day of it) page 0 is the last page.
  */
@@ -177,9 +178,6 @@ export type MonthPage = {
   /** Dates that count toward the stats: today (still in progress) is left out. */
   countDates: string[];
   label: string;
-  /** The calendar month the page belongs to (the share section works in months). */
-  year: number;
-  month: number;
 };
 
 const SHORT_MONTH_NAMES = [
@@ -212,33 +210,49 @@ export function maxMonthPage(today: Date): number {
   return trailingMonthStart(today) === formatDate(new Date(today.getFullYear(), today.getMonth(), 1)) ? 0 : 1;
 }
 
+/** "Oct 5 – Nov 4", or "November 2026" when the range is exactly one calendar month. */
+function rangeLabel(startDate: string, endDate: string): string {
+  const start = parseDate(startDate);
+  const end = parseDate(endDate);
+  const wholeMonth =
+    start.getDate() === 1 &&
+    start.getMonth() === end.getMonth() &&
+    end.getDate() === new Date(end.getFullYear(), end.getMonth() + 1, 0).getDate();
+  return wholeMonth
+    ? `${FULL_MONTH_NAMES[end.getMonth()]} ${end.getFullYear()}`
+    : `${SHORT_MONTH_NAMES[start.getMonth()]} ${start.getDate()} – ${SHORT_MONTH_NAMES[end.getMonth()]} ${end.getDate()}`;
+}
+
+/**
+ * The page at `offset`. 0 is the past month ending today; each page back
+ * is the month before the one after it (Oct 5 – Nov 4, then Sep 5 – Oct 4,
+ * then Aug 5 – Sep 4), so the dates keep lining up with today instead of
+ * snapping to named months. 1 is the current month so far.
+ */
 export function monthPage(offset: number, today: Date): MonthPage {
   const todayStr = formatDate(today);
   const yesterday = addDays(todayStr, -1);
-  if (offset === 0) {
-    const startDate = trailingMonthStart(today);
-    const dates = datesBetween(startDate, todayStr);
-    const start = parseDate(startDate);
-    const sameMonth = start.getMonth() === today.getMonth();
-    const label = sameMonth
-      ? `${FULL_MONTH_NAMES[today.getMonth()]} ${today.getFullYear()}`
-      : `${SHORT_MONTH_NAMES[start.getMonth()]} ${start.getDate()} – ${SHORT_MONTH_NAMES[today.getMonth()]} ${today.getDate()}`;
+  if (offset <= 0) {
+    let endDate = todayStr;
+    let startDate = trailingMonthStart(today);
+    for (let i = 0; i < -offset; i++) {
+      endDate = addDays(startDate, -1);
+      startDate = trailingMonthStart(parseDate(endDate));
+    }
+    const dates = datesBetween(startDate, endDate);
     return {
       kind: 'trailing',
       startDate,
-      endDate: todayStr,
+      endDate,
       dates,
       countDates: dates.filter((d) => d <= yesterday),
-      label,
-      year: today.getFullYear(),
-      month: today.getMonth(),
+      label: rangeLabel(startDate, endDate),
     };
   }
-  // offset 1 is the current month; offsets <= -1 are the months before it.
-  const target = new Date(today.getFullYear(), today.getMonth() + (offset > 0 ? 0 : offset), 1);
-  const y = target.getFullYear();
-  const m = target.getMonth();
-  const startDate = formatDate(target);
+  // offset 1: the current month so far.
+  const y = today.getFullYear();
+  const m = today.getMonth();
+  const startDate = formatDate(new Date(y, m, 1));
   const endDate = formatDate(new Date(y, m + 1, 0));
   const dates = datesBetween(startDate, endDate);
   return {
@@ -248,9 +262,16 @@ export function monthPage(offset: number, today: Date): MonthPage {
     dates,
     countDates: dates.filter((d) => d <= yesterday),
     label: `${FULL_MONTH_NAMES[m]} ${y}`,
-    year: y,
-    month: m,
   };
+}
+
+/** The furthest page back: the one holding `firstDate` (the first habit's day), or 0. */
+export function minMonthPage(today: Date, firstDate: string | null): number {
+  if (!firstDate) return 0;
+  let offset = 0;
+  // Bounded: a page is about a month, so 600 pages is 50 years.
+  while (offset > -600 && monthPage(offset, today).startDate > firstDate) offset--;
+  return offset;
 }
 
 /** Calendar grid over any run of dates: one array per week starting on `weekStartsOn`, null where the range hasn't started or has ended. */
@@ -271,23 +292,6 @@ export function rangeCalendarWeeks(dates: string[], weekStartsOn: WeekStart = 1)
     weeks.push(currentWeek);
   }
   return weeks;
-}
-
-/** Calendar grid for one month: one array per week starting on `weekStartsOn`, null where the month hasn't started or has ended. */
-export function monthCalendarWeeks(year: number, month: number, weekStartsOn: WeekStart = 1): (number | null)[][] {
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const dates = Array.from({ length: daysInMonth }, (_, i) => formatDate(new Date(year, month, i + 1)));
-  return rangeCalendarWeeks(dates, weekStartsOn).map((week) => week.map((d) => (d ? parseDate(d).getDate() : null)));
-}
-
-/**
- * How many days of the month count. The current month only counts up to
- * yesterday (today is still in progress); on the 1st that's 0, which shows
- * as "—" rather than a false 0%.
- */
-export function monthCountDays(year: number, month: number, today: Date): number {
-  if (year === today.getFullYear() && month === today.getMonth()) return today.getDate() - 1;
-  return new Date(year, month + 1, 0).getDate();
 }
 
 /**
@@ -315,18 +319,77 @@ export function computeRangeRows(
   });
 }
 
-/** Every habit's stats for one calendar month (the first `countDays` days of it). */
-export function computeMonthRows(
-  habits: Habit[],
-  recordIndex: Map<string, HabitRecord>,
-  year: number,
-  month: number,
-  countDays: number,
-  vacationSet: Set<string>,
+/** The pages a share covers, newest first: the page at `offset`, then the `count - 1` pages before it. */
+export function reportPages(offset: number, count: number, today: Date): MonthPage[] {
+  return Array.from({ length: Math.max(1, count) }, (_, i) => monthPage(offset - i, today));
+}
+
+// --- One habit on the calendar (the Month view's habit picker and its PDF) ---
+
+/**
+ * A value habit's entry, short enough for a calendar cell: as typed under
+ * 10,000 (one decimal at most), then "12.3k" / "312k" / "1.2M". Non-numeric
+ * text is cut to 5 characters.
+ */
+function cellValue(v: unknown): string | null {
+  if (!isValueRecorded(v)) return null;
+  const raw = String(v).trim();
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return raw.slice(0, 5);
+  const a = Math.abs(n);
+  if (a < 10_000) return String(Math.round(n * 10) / 10);
+  if (a < 100_000) return `${Math.round(n / 100) / 10}k`;
+  if (a < 1_000_000) return `${Math.round(n / 1000)}k`;
+  return `${Math.round(n / 100_000) / 10}M`;
+}
+
+/**
+ * The amount a cell shows under its date, or null. The standard (user,
+ * 2026-11-12): every habit that records an amount shows it on a one-habit
+ * stats calendar. Value entries, counter tallies, step counts, meditation
+ * minutes, phone-free time. Never on quest grids.
+ */
+export function cellAmount(habit: Habit, record: HabitRecord | undefined): string | null {
+  switch (habit.recordingMode) {
+    case 'value':
+      return cellValue(record?.value);
+    case 'counter':
+      return typeof record?.value === 'number' && record.value > 0 ? cellValue(record.value) : null;
+    case 'steps':
+      return record?.steps ? formatSteps(record.steps) : null;
+    case 'meditation': {
+      const min = meditationMinutes(record);
+      return min > 0 ? formatMinutes(min) : null;
+    }
+    case 'phoneFree':
+      return record?.phoneFreeMs ? formatMinutes(record.phoneFreeMs / 60000) : null;
+    default:
+      return null;
+  }
+}
+
+/** The highest level a habit can reach on `date`: what a full cell means in the one-habit view. */
+function topLevel(habit: Habit, date: string): number {
+  switch (habit.recordingMode) {
+    case 'boolean':
+    case 'counter':
+      return 1;
+    case 'triple':
+      return 2;
+    case 'value':
+      return Math.max(1, Math.min(3, valueGoalsOn(habit, date).length));
+    default:
+      return 3;
+  }
+}
+
+/** One habit's shade for a day, 0 to 1: how far it got, out of its top level. A skipped weekend is empty. */
+export function focusDayRatio(
+  habit: Habit,
+  record: HabitRecord | undefined,
+  date: string,
   winOnlyWeekends: boolean,
-): ({ habit: Habit } & MonthHabitStats)[] {
-  const countDates = Array.from({ length: Math.max(0, countDays) }, (_, i) =>
-    formatDate(new Date(year, month, i + 1)),
-  );
-  return computeRangeRows(habits, recordIndex, countDates, vacationSet, winOnlyWeekends);
+): number {
+  if (shouldSkipWeekend(habit, record, date, winOnlyWeekends)) return 0;
+  return Math.min(1, recordLevel(habit, record) / topLevel(habit, date));
 }

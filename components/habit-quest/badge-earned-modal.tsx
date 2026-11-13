@@ -10,7 +10,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { HoloFoil, HOLO_COLORS } from './holo-foil';
+import { HoloFoil, PALETTE_COLORS } from './holo-foil';
 import { BURST_MS, HoloBurst } from './quest-celebration';
 import { BadgePatch } from './badge-patch';
 import type { BadgeDesign } from '@/lib/badge-designs';
@@ -24,6 +24,8 @@ export type EarnedBadge = {
   design: BadgeDesign;
   daysDone: number;
   strength: number;
+  /** 2: a Level Two quest finished and upgraded the habit's badge (blue foil, "Badge upgraded"). */
+  level?: 1 | 2;
 };
 
 /**
@@ -48,6 +50,9 @@ export function BadgeEarnedModal({ earned, onClose }: { earned: EarnedBadge | nu
     burstB.set(withDelay(900, withTiming(1, { duration: BURST_MS, easing: Easing.out(Easing.quad) })));
   }, [earned, enter, burstA, burstB]);
 
+  const upgraded = earned?.level === 2;
+  const palette = upgraded ? 'deep' : 'rainbow';
+
   const cardStyle = useAnimatedStyle(() => ({
     opacity: enter.value,
     transform: [{ scale: interpolate(enter.value, [0, 1], [0.9, 1]) }],
@@ -68,12 +73,12 @@ export function BadgeEarnedModal({ earned, onClose }: { earned: EarnedBadge | nu
                 end={{ x: 1, y: 1 }}
                 style={StyleSheet.absoluteFill}
               />
-              <HoloFoil variant="card" flashKey={earned.key} />
+              <HoloFoil variant="card" palette={palette} flashKey={earned.key} />
               <View style={styles.topRow}>
                 <Animated.View style={medalStyle}>
-                  <BadgePatch design={earned.design} size={MEDAL} bg="#121228" tint={1} />
+                  <BadgePatch design={earned.design} size={MEDAL} bg="#121228" tint={1} level={earned.level ?? 1} />
                 </Animated.View>
-                <Text style={styles.kicker}>BADGE{'\n'}EARNED</Text>
+                <Text style={styles.kicker}>{upgraded ? 'BADGE\nUPGRADED' : 'BADGE\nEARNED'}</Text>
               </View>
               {/* Sized by length, not adjustsFontSizeToFit (its iOS re-measure can
                   collapse the text to a few pixels). */}
@@ -102,16 +107,21 @@ export function BadgeEarnedModal({ earned, onClose }: { earned: EarnedBadge | nu
                 style={({ pressed }) => [styles.done, pressed && { opacity: 0.8 }]}
                 accessibilityRole="button"
               >
-                <LinearGradient colors={HOLO_COLORS} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={StyleSheet.absoluteFill} />
+                <LinearGradient
+                  colors={PALETTE_COLORS[palette] as unknown as readonly [string, string, ...string[]]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={StyleSheet.absoluteFill}
+                />
                 <Text style={styles.doneText}>DONE</Text>
               </Pressable>
             </Animated.View>
             {/* Over the card, so the confetti flies across it. */}
             <View style={styles.origin} pointerEvents="none">
-              <HoloBurst progress={burstA} burstKey={`a-${earned.key}`} />
+              <HoloBurst progress={burstA} burstKey={`a-${earned.key}`} palette={palette} />
             </View>
             <View style={[styles.origin, styles.originLow]} pointerEvents="none">
-              <HoloBurst progress={burstB} burstKey={`b-${earned.key}`} />
+              <HoloBurst progress={burstB} burstKey={`b-${earned.key}`} palette={palette} />
             </View>
           </>
         )}

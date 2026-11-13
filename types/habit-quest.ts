@@ -25,6 +25,12 @@ export type HabitQuest = {
   finishedAt?: number;
   /** Picked when its last 60 days already passed: badge earned on the spot, no quest run. */
   passedAtStart?: boolean;
+  /**
+   * 2 is Level Two: only goal-or-better days count, on a habit that already
+   * has a badge; finishing it upgrades that badge. Absent is 1, the 60-day
+   * quest. One active quest per level at a time.
+   */
+  level?: 1 | 2;
   createdAt: number;
   updatedAt: number;
 };

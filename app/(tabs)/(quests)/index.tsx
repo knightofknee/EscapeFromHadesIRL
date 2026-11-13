@@ -10,11 +10,13 @@ import { ThemedText } from '@/components/themed-text';
 import { QuestCard } from '@/components/quests/quest-card';
 import {
   HoloActionButton,
+  LevelTwoQuest,
   SixtyDayQuest,
   type StickyBegin,
   type StickyBeginApi,
 } from '@/components/habit-quest/sixty-day-quest';
 import { QuestCelebration, type QuestBurst } from '@/components/habit-quest/quest-celebration';
+import { StreakFireMoment } from '@/components/habit-quest/streak-fire-modal';
 import { useHabitQuest } from '@/contexts/habit-quest-context';
 import { useQuests } from '@/hooks/use-quests';
 import { useHabits } from '@/hooks/use-habits';
@@ -32,6 +34,12 @@ import {
 import { get18MonthWindow } from '@/lib/date-utils';
 import { useTodayDate } from '@/hooks/use-today-date';
 
+/**
+ * The older quests (Challenges, Eternal Trials, Your Pacts) and the "+ NEW"
+ * pact button. Hidden 2026-11-12 so the 60-day quest stands alone; kept in
+ * code in case people ask for them back. Flip to true to restore.
+ */
+const SHOW_LEGACY_QUESTS = false;
 
 export default function QuestsScreen() {
   const router = useRouter();
@@ -184,12 +192,14 @@ export default function QuestsScreen() {
         <View style={styles.headerLeft}>
           <ThemedText style={styles.headerTitle}>QUESTS</ThemedText>
         </View>
-        <Pressable
-          style={styles.addButton}
-          onPress={() => router.push('/(tabs)/(quests)/create')}
-        >
-          <ThemedText style={styles.addButtonText}>+ NEW</ThemedText>
-        </Pressable>
+        {SHOW_LEGACY_QUESTS && (
+          <Pressable
+            style={styles.addButton}
+            onPress={() => router.push('/(tabs)/(quests)/create')}
+          >
+            <ThemedText style={styles.addButtonText}>+ NEW</ThemedText>
+          </Pressable>
+        )}
       </View>
 
       <ScrollView
@@ -211,9 +221,13 @@ export default function QuestsScreen() {
             collection, no run score), sitting above everything else here. */}
         <SixtyDayQuest revealInScroll={revealInScroll} stickyBegin={stickyBegin} onCelebrate={setQuestBurst} />
 
+        {/* LEVEL TWO: the same quest at goal, on a habit with a badge. */}
+        <LevelTwoQuest revealInScroll={revealInScroll} onCelebrate={setQuestBurst} />
+
         {/* CHALLENGES, ETERNAL TRIALS and YOUR PACTS: the older quests, folded
             behind one header (collapsed by default) so the 60-day quest leads
-            and the page stays short. */}
+            and the page stays short. Hidden for now (SHOW_LEGACY_QUESTS). */}
+        {SHOW_LEGACY_QUESTS && (
         <Pressable
           style={styles.foldHeader}
           onPress={() => setChallengesOpen((v) => !v)}
@@ -234,8 +248,9 @@ export default function QuestsScreen() {
             />
           </Svg>
         </Pressable>
+        )}
 
-        {challengesOpen && (
+        {SHOW_LEGACY_QUESTS && challengesOpen && (
         <>
         {/* CHALLENGES: the quests you choose. Started ones show their score;
             the rest show a "Begin" stub that links a habit + starts them. */}
@@ -342,6 +357,7 @@ export default function QuestsScreen() {
       {/* The 60-day quest's per-day celebration, when today is recorded from
           the card's check: over the whole screen, like on the Habits grid. */}
       <QuestCelebration burst={questBurst} />
+      <StreakFireMoment burst={questBurst} />
 
       {sticky && !realBeginVisible && (
         <Animated.View

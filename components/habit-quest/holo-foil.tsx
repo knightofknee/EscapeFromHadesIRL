@@ -5,6 +5,7 @@ import Animated, {
   Easing,
   cancelAnimation,
   interpolate,
+  makeMutable,
   useAnimatedStyle,
   useSharedValue,
   withDelay,
@@ -16,7 +17,20 @@ import Animated, {
 
 /** Holo-card foil hues, cycled twice so the drifting band never shows an edge. */
 export const HOLO_COLORS = ['#FF5FCF', '#8A7CFF', '#4FE3FF', '#7CFFB2', '#FFE45C', '#FF8A5C'] as const;
-const BAND = [...HOLO_COLORS, ...HOLO_COLORS, HOLO_COLORS[0]] as const;
+/**
+ * Level Two's foil: the same treatment in deep blues (indigo, royal blue,
+ * cyan). No violet: purple belongs to ideal.
+ */
+export const DEEP_COLORS = ['#3D2BFF', '#2F6BFF', '#39C6FF', '#1E90FF', '#1B2FA8', '#5CE1E6'] as const;
+
+export type FoilPalette = 'rainbow' | 'deep';
+export const PALETTE_COLORS: Record<FoilPalette, readonly string[]> = { rainbow: HOLO_COLORS, deep: DEEP_COLORS };
+const BANDS: Record<FoilPalette, readonly string[]> = {
+  rainbow: [...HOLO_COLORS, ...HOLO_COLORS, HOLO_COLORS[0]],
+  deep: [...DEEP_COLORS, ...DEEP_COLORS, DEEP_COLORS[0]],
+};
+/** Blues read darker than the rainbow, so the deep foil lays on a little thicker. */
+const PALETTE_BOOST: Record<FoilPalette, number> = { rainbow: 1, deep: 1.35 };
 
 /**
  * Every motion here is eased timing, never a spring (the user finds bounce
@@ -24,9 +38,46 @@ const BAND = [...HOLO_COLORS, ...HOLO_COLORS, HOLO_COLORS[0]] as const;
  */
 const DRIFT = Easing.inOut(Easing.sin);
 
+type Variant = 'tile' | 'card';
+
+/**
+ * One shine clock per variant, shared by every foil of that variant, so
+ * the 60-day tile and the Level Two tile drift and catch the glare
+ * together. The loops start with the first foil on screen and stop with
+ * the last.
+ */
+const CLOCKS: Record<Variant, { drift: SharedValue<number>; glare: SharedValue<number>; users: number }> = {
+  tile: { drift: makeMutable(0), glare: makeMutable(0), users: 0 },
+  card: { drift: makeMutable(0), glare: makeMutable(0), users: 0 },
+};
+
+function joinClock(variant: Variant): () => void {
+  const clock = CLOCKS[variant];
+  const card = variant === 'card';
+  if (clock.users++ === 0) {
+    clock.drift.value = 0;
+    clock.drift.value = withRepeat(withTiming(1, { duration: card ? 5200 : 6400, easing: DRIFT }), -1, true);
+    clock.glare.value = withRepeat(
+      withSequence(
+        withTiming(0, { duration: 0 }),
+        withDelay(card ? 1800 : 3600, withTiming(1, { duration: 1500, easing: Easing.inOut(Easing.cubic) })),
+      ),
+      -1,
+    );
+  }
+  return () => {
+    if (--clock.users === 0) {
+      cancelAnimation(clock.drift);
+      cancelAnimation(clock.glare);
+    }
+  };
+}
+
 type Props = {
   /** 'tile' keeps the habit's face readable; 'card' is the full foil. */
-  variant: 'tile' | 'card';
+  variant: Variant;
+  /** 'rainbow' is the 60-day quest; 'deep' is Level Two. */
+  palette?: FoilPalette;
   /** Bump to play a bright sweep across the foil (the per-day celebration). */
   flashKey?: number;
   /** Card only: finger position over the card, 0..1 each axis, or -1 when not touched. */
@@ -40,7 +91,7 @@ type Props = {
  * (pointerEvents none, absolute fill), so whatever it sits on keeps its
  * layout and colors underneath.
  */
-export function HoloFoil({ variant, flashKey = 0, pointerX, pointerY }: Props) {
+export function HoloFoil({ variant, palette = 'rainbow', flashKey = 0, pointerX, pointerY }: Props) {
   const [size, setSize] = useState({ w: 0, h: 0 });
   const onLayout = (e: LayoutChangeEvent) => {
     const { width, height } = e.nativeEvent.layout;
@@ -48,26 +99,10 @@ export function HoloFoil({ variant, flashKey = 0, pointerX, pointerY }: Props) {
   };
 
   const card = variant === 'card';
-  const drift = useSharedValue(0);
-  const glare = useSharedValue(0);
+  const { drift, glare } = CLOCKS[variant];
   const flash = useSharedValue(0);
 
-  useEffect(() => {
-    drift.set(withRepeat(withTiming(1, { duration: card ? 5200 : 6400, easing: DRIFT }), -1, true));
-    glare.set(
-      withRepeat(
-        withSequence(
-          withTiming(0, { duration: 0 }),
-          withDelay(card ? 1800 : 3600, withTiming(1, { duration: 1500, easing: Easing.inOut(Easing.cubic) })),
-        ),
-        -1,
-      ),
-    );
-    return () => {
-      cancelAnimation(drift);
-      cancelAnimation(glare);
-    };
-  }, [card, drift, glare]);
+  useEffect(() => joinClock(variant), [variant]);
 
   useEffect(() => {
     if (!flashKey) return;
@@ -76,8 +111,11 @@ export function HoloFoil({ variant, flashKey = 0, pointerX, pointerY }: Props) {
   }, [flashKey, flash]);
 
   const { w, h } = size;
-  const washOpacity = card ? 0.2 : 0.13;
-  const bandOpacity = card ? 0.32 : 0.2;
+  const boost = PALETTE_BOOST[palette];
+  const colors = PALETTE_COLORS[palette];
+  const band = BANDS[palette];
+  const washOpacity = (card ? 0.2 : 0.13) * boost;
+  const bandOpacity = (card ? 0.32 : 0.2) * boost;
 
   const bandStyle = useAnimatedStyle(() => ({
     opacity: bandOpacity + interpolate(flash.value, [0, 0.2, 1], [0, 0.35, 0]),
@@ -112,13 +150,18 @@ export function HoloFoil({ variant, flashKey = 0, pointerX, pointerY }: Props) {
       {w > 0 && (
         <>
           <LinearGradient
-            colors={HOLO_COLORS}
+            colors={colors as unknown as readonly [string, string, ...string[]]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={[StyleSheet.absoluteFill, { opacity: washOpacity }]}
           />
           <Animated.View style={[styles.band, { width: w * 3, height: h }, bandStyle]}>
-            <LinearGradient colors={BAND} start={{ x: 0, y: 0.2 }} end={{ x: 1, y: 0.8 }} style={StyleSheet.absoluteFill} />
+            <LinearGradient
+              colors={band as unknown as readonly [string, string, ...string[]]}
+              start={{ x: 0, y: 0.2 }}
+              end={{ x: 1, y: 0.8 }}
+              style={StyleSheet.absoluteFill}
+            />
           </Animated.View>
           <Animated.View style={[styles.glare, { width: Math.max(24, w * 0.32), height: h * 2.2, top: -h * 0.6 }, glareStyle]}>
             <LinearGradient

@@ -741,3 +741,76 @@ describe('quickRecordValues', () => {
     expect(quickRecordValues('phoneFree')).toBeNull();
   });
 });
+
+describe('Level Two (goal days only)', () => {
+  const start = '2026-08-01';
+  const quad = habit('quad');
+  const quadRec = (date: string, value: HabitRecord['value']) => rec(date, value);
+
+  it('counts goal and ideal, not basic, at level 2', () => {
+    expect(didParticipate(quad, quadRec(start, 'yes'), 2)).toBe(false);
+    expect(didParticipate(quad, quadRec(start, 'goal'), 2)).toBe(true);
+    expect(didParticipate(quad, quadRec(start, 'ideal'), 2)).toBe(true);
+    expect(didParticipate(habit('triple'), rec(start, 'yes'), 2)).toBe(false);
+    expect(didParticipate(habit('triple'), rec(start, 'double'), 2)).toBe(true);
+    const value = habit('value', { valueGoals: [10, 20], valueGoalHistory: [{ from: '0000-00', goals: [10, 20] }] });
+    expect(didParticipate(value, rec(start, '15'), 2)).toBe(false);
+    expect(didParticipate(value, rec(start, '20'), 2)).toBe(true);
+  });
+
+  it('shows a basic day as basic and counts it as a day off', () => {
+    const recs = [quadRec(start, 'goal'), quadRec(addDays(start, 1), 'yes'), quadRec(addDays(start, 2), 'goal')];
+    const p = computeQuestProgress({ startDate: start, today: addDays(start, 3), habit: quad, getRecord: lookup(recs), level: 2 });
+    expect(p.days.slice(0, 4).map((d) => d.state)).toEqual(['done', 'basic', 'done', 'open']);
+    expect(p.doneCount).toBe(2);
+    expect(p.missedCount).toBe(1);
+    expect(p.basicCount).toBe(1);
+  });
+
+  it('level 1 never reports basic days', () => {
+    const recs = [quadRec(start, 'yes'), quadRec(addDays(start, 1), 'goal')];
+    const p = computeQuestProgress({ startDate: start, today: addDays(start, 2), habit: quad, getRecord: lookup(recs) });
+    expect(p.days.slice(0, 2).map((d) => d.state)).toEqual(['done', 'done']);
+    expect(p.basicCount).toBe(0);
+  });
+
+  it('a full week of basic-only days restarts it', () => {
+    const recs = Array.from({ length: WEEK_DAYS }, (_, i) => quadRec(addDays(start, i), 'yes'));
+    const p = computeQuestProgress({
+      startDate: start,
+      today: addDays(start, WEEK_DAYS),
+      habit: quad,
+      getRecord: lookup(recs),
+      level: 2,
+    });
+    expect(p.attemptNumber).toBeGreaterThan(1);
+    expect(p.restartReason).toBe('weekOff');
+  });
+
+  it('60 goal days earn it; the same days at basic do not', () => {
+    const today = addDays(start, 60);
+    const goal = Array.from({ length: 60 }, (_, i) => quadRec(addDays(start, i), 'goal'));
+    const basic = Array.from({ length: 60 }, (_, i) => quadRec(addDays(start, i), 'yes'));
+    expect(computeQuestProgress({ startDate: start, today, habit: quad, getRecord: lookup(goal), level: 2 }).earnedBadge).toBe(true);
+    expect(computeQuestProgress({ startDate: start, today, habit: quad, getRecord: lookup(basic), level: 2 }).earnedBadge).toBe(false);
+  });
+
+  it('credit counts only goal days at level 2', () => {
+    const today = addDays(start, 30);
+    const recs = Array.from({ length: 30 }, (_, i) => quadRec(addDays(start, i), i < 20 ? 'yes' : 'goal'));
+    const l1 = creditedQuest({ today, habit: quad, getRecord: lookup(recs) });
+    const l2 = creditedQuest({ today, habit: quad, getRecord: lookup(recs), level: 2 });
+    expect(l1.creditedDays).toBe(30);
+    expect(l2.creditedDays).toBe(10);
+    expect(l2.startDate).toBe(addDays(start, 20));
+  });
+
+  it('the check writes the goal level, and nothing for modes without one', () => {
+    expect(quickRecordValues('triple', 2)).toEqual({ first: 'double', cleared: 'no' });
+    expect(quickRecordValues('quad', 2)).toEqual({ first: 'goal', cleared: 'no' });
+    expect(quickRecordValues('creativeWriting', 2)).toEqual({ first: 'goal', cleared: 'no' });
+    expect(quickRecordValues('boolean', 2)).toBeNull();
+    expect(quickRecordValues('counter', 2)).toBeNull();
+    expect(quickRecordValues('value', 2)).toBeNull();
+  });
+});

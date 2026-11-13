@@ -5,18 +5,19 @@ import { useHabits } from '@/hooks/use-habits';
 import { useTodayDate } from '@/hooks/use-today-date';
 import { useVacationDays } from '@/hooks/use-vacation-days';
 import { useWinOnlyDates } from '@/hooks/use-win-only-dates';
-import { computeQuestProgress } from '@/lib/habit-quest';
+import { computeQuestProgress, type QuestLevel } from '@/lib/habit-quest';
 import { addDays } from '@/lib/date-utils';
 import { MAINTENANCE_WINDOW_DAYS } from '@/lib/habit-strength';
 
 /**
- * The running 60-day quest laid out against today, live off the shared
- * records window (registers the quest's dates with RecordsProvider). Used by
- * the Quests tab section and the Habits grid celebration, so both count the
- * same days.
+ * The running quest of `level` (1 the 60-day quest, 2 Level Two) laid out
+ * against today, live off the shared records window (registers the quest's
+ * dates with RecordsProvider). Used by the Quests tab section and the Habits
+ * grid celebration, so both count the same days.
  */
-export function useHabitQuestProgress() {
-  const { activeQuest } = useHabitQuest();
+export function useHabitQuestProgress(level: QuestLevel = 1) {
+  const { activeQuest: levelOne, activeLevelTwo } = useHabitQuest();
+  const activeQuest = level === 2 ? activeLevelTwo : levelOne;
   const { habits } = useHabits();
   const { todayStr } = useTodayDate();
   const { recordsMap, loadedRange, ensureRange } = useRecordsContext();
@@ -46,8 +47,9 @@ export function useHabitQuestProgress() {
       getRecord: (date) => recordsMap.get(`${habitId}_${date}`),
       vacationDates: dateSet,
       winOnlyDates: winOnly,
+      level,
     });
-  }, [startDate, habitId, habit, todayStr, recordsMap, dateSet, winOnly]);
+  }, [startDate, habitId, habit, todayStr, recordsMap, dateSet, winOnly, level]);
 
   const isLoading =
     historyStart && rangeEnd

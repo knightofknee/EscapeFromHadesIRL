@@ -1,6 +1,6 @@
 // Preset "starter tasks" offered by the intro bubble picker (app/starter-setup.tsx).
-// Each task creates a habit and, where a curated template exists, its linked
-// quest (see lib/starter-tasks.ts for the creation logic). Colors here are the
+// Each task creates a habit (see lib/starter-tasks.ts for the creation logic).
+// Colors here are the
 // PREFERRED tile color; acronyms are tried in order so collisions fall back to
 // the next form (the picker/lib avoid repeats across the set and existing
 // habits). `emoji` is picker-only flair — it is NOT written to the habit, so
@@ -26,9 +26,6 @@ export type StarterTask = {
   meditationSessions?: number;
   meditationMinutes?: number;
   meditationIdealTotalMinutes?: number;
-  /** Quest template key to create + link (constants/quest-templates), or null
-   *  for a habit with no curated quest (Yoga/Music). */
-  questTemplateKey: string | null;
   /** Short case for the task, shown in the picker. */
   blurb: string;
 };
@@ -46,7 +43,6 @@ export const STARTER_TASKS: StarterTask[] = [
     acronyms: ['W', 'Wk'],
     color: '#2ECC71', // green
     stepGoals: [7000, 10000, 15000],
-    questTemplateKey: 'walk',
     blurb: 'Counts your steps automatically. Leaving the house is the win. 7k / 10k / 15k mark the tiers.',
   },
   {
@@ -60,7 +56,6 @@ export const STARTER_TASKS: StarterTask[] = [
     meditationSessions: 2,
     meditationMinutes: 5,
     meditationIdealTotalMinutes: 30,
-    questTemplateKey: 'meditate',
     blurb: 'Five quiet minutes a day. The returning matters more than the minutes.',
   },
   {
@@ -71,7 +66,6 @@ export const STARTER_TASKS: StarterTask[] = [
     recordingMode: 'quad',
     acronyms: ['R', 'Re'],
     color: '#3498DB', // blue
-    questTemplateKey: 'read',
     blurb: 'A page counts. Seed your mind with other people’s trails.',
   },
   {
@@ -82,7 +76,6 @@ export const STARTER_TASKS: StarterTask[] = [
     recordingMode: 'creativeWriting',
     acronyms: ['CW', 'Wr'],
     color: '#E91E63', // pink
-    questTemplateKey: 'write',
     blurb: 'Marks itself when you save a note. A single sentence is a session.',
   },
   {
@@ -93,7 +86,6 @@ export const STARTER_TASKS: StarterTask[] = [
     recordingMode: 'quad',
     acronyms: ['E', 'Ex'],
     color: '#E67E22', // orange
-    questTemplateKey: 'exercise',
     blurb: 'Effort at any size. Showing up sore counts double.',
   },
   {
@@ -104,7 +96,6 @@ export const STARTER_TASKS: StarterTask[] = [
     recordingMode: 'quad',
     acronyms: ['Y', 'Yo'],
     color: '#1ABC9C', // teal
-    questTemplateKey: null,
     blurb: 'Move and breathe. Balance is a practice, not a pose.',
   },
   {
@@ -115,7 +106,6 @@ export const STARTER_TASKS: StarterTask[] = [
     recordingMode: 'quad',
     acronyms: ['M', 'Mu'], // M is taken by Meditate → resolves to "Mu"
     color: '#FF9800', // amber
-    questTemplateKey: null,
     blurb: 'Play or practice. Tend the craft a little at a time.',
   },
 ];

@@ -39,9 +39,9 @@ import { persistHabitRecord } from '@/lib/persist-record';
 type ModeOption = { value: RecordingMode; label: string; description: string; auto?: boolean };
 
 const RECORDING_MODES: ModeOption[] = [
-  // quad leads: 3 success tiers feed the tiered quests, so it's the
+  // quad leads: 3 success tiers feed the Level Two quest, so it's the
   // recommended default recording style.
-  { value: 'quad', label: 'Participation / Goal / Ideal · Recommended', description: 'Tap to cycle through 4 levels; powers tiered quests' },
+  { value: 'quad', label: 'Participation / Goal / Ideal · Recommended', description: 'Tap to cycle through 4 levels; goal days count toward Level Two' },
   { value: 'boolean', label: 'Yes / No', description: 'Tap to toggle' },
   { value: 'triple', label: 'Participation / Goal', description: 'Tap to cycle through 3 levels' },
   { value: 'counter', label: 'Counter', description: 'Tap to increment' },

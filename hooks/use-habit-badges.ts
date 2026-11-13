@@ -7,7 +7,9 @@ import { useVacationDays } from '@/hooks/use-vacation-days';
 import { useWinOnlyDates } from '@/hooks/use-win-only-dates';
 import { useHabitQuestProgress } from '@/hooks/use-habit-quest-progress';
 import { addDays } from '@/lib/date-utils';
-import { didParticipate } from '@/lib/habit-quest';
+import { didParticipate, type QuestLevel } from '@/lib/habit-quest';
+import { isTieredHabit, recordLevel } from '@/lib/habit-scoring';
+import type { HabitRecord } from '@/types/habit';
 import { designForNumber, numberBadges, type BadgeDesign, type NumberedBadge } from '@/lib/badge-designs';
 import type { HabitQuest } from '@/types/habit-quest';
 import {
@@ -23,10 +25,18 @@ export type HabitBadge = {
   earned: number;
   /** The design of the latest badge earned on it (each badge is its own; see lib/badge-designs). */
   design: BadgeDesign;
-  /** Maintenance strength (0..1) today. */
+  /** Maintenance strength (0..1) today, any level counting. */
   strength: number;
-  /** How it's holding up since; null until the window's records arrive. */
+  /** How it's holding up since, any level counting; null until the window's records arrive. */
   status: MaintenanceStatus | null;
+  /**
+   * Set once the badge is upgraded (a Level Two quest finished at 50%+):
+   * the same replay with only goal-or-better days counting. An upgraded
+   * badge shows this status, with blue in place of green for strong.
+   */
+  levelTwo: { strength: number; status: MaintenanceStatus | null } | null;
+  /** Habit strength (0..1) counting ideal days alone: what comes next. Null for habits without an ideal level. */
+  ideal: number | null;
 };
 
 /**
@@ -40,6 +50,21 @@ export function useEarnedBadges(): NumberedBadge<HabitQuest>[] {
     () => numberBadges(pastQuests.filter((q) => q.finalStrength == null || q.finalStrength >= STRENGTH_LINE)),
     [pastQuests],
   );
+}
+
+/** Habits whose badge is upgraded: a Level Two quest finished at or above STRENGTH_LINE. */
+export function useUpgradedHabits(): Set<string> {
+  const { pastLevelTwo } = useHabitQuest();
+  const { activeQuest, progress } = useHabitQuestProgress(2);
+  return useMemo(() => {
+    const out = new Set<string>();
+    for (const q of pastLevelTwo) {
+      if (q.finalStrength == null || q.finalStrength >= STRENGTH_LINE) out.add(q.habitId);
+    }
+    // Past day 60 but not yet closed out on the Quests tab: already upgraded.
+    if (activeQuest && progress?.earnedBadge) out.add(activeQuest.habitId);
+    return out;
+  }, [pastLevelTwo, activeQuest, progress?.earnedBadge]);
 }
 
 /**
@@ -59,6 +84,7 @@ export function useHabitBadges(): Map<string, HabitBadge> {
   const winOnly = useWinOnlyDates();
 
   const numbered = useEarnedBadges();
+  const upgraded = useUpgradedHabits();
   // Per habit: how many badges, and the latest one's design.
   const earnedByHabit = useMemo(() => {
     const out = new Map<string, { count: number; design: BadgeDesign }>();
@@ -92,22 +118,29 @@ export function useHabitBadges(): Map<string, HabitBadge> {
       const earned = earnedByHabit.get(habit.id);
       if (!earned) continue;
       // Today counts once it's done; an open today never fades anything.
-      const doneToday = didParticipate(habit, recordsMap.get(`${habit.id}_${todayStr}`));
-      const through = doneToday ? todayStr : addDays(todayStr, -1);
-      const { strength, daysUnder } = strengthOver(windowStart, through, (date) =>
-        didParticipate(habit, recordsMap.get(`${habit.id}_${date}`))
-          ? 'done'
-          : dateSet.has(date) || winOnly.has(date)
-            ? 'excused'
-            : 'missed',
-      );
+      const replayBy = (counts: (rec: HabitRecord | undefined) => boolean) => {
+        const doneToday = counts(recordsMap.get(`${habit.id}_${todayStr}`));
+        const through = doneToday ? todayStr : addDays(todayStr, -1);
+        const { strength, daysUnder } = strengthOver(windowStart, through, (date) =>
+          counts(recordsMap.get(`${habit.id}_${date}`))
+            ? 'done'
+            : dateSet.has(date) || winOnly.has(date)
+              ? 'excused'
+              : 'missed',
+        );
+        return { strength, status: windowLoaded ? maintenanceStatus(strength, daysUnder) : null };
+      };
+      const replay = (level: QuestLevel) => replayBy((rec) => didParticipate(habit, rec, level));
+      const levelOne = replay(1);
       badges.set(habit.id, {
         earned: earned.count,
         design: earned.design,
-        strength,
-        status: windowLoaded ? maintenanceStatus(strength, daysUnder) : null,
+        strength: levelOne.strength,
+        status: levelOne.status,
+        levelTwo: upgraded.has(habit.id) ? replay(2) : null,
+        ideal: isTieredHabit(habit) ? replayBy((rec) => recordLevel(habit, rec) >= 3).strength : null,
       });
     }
     return badges;
-  }, [habits, earnedByHabit, recordsMap, dateSet, winOnly, todayStr, windowStart, windowLoaded]);
+  }, [habits, earnedByHabit, upgraded, recordsMap, dateSet, winOnly, todayStr, windowStart, windowLoaded]);
 }

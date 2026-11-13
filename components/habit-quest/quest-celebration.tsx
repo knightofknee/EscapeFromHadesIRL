@@ -12,7 +12,7 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { HoloFoil, HOLO_COLORS } from './holo-foil';
+import { HoloFoil, PALETTE_COLORS, type FoilPalette } from './holo-foil';
 import { QUEST_LENGTH } from '@/lib/habit-quest';
 
 export type QuestBurst = {
@@ -21,6 +21,10 @@ export type QuestBurst = {
   habitName: string;
   /** Where the burst starts, in window coordinates (the quest tile's center). Screen middle when absent. */
   origin?: { x: number; y: number };
+  /** 'deep' for a Level Two day. */
+  palette?: FoilPalette;
+  /** The habit's current streak with this day in it (the first 10 brings the streak fire message). */
+  streak?: number;
 };
 
 const PARTICLES = 40;
@@ -32,7 +36,15 @@ function seed(i: number, salt: number): number {
   return x - Math.floor(x);
 }
 
-function Particle({ index, progress }: { index: number; progress: SharedValue<number> }) {
+function Particle({
+  index,
+  progress,
+  colors,
+}: {
+  index: number;
+  progress: SharedValue<number>;
+  colors: readonly string[];
+}) {
   // Mostly an upward fan, a few thrown sideways.
   const angle = (-Math.PI / 2) + (seed(index, 1) - 0.5) * Math.PI * 1.5;
   const reach = 120 + seed(index, 2) * 200;
@@ -40,8 +52,8 @@ function Particle({ index, progress }: { index: number; progress: SharedValue<nu
   const spin = (seed(index, 4) - 0.5) * 900;
   const kind = index % 4; // 0 square, 1 strip, 2 dot, 3 star
   const size = 6 + seed(index, 5) * 6;
-  const color = HOLO_COLORS[index % HOLO_COLORS.length];
-  const nextColor = HOLO_COLORS[(index + 2) % HOLO_COLORS.length];
+  const color = colors[index % colors.length];
+  const nextColor = colors[(index + 2) % colors.length];
   const delay = seed(index, 6) * 0.12;
 
   const style = useAnimatedStyle(() => {
@@ -100,14 +112,23 @@ function Ring({ progress, delay, color }: { progress: SharedValue<number>; delay
  * view. `progress` runs 0 to 1 over BURST_MS; a new `burstKey` remounts the
  * particles. Shared by the per-day celebration and the badge-earned modal.
  */
-export function HoloBurst({ progress, burstKey }: { progress: SharedValue<number>; burstKey: number | string }) {
+export function HoloBurst({
+  progress,
+  burstKey,
+  palette = 'rainbow',
+}: {
+  progress: SharedValue<number>;
+  burstKey: number | string;
+  palette?: FoilPalette;
+}) {
+  const colors = PALETTE_COLORS[palette];
   return (
     <>
-      <Ring progress={progress} delay={0} color={HOLO_COLORS[2]} />
-      <Ring progress={progress} delay={0.08} color={HOLO_COLORS[0]} />
-      <Ring progress={progress} delay={0.16} color={HOLO_COLORS[4]} />
+      <Ring progress={progress} delay={0} color={colors[2]} />
+      <Ring progress={progress} delay={0.08} color={colors[0]} />
+      <Ring progress={progress} delay={0.16} color={colors[4]} />
       {Array.from({ length: PARTICLES }, (_, i) => (
-        <Particle key={`${burstKey}-${i}`} index={i} progress={progress} />
+        <Particle key={`${burstKey}-${i}`} index={i} progress={progress} colors={colors} />
       ))}
     </>
   );
@@ -166,10 +187,10 @@ export function QuestCelebration({ burst }: { burst: QuestBurst | null }) {
       {burst && (
         <>
           <View style={[styles.origin, originStyle]}>
-            <HoloBurst progress={progress} burstKey={burst.key} />
+            <HoloBurst progress={progress} burstKey={burst.key} palette={burst.palette} />
           </View>
           <Animated.View style={[styles.badge, badgeStyle]}>
-            <HoloFoil variant="card" flashKey={burst.key} />
+            <HoloFoil variant="card" palette={burst.palette} flashKey={burst.key} />
             <Text style={styles.count}>
               {burst.doneCount}
               <Text style={styles.of}>{` / ${QUEST_LENGTH}`}</Text>

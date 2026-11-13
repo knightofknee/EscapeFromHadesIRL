@@ -10,6 +10,7 @@ import {
 } from './firestore';
 import { arrayRemove } from 'firebase/firestore';
 import { clearEarnedQuoteState } from '@/lib/earned-quotes';
+import { clearStreakFireState } from '@/lib/streak-fire';
 import { clearVocab } from '@/lib/word-suggestions';
 import { deleteAllMedia } from '@/lib/note-media';
 
@@ -127,6 +128,7 @@ export async function deleteAccountAndData(user: User): Promise<void> {
   await Promise.allSettled([
     clearVocab(user.uid),
     clearEarnedQuoteState(user.uid),
+    clearStreakFireState(user.uid),
     // Note photos/videos live only on the phone.
     Promise.resolve().then(() => deleteAllMedia(user.uid)),
   ]);

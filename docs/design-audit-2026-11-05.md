@@ -9,13 +9,15 @@ check. #1 (day view arrows and date jump) was built, then REVERTED at the
 owner's direction: the day view header stays exactly as it was. The day view
 is for today and yesterday; history lives in the Week and Month views. Only
 the spring-to-timing swap and the quick-input step from #1 remain.**
-Decisions taken while fixing, for the owner to confirm: the trailing "past month" page stays between the current month
-and the previous month as specified, so stepping back still passes it (#2);
-keyword drag uses the library's spring with overshoot clamped (#12); new
-note reset caps at 1440 minutes, the window it is compared against (#6);
-the Stats months choice is session state, not persisted (#9);
-`functions/src/chore-schedule.ts` lost its reminder cap and needs a deploy
-(#7). The "Week starts on" setting lives under Appearance (#10).
+Decisions taken while fixing, settled 2026-11-12: #2's trailing page is
+gone as a separate case, since back pages are now rolling months lined up
+with today (no days repeat across pages); keyword drag keeps the library's
+spring with overshoot clamped, so it cannot bounce (#12; the library takes
+no timing config); new note reset caps at 1440 minutes, the window it is
+compared against (#6); the Stats months choice is session state (#9);
+`functions/src/chore-schedule.ts` without the reminder cap is deployed
+(2026-11-06, the compiled code matches the source) (#7). The "Week starts
+on" setting lives under Appearance (#10).
 
 ## Findings
 

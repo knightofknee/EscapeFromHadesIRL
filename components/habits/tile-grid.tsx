@@ -7,7 +7,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { TileContent } from './tile-content';
 import { FloatTile } from './float-tile';
 import { gridLines, type Rect } from '@/lib/float-tile';
-import { HoloFoil } from '@/components/habit-quest/holo-foil';
+import { HoloFoil, type FoilPalette } from '@/components/habit-quest/holo-foil';
 import { TileBadges } from '@/components/habit-quest/tile-badges';
 import type { HabitBadge } from '@/hooks/use-habit-badges';
 import { isRecordCompleted } from '@/lib/habit-scoring';
@@ -24,6 +24,10 @@ type TileGridProps = {
   holoFlashKey?: number;
   /** Attached to the holo tile, so the celebration can burst from where it sits. */
   holoTileRef?: RefObject<View | null>;
+  /** The Level Two habit: its tile wears the deep blue foil (over the rainbow when it's both). */
+  deepHoloHabitId?: string | null;
+  deepHoloFlashKey?: number;
+  deepHoloTileRef?: RefObject<View | null>;
   /** 60-day medals and remission marks, by habit id. */
   badges?: Map<string, HabitBadge>;
   /**
@@ -50,7 +54,7 @@ const MeasuredTile = memo(function MeasuredTile({
   colors,
   onTap,
   onLongPress,
-  holo,
+  foil,
   holoFlashKey,
   holoTileRef,
   badge,
@@ -62,7 +66,8 @@ const MeasuredTile = memo(function MeasuredTile({
   colors: (typeof Colors)['light'];
   onTap: (id: string) => void;
   onLongPress: (id: string) => void;
-  holo: boolean;
+  /** The quest foil this tile wears, if any. */
+  foil: FoilPalette | null;
   holoFlashKey: number;
   holoTileRef?: RefObject<View | null>;
   badge?: HabitBadge;
@@ -88,7 +93,7 @@ const MeasuredTile = memo(function MeasuredTile({
 
   return (
     <Pressable
-      ref={holo ? holoTileRef : undefined}
+      ref={foil ? holoTileRef : undefined}
       style={[
         styles.tile,
         {
@@ -112,7 +117,7 @@ const MeasuredTile = memo(function MeasuredTile({
       {tileW > 0 && tileH > 0 && (
         <TileContent habit={habit} record={record} tileWidth={tileW} tileHeight={tileH} />
       )}
-      {holo && <HoloFoil variant="tile" flashKey={holoFlashKey} />}
+      {foil && <HoloFoil variant="tile" palette={foil} flashKey={holoFlashKey} />}
       {badge && tileW > 0 && (
         <TileBadges badge={badge} size={Math.min(tileW, tileH)} bg={colors.tileBackground} />
       )}
@@ -128,6 +133,9 @@ export function TileGrid({
   holoHabitId,
   holoFlashKey = 0,
   holoTileRef,
+  deepHoloHabitId,
+  deepHoloFlashKey = 0,
+  deepHoloTileRef,
   badges,
   editingFloat,
 }: TileGridProps) {
@@ -210,9 +218,15 @@ export function TileGrid({
                 colors={colors}
                 onTap={onTapHabit}
                 onLongPress={onLongPressHabit}
-                holo={habit.id === holoHabitId}
-                holoFlashKey={habit.id === holoHabitId ? holoFlashKey : 0}
-                holoTileRef={holoTileRef}
+                foil={habit.id === deepHoloHabitId ? 'deep' : habit.id === holoHabitId ? 'rainbow' : null}
+                holoFlashKey={
+                  habit.id === deepHoloHabitId
+                    ? deepHoloFlashKey + (habit.id === holoHabitId ? holoFlashKey : 0)
+                    : habit.id === holoHabitId
+                      ? holoFlashKey
+                      : 0
+                }
+                holoTileRef={habit.id === deepHoloHabitId ? deepHoloTileRef : holoTileRef}
                 badge={badges?.get(habit.id)}
                 onMeasure={onTileMeasure}
               />

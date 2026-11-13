@@ -36,11 +36,11 @@ import {
   deleteVacationDaysBulk,
 } from '@/lib/vacation-days';
 import { EarnedQuoteModal } from '@/components/habits/earned-quote-modal';
-import { QuestCelebration, type QuestBurst } from '@/components/habit-quest/quest-celebration';
+import { QuestCelebration } from '@/components/habit-quest/quest-celebration';
+import { StreakFireMoment } from '@/components/habit-quest/streak-fire-modal';
 import { useHabitQuest } from '@/contexts/habit-quest-context';
-import { useHabitQuestProgress } from '@/hooks/use-habit-quest-progress';
+import { useQuestDayCelebration } from '@/hooks/use-quest-day-celebration';
 import { useHabitBadges } from '@/hooks/use-habit-badges';
-import { didParticipate } from '@/lib/habit-quest';
 import { useEarnedQuote } from '@/hooks/use-earned-quote';
 import { useHabits } from '@/hooks/use-habits';
 import { useTour, useTourTarget } from '@/contexts/tour-context';
@@ -297,56 +297,30 @@ export default function HabitsDayScreen() {
     [valueInputHabit, setValue],
   );
 
-  // --- 60-day quest: holo tile + a celebration each time the quest habit
-  // gets its day recorded. Fires on the not-recorded → recorded flip for the
-  // viewed day (a tap, a modal save, or a steps sync while you watch), never
-  // on load or a day swipe. A flip while a tile modal is open waits for it to
-  // close so the burst isn't hidden behind the sheet. A day the quest
-  // card's check already celebrated (tabs freeze on blur, so that flip is
-  // first seen here on refocus) is not played again.
-  const { activeQuest, habit: questHabit, progress: questProgress } = useHabitQuestProgress();
-  const { celebratedDateRef } = useHabitQuest();
-  const [questBurst, setQuestBurst] = useState<QuestBurst | null>(null);
-  const questDayDone =
-    questHabit != null && !isVacationDay && didParticipate(questHabit, records.get(questHabit.id));
-  const questDayInRange =
-    questProgress != null && !questProgress.isOver && activeQuest != null &&
-    viewedDate >= questProgress.attemptStart && viewedDate <= questProgress.endDate;
+  // --- Quests: the 60-day quest's tile wears the rainbow foil, Level Two's
+  // the deep blue one (blue wins on a habit in both), and each plays its
+  // per-day celebration when its habit's day gets recorded (see
+  // useQuestDayCelebration).
   const tileModalOpen =
     valueInputHabit != null || meditationHabit != null || stepsHabit != null || phoneFreeHabit != null;
-  const questSeenRef = useRef<{ key: string; done: boolean } | null>(null);
-  const questPendingRef = useRef(false);
-
   const questTileRef = useRef<View>(null);
+  const levelTwoTileRef = useRef<View>(null);
+  const celebrationArgs = { records, viewedDate, isVacationDay, recordsLoading, tileModalOpen, isFocused };
+  const { questHabit: levelTwoHabit, burst: levelTwoBurst } = useQuestDayCelebration({
+    ...celebrationArgs,
+    level: 2,
+    tileRef: levelTwoTileRef,
+  });
+  // A habit in both quests wears one foil (blue), and the tile ref goes with it.
+  const { activeQuest } = useHabitQuest();
+  const sharedTile = !!levelTwoHabit && levelTwoHabit.id === activeQuest?.habitId;
+  const { questHabit, burst: questBurst } = useQuestDayCelebration({
+    ...celebrationArgs,
+    level: 1,
+    tileRef: sharedTile ? levelTwoTileRef : questTileRef,
+  });
   const habitBadges = useHabitBadges();
   const { showTileBadges } = useUserSettingsContext();
-  useEffect(() => {
-    const key = questHabit && questDayInRange && !recordsLoading ? `${questHabit.id}|${viewedDate}` : null;
-    const prev = questSeenRef.current;
-    questSeenRef.current = key ? { key, done: questDayDone } : null;
-    if (!key) {
-      questPendingRef.current = false;
-      return;
-    }
-    if (prev?.key === key && !prev.done && questDayDone) {
-      if (celebratedDateRef.current === viewedDate) celebratedDateRef.current = null;
-      else questPendingRef.current = true;
-    }
-    if (!questDayDone) questPendingRef.current = false;
-    if (questPendingRef.current && !tileModalOpen && isFocused && questProgress && questHabit) {
-      questPendingRef.current = false;
-      const burst = { key: Date.now(), doneCount: questProgress.doneCount, habitName: questHabit.name };
-      // Burst from the tile itself (window coords; the overlay converts).
-      const tile = questTileRef.current;
-      if (tile) {
-        tile.measureInWindow((x, y, w, h) =>
-          setQuestBurst({ ...burst, origin: { x: x + w / 2, y: y + h / 2 } }),
-        );
-      } else {
-        setQuestBurst(burst);
-      }
-    }
-  }, [questHabit, questDayInRange, recordsLoading, viewedDate, questDayDone, tileModalOpen, isFocused, questProgress, celebratedDateRef]);
 
   // Hold the screen until habits, the first records snapshot, AND vacation
   // days arrive — so tiles never render "unrecorded" then pop to their real
@@ -463,6 +437,9 @@ export default function HabitsDayScreen() {
                     holoHabitId={questHabit?.id ?? null}
                     holoFlashKey={questBurst?.key ?? 0}
                     holoTileRef={questTileRef}
+                    deepHoloHabitId={levelTwoHabit?.id ?? null}
+                    deepHoloFlashKey={levelTwoBurst?.key ?? 0}
+                    deepHoloTileRef={levelTwoTileRef}
                     badges={showTileBadges ? habitBadges : undefined}
                   />
                 )}
@@ -635,6 +612,10 @@ export default function HabitsDayScreen() {
         />
 
         <QuestCelebration burst={questBurst} />
+        <QuestCelebration burst={levelTwoBurst} />
+        {/* Once ever: the first 10-day quest streak. Waits out the earned quote. */}
+        <StreakFireMoment burst={questBurst} blocked={visibleQuote != null} />
+        <StreakFireMoment burst={levelTwoBurst} blocked={visibleQuote != null} />
       </ThemedView>
     </SafeAreaView>
   );

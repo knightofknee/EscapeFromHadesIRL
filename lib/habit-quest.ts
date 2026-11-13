@@ -16,13 +16,34 @@ export const QUEST_LENGTH = 60;
 export type QuickRecordValue = boolean | TripleValue | QuadValue | number;
 
 /**
+ * Which quest: 1 is the 60-day quest (any level counts), 2 is Level Two
+ * (only goal or ideal counts, on a habit that already has a badge).
+ */
+export type QuestLevel = 1 | 2;
+
+/**
  * What the quest card's check writes for a tap: the first success level,
  * the same as the home tile's first tap (`first`), and nothing recorded
  * (`cleared`) for a tap taken back. Null for the modes whose tile opens a
  * modal instead (value, steps, meditation, phone-free): the card's check
- * shows those but cannot record them.
+ * shows those but cannot record them. Level Two writes the goal level
+ * (triple's "double"); modes without one have nothing to write.
  */
-export function quickRecordValues(mode: RecordingMode): { first: QuickRecordValue; cleared: QuickRecordValue } | null {
+export function quickRecordValues(
+  mode: RecordingMode,
+  level: QuestLevel = 1,
+): { first: QuickRecordValue; cleared: QuickRecordValue } | null {
+  if (level === 2) {
+    switch (mode) {
+      case 'triple':
+        return { first: 'double', cleared: 'no' };
+      case 'quad':
+      case 'creativeWriting':
+        return { first: 'goal', cleared: 'no' };
+      default:
+        return null;
+    }
+  }
   switch (mode) {
     case 'boolean':
       return { first: true, cleared: false };
@@ -47,9 +68,11 @@ export function questEndDate(startDate: string): string {
  * Did the habit get ANY participation on this record? Every success level
  * counts (basic, goal, ideal), and so does a value entry that fell short of
  * its first goal: the quest measures showing up, not hitting a bar.
+ * At level 2 only goal or ideal counts.
  */
-export function didParticipate(habit: Habit, record?: HabitRecord): boolean {
+export function didParticipate(habit: Habit, record?: HabitRecord, level: QuestLevel = 1): boolean {
   if (!record) return false;
+  if (level === 2) return recordLevel(habit, record) >= 2;
   if (recordLevel(habit, record) >= 1) return true;
   return habit.recordingMode === 'value' && isValueRecorded(record.value);
 }
@@ -58,6 +81,8 @@ export type QuestDayState =
   | 'done'
   /** A past day with nothing recorded. */
   | 'missed'
+  /** Level Two only: a past day recorded below goal. Shown, but counts as a day off. */
+  | 'basic'
   /** Today, not recorded yet. Still winnable. */
   | 'open'
   | 'future'
@@ -84,7 +109,10 @@ export type QuestProgress = {
   endDate: string;
   /** Days recorded this attempt, out of QUEST_LENGTH. */
   doneCount: number;
+  /** Past days not done and not excused (basic days included). */
   missedCount: number;
+  /** Level Two only: past days recorded below goal (part of missedCount). */
+  basicCount: number;
   /** Today's day number in this attempt, 1..60; 61 once it's over. */
   todayNumber: number;
   /** Days after today still to come (0 on day 60 and after). */
@@ -135,9 +163,12 @@ export function computeQuestProgress(params: {
   vacationDates?: Set<string>;
   /** Win-only days (lib/win-only): recorded counts, missed is ignored. */
   winOnlyDates?: Set<string>;
+  /** 2 counts only goal-or-better days (Level Two). */
+  level?: QuestLevel;
 }): QuestProgress {
-  const { startDate, today, habit, getRecord, vacationDates, winOnlyDates } = params;
-  const isDone = (date: string) => !!habit && didParticipate(habit, getRecord(date));
+  const { startDate, today, habit, getRecord, vacationDates, winOnlyDates, level = 1 } = params;
+  const isDone = (date: string) => !!habit && didParticipate(habit, getRecord(date), level);
+  const isBasic = (date: string) => level === 2 && !!habit && didParticipate(habit, getRecord(date), 1);
   const isExcused = (date: string) => !!vacationDates?.has(date) || !!winOnlyDates?.has(date);
   const outcomeOn = (date: string): DayOutcome => (isDone(date) ? 'done' : isExcused(date) ? 'excused' : 'missed');
   // A skipped day (vacation or win-only, not recorded) doesn't use up one of
@@ -205,6 +236,7 @@ export function computeQuestProgress(params: {
   const days: QuestDay[] = [];
   let doneCount = 0;
   let missedCount = 0;
+  let basicCount = 0;
   let counted = 0;
   // The day you're on: counted days before today, plus today.
   let todayNumber = QUEST_LENGTH + 1;
@@ -225,6 +257,10 @@ export function computeQuestProgress(params: {
       state = 'winOnly';
     } else if (date === today) {
       state = 'open';
+    } else if (isBasic(date)) {
+      state = 'basic';
+      missedCount++;
+      basicCount++;
     } else {
       state = 'missed';
       missedCount++;
@@ -242,6 +278,7 @@ export function computeQuestProgress(params: {
     endDate,
     doneCount,
     missedCount,
+    basicCount,
     todayNumber,
     daysLeft: Math.max(0, QUEST_LENGTH - todayNumber),
     isOver: today > endDate,
@@ -320,12 +357,14 @@ export function creditedQuest(params: {
   winOnlyDates?: Set<string>;
   /** Day 60 of this habit's latest badge: days up to it already earned one and can't count again. */
   notBefore?: string;
+  /** 2 credits only goal-or-better days (Level Two). */
+  level?: QuestLevel;
 }): { startDate: string; creditedDays: number; progress: QuestProgress } {
-  const { today, habit, getRecord, vacationDates, winOnlyDates, notBefore } = params;
-  const isDone = (date: string) => didParticipate(habit, getRecord(date));
+  const { today, habit, getRecord, vacationDates, winOnlyDates, notBefore, level = 1 } = params;
+  const isDone = (date: string) => didParticipate(habit, getRecord(date), level);
   const isExcused = (date: string) => !!vacationDates?.has(date) || !!winOnlyDates?.has(date);
   const questFrom = (startDate: string) =>
-    computeQuestProgress({ startDate, today, habit, getRecord, vacationDates, winOnlyDates });
+    computeQuestProgress({ startDate, today, habit, getRecord, vacationDates, winOnlyDates, level });
 
   // The scan checks up to CREDIT_SCAN_DAYS starts, each a full replay; on
   // a phone that's too slow with Date math per step, so the days are laid
