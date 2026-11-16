@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
@@ -20,6 +21,13 @@ const GAP = 8;
 const ARROW = 8;
 const MARGIN = 12;
 
+/** Abbreviations run up to 4 characters; 3-4 step down so they stay on one
+ * line in the 24pt column. (adjustsFontSizeToFit mis-shrinks single letters.) */
+function abbrFontSize(text: string | undefined): number {
+  const len = [...(text ?? '')].length;
+  return len >= 4 ? 9 : len === 3 ? 11 : 13;
+}
+
 /**
  * Small card that pops up above the tapped heatmap day (below it when the
  * day is near the top) and explains the cell's shade: each habit's tier and
@@ -34,17 +42,41 @@ export function DayBreakdownPopover({ anchor, bounds, title, breakdown }: Props)
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const { width: winW, height: winH } = bounds;
+  // Card height, measured after the first layout (rows vary per account).
+  const [cardH, setCardH] = useState(0);
   if (!anchor || !breakdown) return null;
 
   const cellCenterX = anchor.x + anchor.width / 2;
   const left = Math.min(Math.max(MARGIN, cellCenterX - WIDTH / 2), winW - WIDTH - MARGIN);
   const arrowLeft = Math.min(Math.max(ARROW + 6, cellCenterX - left - ARROW), WIDTH - ARROW * 3);
-  // Above by default; below when the row is too close to the top to fit
-  // a card of unknown height.
-  const below = anchor.y < winH * 0.35;
-  const placement = below
-    ? { top: anchor.y + anchor.height + GAP + ARROW }
-    : { bottom: winH - anchor.y + GAP + ARROW };
+  // Above by default; below when the row is near the top. Once the card's
+  // height is known: flip sides if only the other side fits, and if neither
+  // does (many habits on a short screen like iPhone SE), take the roomier
+  // side and slide the card back inside the host so no row is cut off.
+  const preferBelow = anchor.y < winH * 0.35;
+  const belowTop = anchor.y + anchor.height + GAP + ARROW;
+  const aboveBottom = winH - anchor.y + GAP + ARROW;
+  const spaceBelow = winH - belowTop - MARGIN;
+  const spaceAbove = anchor.y - GAP - ARROW - MARGIN;
+  let below = preferBelow;
+  let clampedTop: number | null = null;
+  if (cardH > 0) {
+    const fitsBelow = cardH <= spaceBelow;
+    const fitsAbove = cardH <= spaceAbove;
+    if (preferBelow ? !fitsBelow : !fitsAbove) {
+      if (preferBelow ? fitsAbove : fitsBelow) below = !preferBelow;
+      else {
+        below = spaceBelow >= spaceAbove;
+        const top = below ? belowTop : winH - aboveBottom - cardH;
+        clampedTop = Math.min(Math.max(MARGIN, top), Math.max(MARGIN, winH - cardH - MARGIN));
+      }
+    }
+  }
+  const placement = clampedTop != null
+    ? { top: clampedTop }
+    : below
+      ? { top: belowTop }
+      : { bottom: aboveBottom };
 
   const percent = Math.round(breakdown.ratio * 100);
   const arrowStyle = below
@@ -58,7 +90,11 @@ export function DayBreakdownPopover({ anchor, bounds, title, breakdown }: Props)
           styles.card,
           placement,
           { left, backgroundColor: colors.tileBackground, borderColor: colors.tileBorder },
+          // Hidden for the one frame before the first measurement so it
+          // never flashes in the wrong spot.
+          cardH === 0 && { opacity: 0 },
         ]}
+        onLayout={(e) => setCardH(e.nativeEvent.layout.height)}
         onTouchStart={(e) => e.stopPropagation()}
       >
         <View style={styles.header}>
@@ -74,7 +110,10 @@ export function DayBreakdownPopover({ anchor, bounds, title, breakdown }: Props)
         </ThemedText>
         {breakdown.rows.map(({ habit, level, detail, weekendOff }) => (
           <View key={habit.id} style={[styles.row, weekendOff && styles.rowOff]}>
-            <ThemedText style={[styles.abbr, { color: habit.color }]}>
+            <ThemedText
+              style={[styles.abbr, { color: habit.color, fontSize: habit.icon ? 13 : abbrFontSize(habit.abbreviation) }]}
+              numberOfLines={1}
+            >
               {habit.icon ?? habit.abbreviation}
             </ThemedText>
             <ThemedText style={styles.name} numberOfLines={1}>{habit.name}</ThemedText>
@@ -90,7 +129,8 @@ export function DayBreakdownPopover({ anchor, bounds, title, breakdown }: Props)
             </ThemedText>
           </View>
         ))}
-        <View style={[styles.arrow, arrowStyle, { left: arrowLeft }]} />
+        {/* No arrow once the card had to slide off its anchor. */}
+        {clampedTop == null && <View style={[styles.arrow, arrowStyle, { left: arrowLeft }]} />}
       </View>
     </View>
   );
@@ -116,7 +156,9 @@ const styles = StyleSheet.create({
   sub: { fontSize: 11, opacity: 0.55, marginBottom: 2 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   rowOff: { opacity: 0.4 },
-  abbr: { width: 18, fontSize: 13, fontWeight: '700', textAlign: 'center' },
+  // Wide enough for a two-letter abbreviation ("WG") at full size; see
+  // abbrFontSize for 3-4 letters.
+  abbr: { width: 24, fontSize: 13, fontWeight: '700', textAlign: 'center' },
   name: { flex: 1, fontSize: 13 },
   detail: { fontSize: 12, fontWeight: '600', maxWidth: 110, textAlign: 'right' },
   detailMissed: { opacity: 0.45, fontWeight: '400' },

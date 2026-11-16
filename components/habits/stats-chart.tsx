@@ -251,10 +251,15 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 8,
   },
+  // Wraps on narrow screens (iPhone SE) so the legend + chip drop to their
+  // own line instead of jamming into the title and the card edge.
   titleRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
     alignItems: 'center',
+    columnGap: 8,
+    rowGap: 6,
   },
   title: {
     fontSize: 14,
@@ -263,6 +268,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    marginLeft: 'auto',
   },
   legendLine: {
     width: 14,

@@ -9,6 +9,7 @@ import {
   Image,
   Text,
   Keyboard,
+  ScrollView,
   Animated,
   Easing,
   TouchableWithoutFeedback,
@@ -73,7 +74,12 @@ export function AuthForm({
   const isDark = colorScheme === 'dark';
   const colors = isDark ? themes.dark : themes.light;
   const { height: winHeight, width: winWidth } = useWindowDimensions();
-  const logoSize = Math.round(Math.min(140, Math.max(96, winWidth * 0.3)));
+  // Short screens (iPhone SE, iPhone apps on iPad at 667pt) can't fit the
+  // full-size logo plus the card, so the logo gives up the room.
+  const shortScreen = winHeight < 700;
+  const logoSize = shortScreen
+    ? 72
+    : Math.round(Math.min(140, Math.max(96, winWidth * 0.3)));
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -176,7 +182,7 @@ export function AuthForm({
         <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
           <Animated.View
             style={[
-              styles.container,
+              styles.shiftLayer,
               { transform: [{ translateY: shift }] },
             ]}
           >
@@ -184,207 +190,216 @@ export function AuthForm({
             <View style={[styles.blobA, { backgroundColor: colors.blobA }]} />
             <View style={[styles.blobB, { backgroundColor: colors.blobB }]} />
 
-            {/* Header / logo */}
-            <View style={styles.header}>
-              <View
-                style={[
-                  styles.logoWrapper,
-                  { width: logoSize, height: logoSize },
-                ]}
-              >
-                <Image
-                  source={require('@/assets/images/icon.png')}
-                  style={{
-                    width: logoSize + 12,
-                    height: logoSize + 12,
-                    marginTop: -6,
-                    marginLeft: -6,
-                  }}
-                  resizeMode="cover"
-                />
-              </View>
-              <Text style={[styles.title, { color: colors.text }]}>
-                {mode === 'sign-in' ? 'Welcome back' : 'Create account'}
-              </Text>
-              <Text style={[styles.subtitle, { color: colors.subtle }]}>
-                {mode === 'sign-in' ? 'Sign in to Escape from Hades IRL' : 'Get started with Escape from Hades IRL'}
-              </Text>
-            </View>
-
-            {/* Card */}
-            <View ref={cardRef} style={[styles.card, { backgroundColor: colors.card }]}>
-              {/* Toggle mode */}
-              <View style={styles.topRow}>
-                <Text style={{ color: colors.subtle }}>
-                  {mode === 'sign-in' ? 'New here?' : 'Already have an account?'}
+            {/* Centered when it fits; scrolls instead of clipping when it doesn't. */}
+            <ScrollView
+              style={styles.shiftLayer}
+              contentContainerStyle={styles.container}
+              keyboardShouldPersistTaps="handled"
+              alwaysBounceVertical={false}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Header / logo */}
+              <View style={styles.header}>
+                <View
+                  style={[
+                    styles.logoWrapper,
+                    { width: logoSize, height: logoSize },
+                  ]}
+                >
+                  <Image
+                    source={require('@/assets/images/icon.png')}
+                    style={{
+                      width: logoSize + 12,
+                      height: logoSize + 12,
+                      marginTop: -6,
+                      marginLeft: -6,
+                    }}
+                    resizeMode="cover"
+                  />
+                </View>
+                <Text style={[styles.title, { color: colors.text }]}>
+                  {mode === 'sign-in' ? 'Welcome back' : 'Create account'}
                 </Text>
-                <Pressable onPress={onToggleMode}>
-                  <Text style={[styles.link, { color: colors.primary }]}>
-                    {mode === 'sign-in' ? 'Create an account' : 'Sign in'}
+                <Text style={[styles.subtitle, { color: colors.subtle }]}>
+                  {mode === 'sign-in' ? 'Sign in to Escape from Hades IRL' : 'Get started with Escape from Hades IRL'}
+                </Text>
+              </View>
+
+              {/* Card */}
+              <View ref={cardRef} style={[styles.card, { backgroundColor: colors.card }]}>
+                {/* Toggle mode */}
+                <View style={styles.topRow}>
+                  <Text style={{ color: colors.subtle }}>
+                    {mode === 'sign-in' ? 'New here?' : 'Already have an account?'}
                   </Text>
-                </Pressable>
-              </View>
-
-              {/* Error */}
-              <Text style={[styles.error, { color: colors.error, opacity: error ? 1 : 0 }]}>
-                {error || ' '}
-              </Text>
-
-              {/* Email */}
-              <View style={styles.inputGroup}>
-                <Text style={[styles.label, { color: colors.text }]}>Email</Text>
-                <View
-                  style={[
-                    styles.input,
-                    styles.inputRow,
-                    {
-                      borderColor: emailFocused ? colors.primary : colors.border,
-                      backgroundColor: colors.inputBg,
-                    },
-                  ]}
-                >
-                  <TextInput
-                    style={{ flex: 1, color: colors.text }}
-                    placeholder="you@example.com"
-                    placeholderTextColor={colors.subtle}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    keyboardType="email-address"
-                    textContentType="emailAddress"
-                    autoComplete="email"
-                    value={email}
-                    editable={!anyLoading}
-                    onChangeText={setEmail}
-                    onFocus={() => setEmailFocused(true)}
-                    onBlur={() => setEmailFocused(false)}
-                    returnKeyType="next"
-                  />
-                </View>
-              </View>
-
-              {/* Password */}
-              <View style={styles.inputGroup}>
-                <Text style={[styles.label, { color: colors.text }]}>Password</Text>
-                <View
-                  style={[
-                    styles.input,
-                    styles.inputRow,
-                    {
-                      borderColor: pwFocused ? colors.primary : colors.border,
-                      backgroundColor: colors.inputBg,
-                    },
-                  ]}
-                >
-                  <TextInput
-                    style={{ flex: 1, color: colors.text }}
-                    placeholder="••••••••"
-                    placeholderTextColor={colors.subtle}
-                    secureTextEntry={!showPassword}
-                    value={password}
-                    editable={!anyLoading}
-                    onChangeText={setPassword}
-                    onFocus={() => setPwFocused(true)}
-                    onBlur={() => setPwFocused(false)}
-                    textContentType="password"
-                    autoComplete={mode === 'sign-up' ? 'new-password' : 'current-password'}
-                    returnKeyType="go"
-                    onSubmitEditing={handleSubmit}
-                  />
-                  <Pressable onPress={() => setShowPassword((s) => !s)} hitSlop={10}>
-                    <Text style={[styles.togglePw, { color: colors.primary }]}>
-                      {showPassword ? 'Hide' : 'Show'}
-                    </Text>
-                  </Pressable>
-                </View>
-              </View>
-
-              {/* Submit */}
-              <Pressable
-                onPress={handleSubmit}
-                disabled={anyLoading}
-                style={({ pressed }) => [
-                  styles.primaryBtn,
-                  { backgroundColor: colors.primary },
-                  pressed && { opacity: 0.9 },
-                  anyLoading && { opacity: 0.7 },
-                ]}
-              >
-                {loading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.primaryBtnText}>Enter</Text>
-                )}
-              </Pressable>
-
-              {/* Forgot password */}
-              {mode === 'sign-in' && onForgotPassword && (
-                <View style={{ alignItems: 'center', marginTop: 10 }}>
-                  <Pressable onPress={onForgotPassword}>
+                  <Pressable onPress={onToggleMode}>
                     <Text style={[styles.link, { color: colors.primary }]}>
-                      Forgot password?
+                      {mode === 'sign-in' ? 'Create an account' : 'Sign in'}
                     </Text>
                   </Pressable>
                 </View>
-              )}
 
-              {/* SSO divider */}
-              <View style={styles.dividerRow}>
-                <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-                <Text style={[styles.dividerText, { color: colors.subtle }]}>
-                  {mode === 'sign-in' ? 'or sign in with' : 'or sign up with'}
+                {/* Error */}
+                <Text style={[styles.error, { color: colors.error, opacity: error ? 1 : 0 }]}>
+                  {error || ' '}
                 </Text>
-                <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-              </View>
 
-              {/* SSO buttons */}
-              <View style={styles.ssoRow}>
-                {onGoogleSignIn && (
-                  <Pressable
-                    onPress={handleGoogle}
-                    disabled={anyLoading || !googleReady}
-                    style={({ pressed }) => [
-                      styles.googleBtn,
-                      { borderColor: colors.border, backgroundColor: colors.inputBg },
-                      pressed && { opacity: 0.85 },
-                      anyLoading && { opacity: 0.7 },
+                {/* Email */}
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.label, { color: colors.text }]}>Email</Text>
+                  <View
+                    style={[
+                      styles.input,
+                      styles.inputRow,
+                      {
+                        borderColor: emailFocused ? colors.primary : colors.border,
+                        backgroundColor: colors.inputBg,
+                      },
                     ]}
                   >
-                    {ssoLoading === 'google' ? (
-                      <ActivityIndicator color={colors.text} />
-                    ) : (
-                      <View style={styles.ssoBtnInner}>
-                        <GoogleLogo size={22} />
-                        <Text style={[styles.googleBtnText, { color: colors.text }]}>Google</Text>
-                      </View>
-                    )}
-                  </Pressable>
-                )}
+                    <TextInput
+                      style={{ flex: 1, color: colors.text }}
+                      placeholder="you@example.com"
+                      placeholderTextColor={colors.subtle}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      keyboardType="email-address"
+                      textContentType="emailAddress"
+                      autoComplete="email"
+                      value={email}
+                      editable={!anyLoading}
+                      onChangeText={setEmail}
+                      onFocus={() => setEmailFocused(true)}
+                      onBlur={() => setEmailFocused(false)}
+                      returnKeyType="next"
+                    />
+                  </View>
+                </View>
 
-                {onAppleSignIn && Platform.OS === 'ios' && (
-                  <Pressable
-                    onPress={handleApple}
-                    disabled={anyLoading}
-                    style={({ pressed }) => [
-                      styles.appleBtn,
-                      { backgroundColor: isDark ? '#FFFFFF' : '#000' },
-                      pressed && { opacity: 0.85 },
-                      anyLoading && { opacity: 0.7 },
+                {/* Password */}
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.label, { color: colors.text }]}>Password</Text>
+                  <View
+                    style={[
+                      styles.input,
+                      styles.inputRow,
+                      {
+                        borderColor: pwFocused ? colors.primary : colors.border,
+                        backgroundColor: colors.inputBg,
+                      },
                     ]}
                   >
-                    {ssoLoading === 'apple' ? (
-                      <ActivityIndicator color={isDark ? '#000' : '#FFF'} />
-                    ) : (
-                      <View style={styles.ssoBtnInner}>
-                        <Ionicons name="logo-apple" size={22} color={isDark ? '#000' : '#FFF'} />
-                        <Text style={[styles.appleBtnText, { color: isDark ? '#000' : '#FFF' }]}>
-                          Apple
-                        </Text>
-                      </View>
-                    )}
-                  </Pressable>
+                    <TextInput
+                      style={{ flex: 1, color: colors.text }}
+                      placeholder="••••••••"
+                      placeholderTextColor={colors.subtle}
+                      secureTextEntry={!showPassword}
+                      value={password}
+                      editable={!anyLoading}
+                      onChangeText={setPassword}
+                      onFocus={() => setPwFocused(true)}
+                      onBlur={() => setPwFocused(false)}
+                      textContentType="password"
+                      autoComplete={mode === 'sign-up' ? 'new-password' : 'current-password'}
+                      returnKeyType="go"
+                      onSubmitEditing={handleSubmit}
+                    />
+                    <Pressable onPress={() => setShowPassword((s) => !s)} hitSlop={10}>
+                      <Text style={[styles.togglePw, { color: colors.primary }]}>
+                        {showPassword ? 'Hide' : 'Show'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+
+                {/* Submit */}
+                <Pressable
+                  onPress={handleSubmit}
+                  disabled={anyLoading}
+                  style={({ pressed }) => [
+                    styles.primaryBtn,
+                    { backgroundColor: colors.primary },
+                    pressed && { opacity: 0.9 },
+                    anyLoading && { opacity: 0.7 },
+                  ]}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.primaryBtnText}>Enter</Text>
+                  )}
+                </Pressable>
+
+                {/* Forgot password */}
+                {mode === 'sign-in' && onForgotPassword && (
+                  <View style={{ alignItems: 'center', marginTop: 10 }}>
+                    <Pressable onPress={onForgotPassword}>
+                      <Text style={[styles.link, { color: colors.primary }]}>
+                        Forgot password?
+                      </Text>
+                    </Pressable>
+                  </View>
                 )}
+
+                {/* SSO divider */}
+                <View style={styles.dividerRow}>
+                  <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+                  <Text style={[styles.dividerText, { color: colors.subtle }]}>
+                    {mode === 'sign-in' ? 'or sign in with' : 'or sign up with'}
+                  </Text>
+                  <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
+                </View>
+
+                {/* SSO buttons */}
+                <View style={styles.ssoRow}>
+                  {onGoogleSignIn && (
+                    <Pressable
+                      onPress={handleGoogle}
+                      disabled={anyLoading || !googleReady}
+                      style={({ pressed }) => [
+                        styles.googleBtn,
+                        { borderColor: colors.border, backgroundColor: colors.inputBg },
+                        pressed && { opacity: 0.85 },
+                        anyLoading && { opacity: 0.7 },
+                      ]}
+                    >
+                      {ssoLoading === 'google' ? (
+                        <ActivityIndicator color={colors.text} />
+                      ) : (
+                        <View style={styles.ssoBtnInner}>
+                          <GoogleLogo size={22} />
+                          <Text style={[styles.googleBtnText, { color: colors.text }]}>Google</Text>
+                        </View>
+                      )}
+                    </Pressable>
+                  )}
+
+                  {onAppleSignIn && Platform.OS === 'ios' && (
+                    <Pressable
+                      onPress={handleApple}
+                      disabled={anyLoading}
+                      style={({ pressed }) => [
+                        styles.appleBtn,
+                        { backgroundColor: isDark ? '#FFFFFF' : '#000' },
+                        pressed && { opacity: 0.85 },
+                        anyLoading && { opacity: 0.7 },
+                      ]}
+                    >
+                      {ssoLoading === 'apple' ? (
+                        <ActivityIndicator color={isDark ? '#000' : '#FFF'} />
+                      ) : (
+                        <View style={styles.ssoBtnInner}>
+                          <Ionicons name="logo-apple" size={22} color={isDark ? '#000' : '#FFF'} />
+                          <Text style={[styles.appleBtnText, { color: isDark ? '#000' : '#FFF' }]}>
+                            Apple
+                          </Text>
+                        </View>
+                      )}
+                    </Pressable>
+                  )}
+                </View>
               </View>
-            </View>
+            </ScrollView>
           </Animated.View>
         </TouchableWithoutFeedback>
 
@@ -420,8 +435,11 @@ const styles = StyleSheet.create({
   outerContainer: {
     flex: 1,
   },
-  container: {
+  shiftLayer: {
     flex: 1,
+  },
+  container: {
+    flexGrow: 1,
     paddingHorizontal: 20,
     justifyContent: 'center',
     paddingBottom: 24,

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Animated, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { Animated, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useSegments } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { Colors } from '@/constants/theme';
@@ -31,6 +32,8 @@ const SAMPLE_RATIOS = [0, 0.25, 0.5, 0.75, 1];
  * card; so does "Got it".
  */
 const RING_PAD = 8;
+/** Callout pill height (8pt padding x2 + one 13pt line) plus breathing room. */
+const CALLOUT_CLEARANCE = 8 + 36 + 8;
 /** Days this month with at least one habit done before the card is worth showing. */
 const MIN_ACTIVE_DAYS = 5;
 const DIM = 'rgba(8,6,18,0.7)';
@@ -56,6 +59,8 @@ export function CalendarTipsModal() {
   }, [records, habitById]);
   const segments = useSegments();
   const { width: W, height: H } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const [cardH, setCardH] = useState(0);
   const [visible, setVisible] = useState(false);
   const [rect, setRect] = useState<Rect | null>(null);
   const [pulse] = useState(() => new Animated.Value(0));
@@ -134,6 +139,13 @@ export function CalendarTipsModal() {
   const hh = target ? target.height + RING_PAD * 2 : 0;
   const scale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.1] });
 
+  // Short screens (iPhone SE, iPhone apps on iPad at 667pt): a centered card
+  // would cover the ring and callout. There the callout goes (the card's
+  // "Show me" does the same thing), the card sits just under the ring, and
+  // scrolls if it still doesn't fit. Taller screens stay centered.
+  const ringBottom = hy + hh;
+  const cramped = !!target && cardH > 0 && (H - cardH) / 2 < ringBottom + CALLOUT_CLEARANCE;
+
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
       {target ? (
@@ -158,16 +170,34 @@ export function CalendarTipsModal() {
               { left: hx, top: hy, width: hw, height: hh, borderRadius: hh / 2, borderColor: colors.tint, transform: [{ scale }] },
             ]}
           />
-          <View pointerEvents="none" style={[styles.callout, { top: hy + hh + 8, right: 16, backgroundColor: colors.tint }]}>
-            <ThemedText style={styles.calloutText}>Tap to see calendar</ThemedText>
-          </View>
+          {!cramped && (
+            <View pointerEvents="none" style={[styles.callout, { top: hy + hh + 8, right: 16, backgroundColor: colors.tint }]}>
+              <ThemedText style={styles.calloutText}>Tap to see calendar</ThemedText>
+            </View>
+          )}
         </>
       ) : (
         <View style={[styles.dim, StyleSheet.absoluteFill]} />
       )}
 
-      <View style={styles.center} pointerEvents="box-none">
-        <View style={[styles.card, { backgroundColor: colors.tileBackground }]}>
+      <View
+        style={[
+          styles.center,
+          cramped && {
+            justifyContent: 'flex-start',
+            paddingTop: ringBottom + 12,
+            paddingBottom: insets.bottom + 12,
+          },
+        ]}
+        pointerEvents="box-none"
+      >
+        <ScrollView
+          style={[styles.cardScroll, { backgroundColor: colors.tileBackground }]}
+          contentContainerStyle={styles.card}
+          onContentSizeChange={(_w, h) => setCardH(h)}
+          alwaysBounceVertical={false}
+          showsVerticalScrollIndicator={false}
+        >
           <ThemedText type="defaultSemiBold" style={styles.title}>
             The month calendar
           </ThemedText>
@@ -215,7 +245,7 @@ export function CalendarTipsModal() {
           >
             <ThemedText style={[styles.closeButtonText, { color: colors.text }]}>Got it</ThemedText>
           </Pressable>
-        </View>
+        </ScrollView>
       </View>
     </View>
   );
@@ -235,10 +265,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 24,
   },
-  card: {
+  // Sized to its content (no flexGrow) so it looks like a plain card; only
+  // scrolls when the screen is too short for it.
+  cardScroll: {
+    flexGrow: 0,
+    flexShrink: 1,
     width: '100%',
     maxWidth: 340,
     borderRadius: 16,
+  },
+  card: {
     padding: 24,
     gap: 12,
   },
